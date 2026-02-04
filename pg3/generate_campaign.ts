@@ -229,9 +229,24 @@ async function main() {
                                 if (website.includes('/url?q=')) website = website.split('/url?q=')[1].split('&')[0];
                                 website = decodeURIComponent(website);
 
-                                // Phone: Look for aria-label "Call" or pattern matching
-                                const phoneBtn = Array.from(side.querySelectorAll('button[data-tooltip*="Chiama"], button[aria-label*="Call"]')).find(x => x);
-                                const phone = phoneBtn?.getAttribute('aria-label')?.replace(/[^0-9+ ]/g, '').trim() || '';
+                                // Phone: Look for multiple potential buttons or text patterns
+                                let phone = '';
+
+                                // 1. Try standard Call buttons
+                                const phoneBtn = Array.from(side.querySelectorAll('button[data-tooltip*="Chiama"], button[aria-label*="Call"], button[data-item-id="phone"]')).find(x => x);
+                                if (phoneBtn) {
+                                    phone = phoneBtn.getAttribute('aria-label') || phoneBtn.getAttribute('data-item-id') || '';
+                                }
+
+                                // 2. Fallback: Regex scan visible text if button failed
+                                if (!phone || phone.length < 5) {
+                                    const text = side.innerText || '';
+                                    // Match Italian/International phone patterns (very loose)
+                                    const match = text.match(/((\+|00)39)?\s?0\d{1,4}[\s-]?\d{4,10}/);
+                                    if (match) phone = match[0];
+                                }
+
+                                phone = phone.replace(/[^0-9+ ]/g, '').trim();
 
                                 // Address
                                 const addrBtn = Array.from(side.querySelectorAll('button[data-item-id="address"]')).find(x => x);
