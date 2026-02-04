@@ -244,55 +244,9 @@ async function main() {
             for (const keyword of KEYWORDS) {
                 console.log(`   🔎 Searching: "${keyword}"...`);
 
-                // --- CLUSTER LOGIC CHECK ---
-                // Default: Just search the main city
+                // --- SIMPLIFIED: Just search the main city (cluster logic removed for now) ---
                 let targetLocations = [city];
 
-                try {
-                    // Check Result Count on Main City Page 1
-                    const qKey = keyword.replace(/ /g, '%20');
-                    const qCity = city.replace(/ /g, '%20');
-                    const checkUrl = `https://www.paginegialle.it/ricerca/${qKey}/${qCity}`;
-
-                    await retry(async () => {
-                        await page!.goto(checkUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                        await smashCookies(page!);
-                    });
-
-                    // Parse "Trovati X risultati" or "Più di 200 risultati"
-                    // HTML structure often has a listing-header or similar. 
-                    // Let's grab the broad text or specific counting element.
-                    const resultCountText = await page!.evaluate(() => {
-                        // Try specific selector first
-                        const countEl = document.querySelector('.searchListElenco h1') || document.querySelector('.listing-summary');
-                        if (countEl) return countEl.textContent?.toLowerCase() || '';
-                        return document.body.innerText.split('\n').find(l => l.includes('risultati') || l.includes('aziende'))?.toLowerCase() || '';
-                    });
-
-                    let estimatedResults = 0;
-                    let isOverflow = false;
-
-                    if (resultCountText.includes('più di') || resultCountText.includes('oltre')) {
-                        isOverflow = true;
-                        estimatedResults = 999;
-                    } else {
-                        const match = resultCountText.match(/(\d+)/);
-                        if (match) estimatedResults = parseInt(match[1], 10);
-                    }
-
-                    console.log(`      📊 PG Count Analysis: "${resultCountText.trim().substring(0, 50)}..." -> ${estimatedResults} results`);
-
-                    if (estimatedResults > RESULTS_LIMIT_TRIGGER || isOverflow) {
-                        console.log(`      ⚠️ TRIGGER: Muro dei 200 rilevato! (${estimatedResults} > ${RESULTS_LIMIT_TRIGGER}). expanding to CLUSTERS.`);
-                        const clusters = TARGET_CLUSTERS[city] || [];
-                        targetLocations = [city, ...clusters]; // Keep main city, add clusters
-                        console.log(`      🌍 Target Layout: ${city} + [${clusters.join(', ')}]`);
-                    }
-
-                } catch (e) {
-                    console.error(`      ⚠️ Error checking count, defaulting to single city: ${(e as Error).message}`);
-                    logError(`PG Count Check - ${city}`, (e as Error).message);
-                }
 
                 // --- EXECUTE SEARCH ON TARGET LOCATIONS ---
                 for (const location of targetLocations) {
