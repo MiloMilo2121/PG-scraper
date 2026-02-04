@@ -273,13 +273,16 @@ async function main() {
 
 
                             // Selector check
+                            // Selector check
                             const hasItems = await page!.$('.search-itm');
                             if (!hasItems) {
                                 if (pageNum === 1) {
-                                    // inside loop, expected if small town
+                                    console.log(`      📸 Taking debug screenshot for zero results: ${location}...`);
+                                    await page!.screenshot({ path: path.join(LOG_DIR, `debug_${location}_${keyword.replace(/ /g, '_')}.png`) });
                                 }
                                 break;
                             }
+
 
                             const pgResults = await page!.evaluate((cityName, keyW, queryLoc) => {
                                 return Array.from(document.querySelectorAll('.search-itm')).map(item => {
