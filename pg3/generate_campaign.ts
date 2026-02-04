@@ -265,7 +265,7 @@ async function main() {
 
                             await retry(async () => {
                                 await page!.goto(pgUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                                await smashCookies(page!);
+                                // Note: Don't call smashCookies here - it breaks PG navigation
                             });
 
                             // Selector check
