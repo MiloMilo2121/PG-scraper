@@ -113,7 +113,7 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
     const invalidWriter = getWriter(invalidPath);
     const notFoundWriter = getWriter(notFoundPath);
 
-    const limit = pLimit(4);
+    const limit = pLimit(12); // Optimized for 32GB RAM (approx 10-12 instances x 1GB/each)
     let processedCount = companies.length - pending.length;
 
     const tasks = pending.map(company => limit(async () => {

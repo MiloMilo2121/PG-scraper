@@ -41,6 +41,9 @@ export class NuclearStrategy {
 
         // Execute searches (Simulation of massive concurrency)
         const searchTasks = queries.map(q => this.queryLimit(async () => {
+            // 🛡️ SAFETY DELAY: 2-5 seconds of randomized pause to prevent IP bans
+            await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));
+
             // Rotate engines: 50% Google, 50% DDG to spread load
             const engine = Math.random() > 0.5 ? 'google' : 'ddg';
             const urls = await this.performSearch(q, engine);

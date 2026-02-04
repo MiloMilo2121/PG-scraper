@@ -3,7 +3,18 @@
 
 cd "$(dirname "$0")" || exit 1
 
-INPUT_FILE="input_new_campaign_meccatronica.csv"
+# Trova l'ultimo file CSV generato nella cartella campaigns del modulo di generazione
+# (Supponendo che vengano generati in output/campaigns/ o nella directory corrente)
+LATEST_INPUT=$(ls -t output/campaigns/*.csv 2>/dev/null | head -n 1)
+
+if [ -z "$LATEST_INPUT" ]; then
+  # Fallback se non trova CSV nelle campaigns (es. se lanciato da root)
+  INPUT_FILE="input_phase1_cleaned.csv"
+  echo "[LOOP] WARNING: No campaign files found. Using fallback: $INPUT_FILE"
+else
+  INPUT_FILE="$LATEST_INPUT"
+  echo "[LOOP] AUTO-DETECTED LATEST CAMPAIGN: $INPUT_FILE"
+fi
 
 echo "--- 🚀 STARTING MECCATRONICA ENRICHMENT $(date) 🚀 ---" >> output/enrichment_meccatronica.log
 
