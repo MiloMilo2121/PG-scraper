@@ -22,7 +22,7 @@ while true; do
   echo "[LOOP] Starting enrichment at $(date)..." >> output/enrichment_meccatronica.log
   
   # Run the enrichment batch for 1 hour or until completion
-  npx ts-node run_bulletproof_batch.ts "$INPUT_FILE" >> output/enrichment_meccatronica.log 2>&1
+  npx ts-node src/enricher/runner.ts "$INPUT_FILE" >> output/enrichment_meccatronica.log 2>&1
   EXIT_CODE=$?
   
   echo "[LOOP] Process exited with code $EXIT_CODE." >> output/enrichment_meccatronica.log
