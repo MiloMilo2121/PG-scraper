@@ -34,16 +34,15 @@ export class BrowserFactory {
     public static ACTIVE_INSTANCES = 0;
     public static instances: Set<BrowserFactory> = new Set();
 
-    constructor(userDataDir?: string) {
+    constructor() {
         this.instanceId = Math.random().toString(36).substring(7);
-        this.userDataDir = userDataDir || path.join(os.tmpdir(), `puppeteer_profile_${this.instanceId}`);
+        this.userDataDir = path.join(process.cwd(), 'temp_profiles', `browser_${this.instanceId}`);
         BrowserFactory.instances.add(this);
     }
 
-
-    public static getInstance(userDataDir?: string): BrowserFactory {
+    public static getInstance(): BrowserFactory {
         if (!BrowserFactory.instance) {
-            BrowserFactory.instance = new BrowserFactory(userDataDir);
+            BrowserFactory.instance = new BrowserFactory();
             // Zombie Cleanup
             ['exit', 'SIGINT', 'SIGTERM'].forEach(signal => {
                 process.on(signal, () => BrowserFactory.instance.close());
@@ -51,6 +50,7 @@ export class BrowserFactory {
         }
         return BrowserFactory.instance;
     }
+
 
     /**
      * Task 11: Health check - verify browser is responsive
