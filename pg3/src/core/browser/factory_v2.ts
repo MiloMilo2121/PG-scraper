@@ -32,11 +32,12 @@ export class BrowserFactory {
     public static ACTIVE_INSTANCES = 0;
     public static instances: Set<BrowserFactory> = new Set();
 
-    constructor(userDataDir: string = './temp_profiles/singleton_browser_turbo') {
-        this.userDataDir = userDataDir;
+    constructor(userDataDir?: string) {
         this.instanceId = Math.random().toString(36).substring(7);
+        this.userDataDir = userDataDir || path.join(os.tmpdir(), `puppeteer_profile_${this.instanceId}`);
         BrowserFactory.instances.add(this);
     }
+
 
     public static getInstance(userDataDir?: string): BrowserFactory {
         if (!BrowserFactory.instance) {
