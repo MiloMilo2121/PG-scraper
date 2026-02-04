@@ -123,7 +123,8 @@ export class BrowserFactory {
                     Logger.info('[BrowserFactory] ✅ Connected to Remote Swarm.');
                 } else {
                     browser = await puppeteer.launch({
-                        headless: config.browser.headless ? true : false,
+                        headless: true,
+
 
 
 
