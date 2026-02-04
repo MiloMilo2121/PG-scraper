@@ -113,8 +113,19 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
     const invalidWriter = getWriter(invalidPath);
     const notFoundWriter = getWriter(notFoundPath);
 
-    const limit = pLimit(12); // Optimized for 32GB RAM (approx 10-12 instances x 1GB/each)
+    const limit = pLimit(12); // Optimized for 32GB RAM (Hardcoded per architecture plan)
     let processedCount = companies.length - pending.length;
+
+    // Memory Watchdog Interval
+    const memoryWatchdog = setInterval(() => {
+        const used = process.memoryUsage().heapUsed / 1024 / 1024;
+        if (used > 28000) { // 28GB
+            Logger.warn(`🚨 MEMORY CRITICAL (${Math.round(used)}MB). Pausing workers...`);
+            // We can't easily pause p-limit, but we can exit to prompt restart
+            process.exit(1);
+        }
+    }, 5000);
+
 
     const tasks = pending.map(company => limit(async () => {
         try {
