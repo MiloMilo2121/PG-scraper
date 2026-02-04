@@ -114,7 +114,7 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
     const invalidWriter = getWriter(invalidPath);
     const notFoundWriter = getWriter(notFoundPath);
 
-    const limit = pLimit(12); // Optimized for 32GB RAM (Hardcoded per architecture plan)
+    const limit = pLimit(25); // 🚀 OVERDRIVE: Optimized for 32GB RAM (Increased from 12)
     let processedCount = companies.length - pending.length;
 
     // Memory Watchdog Interval

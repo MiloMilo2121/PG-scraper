@@ -29,7 +29,7 @@ export class BrowserFactory {
     private currentProfilePath: string | null = null;
 
     // Configuration
-    private static readonly MAX_CONCURRENCY = 10; // Stabilized for server
+    private static readonly MAX_CONCURRENCY = 25; // 🚀 OVERDRIVE: Stabilized for server 32GB
     private static MAX_TABS_PER_BROWSER = 8;
     public static ACTIVE_INSTANCES = 0;
     public static instances: Set<BrowserFactory> = new Set();

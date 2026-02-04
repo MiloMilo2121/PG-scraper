@@ -1,6 +1,6 @@
 {
     "google": {
-        "result_link": ".result-container .actual-link",
+        "result_link": "There is no main anchor tag (<a>) of each search result link in the provided HTML snippet.",
         "result_title": "h3"
     },
     "duckduckgo": {
