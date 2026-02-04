@@ -11,25 +11,23 @@ export class CookieConsent {
         'button.btn-accept',
         'a.cc-btn.cc-dismiss',
         'button[aria-label="Accept all"]',
-        'form[action*="consent"] button'
+        'button:contains("Accetto")',
+        '#cmp-button-accept',
+        'button.btn-primary[id*="accept"]'
     ];
+
 
     public static async handle(page: Page): Promise<void> {
         try {
-            // Fast check first
-            const frame = page.mainFrame();
-            for (const selector of this.commonSelectors) {
-                try {
-                    const btn = await frame.$(selector);
-                    if (btn) {
-                        if (await btn.isVisible()) {
-                            await btn.click();
-                            // console.log(`[Cookie] Clicked ${selector}`);
-                            return; // Usually one is enough
-                        }
-                    }
-                } catch { }
-            }
+            await page.evaluate(() => {
+                const buttons = Array.from(document.querySelectorAll('button, a'));
+                const target = buttons.find(b => {
+                    const txt = b.textContent?.toLowerCase() || '';
+                    return txt.includes('accetto') || txt.includes('acconsento') || txt.includes('accetta');
+                });
+                if (target && (target as HTMLElement).click) (target as HTMLElement).click();
+            });
+
 
             // Text based fallback (slower)
             // await page.evaluate(() => { ... }) 
