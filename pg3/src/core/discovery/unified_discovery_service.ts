@@ -254,7 +254,7 @@ export class UnifiedDiscoveryService {
         }
 
         // 🛰️ SATELLITE VERIFICATION (Fall back if no web found but we want physical confirmation)
-        if (company.address && company.city) {
+        if (company.address && company.city && process.env.ENABLE_SATELLITE_VERIFICATION === 'true') {
             Logger.info(`[Nuclear] 🛰️ Initiating Satellite Verification for: ${company.address}`);
             const satellite = SatelliteVerifier.getInstance();
             const image = await satellite.fetchStreetView(company.address, company.city);
