@@ -25,7 +25,7 @@ const TERMS = {
     MECCATRONICA: ["meccatronica", "automazione industriale", "robotica", "costruzioni meccaniche"],
     MECCANICA: ["officina meccanica", "torneria", "fresatura", "lavorazioni meccaniche di precisione", "carpenteria metallica"],
     ELETTRONICA: ["elettronica industriale", "componenti elettronici", "schede elettroniche", "progettazione elettronica"],
-    IMPIANTI_AUTOMATICI: ["impianti macchine automatiche", "mangimifici", "impianti zootecnici", "linee di produzione automatizzate", "manutenzione macchine automatiche"],
+    IMPIANTI: ["impianti", "impiantistica industriale", "impianti macchine automatiche", "mangimifici", "impianti zootecnici", "linee di produzione automatizzate", "manutenzione macchine automatiche"],
     ELETTRICO: ["materiale elettrico", "quadri elettrici industriali", "cablaggio quadri", "impianti elettrici industriali"],
     INFORMATICO: ["software house", "sviluppo software gestionale", "consulenza informatica", "sistemi integrati", "iot industriale"]
 };
