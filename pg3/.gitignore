@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+.env
+.env.*
+!.env.example
+output/
+temp/
+*.log
+.DS_Store
+*.csv
+# Keep the current input file if you want, but usually it's better to ignore and provide it separately
+# input_phase1_cleaned.csv 
+.gemini/
+brain/
+temp_profiles/

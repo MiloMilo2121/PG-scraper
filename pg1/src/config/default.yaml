@@ -1,0 +1,83 @@
+# ADR-IT v3 Configuration
+scoring:
+  weights:
+    s1_phone_exact_match: 45
+    s2_address_high_match: 25
+    s3_name_high_match: 20
+    s4_vat_found: 20
+    c1_email_domain_found: 10
+    c2_sd_org_match: 12
+    c3_corporate_signals: 8
+    c4_has_contact_page: 5
+    c5_https_ok: 2
+    allow_social_fallback: true
+  
+  penalties:
+    p1_bad_site_type: 100
+    p2_dns_fail: 100
+    p3_http_fail: 35
+    p4_name_low_match: 30
+    p5_address_low_match: 15
+    p6_contradiction: 80
+
+thresholds:
+  ok_score: 80
+  ok_margin: 20
+  high_risk_score: 94
+  high_risk_margin: 30
+  phone_frequency_limit: 3
+
+openai:
+  enabled: true
+  fallback_threshold: 50
+  min_ai_confidence: 70
+
+fetcher:
+  timeout_ms: 10000
+  retries: 3
+  backoff_ms: 1000
+  user_agent: "ADR-IT/3.0 (+http://example.com/bot)"
+
+crawl_budget:
+  max_pages_per_domain: 3
+  max_candidates_per_row: 10
+
+lists:
+  directory_domains:
+    - paginegialle.it
+    - paginebianche.it
+    - paginemail.it
+    - pgcasa.it
+    - tuttocitta.it
+    - virgilio.it
+    - libero.it
+    - italiaonline.it
+    - kompass.com
+    - europages.com
+    - misterimprese.it
+    - 1240.it
+    - 1254.it
+    - yelp.com
+    - tripadvisor.it
+    - tripadvisor.com
+  social_domains:
+    - facebook.com
+    - instagram.com
+    - linkedin.com
+    - twitter.com
+    - x.com
+    - youtube.com
+    - tiktok.com
+  marketplace_domains:
+    - amazon.it
+    - ebay.it
+    - subito.it
+  parked_indicators:
+    - "domain for sale"
+    - "dominio in vendita"
+    - "sedo"
+    - "buy this domain"
+    - "this domain is parked"
+
+system:
+  concurrency: 2

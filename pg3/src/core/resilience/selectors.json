@@ -1,0 +1,13 @@
+{
+    "google": {
+        "result_link": ".result-container .actual-link",
+        "result_title": "h3"
+    },
+    "duckduckgo": {
+        "result_link": ".result__a",
+        "result_snippet": ".result__snippet"
+    },
+    "bing": {
+        "result_link": ".b_algo h2 a"
+    }
+}
