@@ -3,6 +3,8 @@ import { Browser, Page } from 'puppeteer';
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import * as os from 'os';
+import * as path from 'path';
+
 import { ResourceManager, PhaseType } from '../../utils/resource_manager';
 import { getRandomUserAgent } from '../discovery/ua_db';
 import { GeneticFingerprinter } from './genetic_fingerprinter';
