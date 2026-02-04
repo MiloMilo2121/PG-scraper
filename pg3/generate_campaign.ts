@@ -244,6 +244,9 @@ async function main() {
             for (const keyword of KEYWORDS) {
                 console.log(`   🔎 Searching: "${keyword}"...`);
 
+                // Anti-rate-limit: Wait 5s between keyword searches
+                await delay(5000);
+
                 // --- SIMPLIFIED: Just search the main city (cluster logic removed for now) ---
                 let targetLocations = [city];
 
@@ -317,7 +320,7 @@ async function main() {
                             }
 
                             pageNum++;
-                            await delay(1000);
+                            await delay(3000); // Increased from 1000 to avoid PG rate limiting
                         }
                     } catch (e) {
                         console.log(`   ⚠️ PG Error in ${location}: ${(e as Error).message}`);
