@@ -20,13 +20,14 @@ const RESULTS_LIMIT_TRIGGER = 180; // Trigger cluster search if results > this
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
 
-// "GLI ALTRI MODI PER DIRLO" - Expanded Synonym List
+// "GLI ALTRI MODI PER DIRLO" - Focused Keyword Set
 const TERMS = {
-    MECCATRONICA: ["meccatronica", "automazione industriale", "robotica", "costruzioni meccaniche", "ingegneria meccanica", "banchi di collaudo", "presse elettriche"],
-    IMPIANTISTICA: ["impiantistica industriale", "manutenzione macchine automatiche", "installazione impianti", "quadri elettrici industriali", "revamping macchinari"],
-    MANGIFICI: ["mangifici", "nutrizione animale", "produzione mangimi", "impianti zootecnici", "alimenti zootecnici"],
-    ELETTRICO: ["materiale elettrico", "elettrotecnica", "cablaggio quadri", "automazione quadri", "elettronica industriale"],
-    INFORMATICO: ["software house", "sviluppo software gestionale", "consulenza informatica", "sistemi integrati", "fabbrica 4.0", "iot industriale"]
+    MECCATRONICA: ["meccatronica", "automazione industriale", "robotica", "costruzioni meccaniche"],
+    MECCANICA: ["officina meccanica", "torneria", "fresatura", "lavorazioni meccaniche di precisione", "carpenteria metallica"],
+    ELETTRONICA: ["elettronica industriale", "componenti elettronici", "schede elettroniche", "progettazione elettronica"],
+    IMPIANTI_AUTOMATICI: ["impianti macchine automatiche", "mangimifici", "impianti zootecnici", "linee di produzione automatizzate", "manutenzione macchine automatiche"],
+    ELETTRICO: ["materiale elettrico", "quadri elettrici industriali", "cablaggio quadri", "impianti elettrici industriali"],
+    INFORMATICO: ["software house", "sviluppo software gestionale", "consulenza informatica", "sistemi integrati", "iot industriale"]
 };
 
 // Flatten to simple list for iterating
