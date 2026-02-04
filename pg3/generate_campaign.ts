@@ -193,20 +193,8 @@ async function main() {
     let page: Page | undefined;
 
     try {
-        page = await browserFactory.newPage();
-        if (!page) throw new Error('Failed to create page from BrowserFactory');
-        // Viewport is set by GeneticFingerprinter inside newPage, but ensuring size doesn't hurt.
-        // await page.setViewport({ width: 1920, height: 1080 }); // Let Gene decide
+        // Global page creation removed - we now create pages per-task to avoid session blocking
 
-        // BLOCK RESOURCE HEAVY REQUESTS (Optimization)
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-            if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
-                req.abort();
-            } else {
-                req.continue();
-            }
-        });
 
         for (const city of CITIES) {
             console.log(`\n🏙️  PROCESSING MAIN CITY: ${city}`);
@@ -247,247 +235,279 @@ async function main() {
                 // Anti-rate-limit: Wait 5s between keyword searches
                 await delay(5000);
 
-                // --- SIMPLIFIED: Just search the main city (cluster logic removed for now) ---
-                let targetLocations = [city];
+                try {
+                    // --- NEW PAGE PER KEYWORD (Session Hygiene) ---
+                    page = await browserFactory.newPage();
+                    if (!page) throw new Error('Failed to create page');
+
+                    await page.setRequestInterception(true);
+                    page.on('request', (req) => {
+                        if (['image', 'stylesheet', 'font', 'media'].includes(req.resourceType())) {
+                            req.abort();
+                        } else {
+                            req.continue();
+                        }
+                    });
 
 
-                // --- EXECUTE SEARCH ON TARGET LOCATIONS ---
-                for (const location of targetLocations) {
-                    const isCluster = location !== city;
-                    if (isCluster) console.log(`      📍 Clustering: Checking sub-zone "${location}"...`);
+                    // --- SIMPLIFIED: Just search the main city (cluster logic removed for now) ---
+                    let targetLocations = [city];
 
-                    // --- SOURCE 1: PAGINE GIALLE (With Pagination) ---
-                    try {
-                        let pageNum = 1;
-                        let hasNext = true;
 
-                        while (hasNext && pageNum <= MAX_PAGES_PG) {
-                            const qKey = keyword.replace(/ /g, '%20');
-                            const qLoc = location.replace(/ /g, '%20');
-                            const pgUrl = `https://www.paginegialle.it/ricerca/${qKey}/${qLoc}/p-${pageNum}`;
+                    // --- EXECUTE SEARCH ON TARGET LOCATIONS ---
+                    for (const location of targetLocations) {
+                        const isCluster = location !== city;
+                        if (isCluster) console.log(`      📍 Clustering: Checking sub-zone "${location}"...`);
 
+                        // --- SOURCE 1: PAGINE GIALLE (With Pagination) ---
+                        try {
+                            let pageNum = 1;
+                            let hasNext = true;
+
+                            while (hasNext && pageNum <= MAX_PAGES_PG) {
+                                const qKey = keyword.replace(/ /g, '%20');
+                                const qLoc = location.replace(/ /g, '%20');
+                                const pgUrl = `https://www.paginegialle.it/ricerca/${qKey}/${qLoc}/p-${pageNum}`;
+
+                                await retry(async () => {
+                                    await page!.goto(pgUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+                                    // Note: Don't call smashCookies here - it breaks PG navigation
+                                });
+
+                                // Selector check
+                                const hasItems = await page!.$('.search-itm');
+                                if (!hasItems) {
+                                    if (pageNum === 1) {
+                                        // inside loop, expected if small town
+                                    }
+                                    break;
+                                }
+
+                                const pgResults = await page!.evaluate((cityName, keyW, queryLoc) => {
+                                    return Array.from(document.querySelectorAll('.search-itm')).map(item => {
+                                        const name = item.querySelector('.search-itm__rag')?.textContent?.trim() || '';
+                                        const address = item.querySelector('.search-itm__adr')?.textContent?.trim() || '';
+                                        const phone = item.querySelector('.search-itm__phone')?.textContent?.trim() || '';
+
+                                        // Website Extraction
+                                        const webElem = item.querySelector('.search-itm__url') || item.querySelector('a[href^="http"]:not([href*="paginegialle.it"])');
+                                        const website = webElem ? webElem.getAttribute('href') : '';
+
+                                        return name ? {
+                                            company_name: name,
+                                            city: cityName, // Main "Campaign City"
+                                            query_location: queryLoc, // Specific search location
+                                            address: address,
+                                            phone: phone,
+                                            website: website || undefined,
+                                            category: keyW,
+                                            source: 'PG'
+                                        } : null;
+                                    }).filter(x => x);
+                                }, city, keyword, location);
+
+                                if (pgResults.length > 0) {
+                                    console.log(`      📄 ${location} PG Page ${pageNum}: found ${pgResults.length}`);
+
+                                    for (const c of pgResults) {
+                                        // PG Deduplication: If exists, ignore (PG is usually reliable, duplicates are unlikely to be better)
+                                        if (c && !deduplicator.checkDuplicate(c)) {
+                                            deduplicator.add(c);
+                                            cityCompanies.push(c);
+                                            totalFound++;
+                                        }
+                                    }
+                                    // No immediate write
+                                } else {
+                                    hasNext = false;
+                                }
+
+                                pageNum++;
+                                await delay(3000); // Increased from 1000 to avoid PG rate limiting
+                            }
+                        } catch (e) {
+                            console.log(`   ⚠️ PG Error in ${location}: ${(e as Error).message}`);
+                            logError(`PG Scraping - ${location}`, (e as Error).message);
+                        }
+
+                        // --- SOURCE 2: GOOGLE MAPS (Local Pack / SERP) ---
+                        // Executed for EACH location (Main City OR Cluster Municipality)
+                        try {
+                            // Use 'location' (e.g. "Villafranca di Verona") instead of generic 'city'
+                            const gUrl = `https://www.google.it/search?q=${encodeURIComponent(keyword + ' ' + location)}&gl=it&hl=it`;
                             await retry(async () => {
-                                await page!.goto(pgUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                                // Note: Don't call smashCookies here - it breaks PG navigation
+                                await page!.goto(gUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+                                await smashCookies(page!);
                             });
 
-                            // Selector check
-                            const hasItems = await page!.$('.search-itm');
-                            if (!hasItems) {
-                                if (pageNum === 1) {
-                                    // inside loop, expected if small town
-                                }
-                                break;
+                            // --- DEEP SCRAPING (Click & Extract) ---
+                            let items = await page!.$$('div.VkpGBb, div[jscontroller="AtSb"], .dbg0pd');
+
+                            // TASK 4: DEEP SEARCH RECOVERY
+                            if (items.length === 0) {
+                                console.log(`      ⚠️ [Maps] Zero results for "${location}". Triggering Provincial Recovery...`);
+                                const recoveryUrl = `https://www.google.it/search?q=${encodeURIComponent(keyword + ' Provincia di ' + city)}&gl=it&hl=it`;
+
+                                await retry(async () => {
+                                    await page!.goto(recoveryUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
+                                    await smashCookies(page!);
+                                });
+
+                                items = await page!.$$('div.VkpGBb, div[jscontroller="AtSb"], .dbg0pd');
+                                if (items.length > 0) console.log(`      🔄 Recovery found: ${items.length} items (Regional fallback)`);
                             }
 
-                            const pgResults = await page!.evaluate((cityName, keyW, queryLoc) => {
-                                return Array.from(document.querySelectorAll('.search-itm')).map(item => {
-                                    const name = item.querySelector('.search-itm__rag')?.textContent?.trim() || '';
-                                    const address = item.querySelector('.search-itm__adr')?.textContent?.trim() || '';
-                                    const phone = item.querySelector('.search-itm__phone')?.textContent?.trim() || '';
+                            const gResults: any[] = [];
 
-                                    // Website Extraction
-                                    const webElem = item.querySelector('.search-itm__url') || item.querySelector('a[href^="http"]:not([href*="paginegialle.it"])');
-                                    const website = webElem ? webElem.getAttribute('href') : '';
+                            if (items.length > 0) {
+                                console.log(`      📍 [Maps] ${location}: Found ${items.length} candidates. Deep scanning...`);
+                            }
 
-                                    return name ? {
-                                        company_name: name,
-                                        city: cityName, // Main "Campaign City"
-                                        query_location: queryLoc, // Specific search location
-                                        address: address,
-                                        phone: phone,
-                                        website: website || undefined,
-                                        category: keyW,
-                                        source: 'PG'
-                                    } : null;
-                                }).filter(x => x);
-                            }, city, keyword, location);
+                            for (const item of items) {
+                                try {
+                                    // 1. Get Basic Name first
+                                    const basicName = await item.evaluate(el => el.textContent?.split('\n')[0].trim() || 'Unknown');
 
-                            if (pgResults.length > 0) {
-                                console.log(`      📄 ${location} PG Page ${pageNum}: found ${pgResults.length}`);
+                                    // 2. Click to open side panel
+                                    await item.click();
+                                    try {
+                                        await page!.waitForSelector('div[role="complementary"]', { timeout: 3000 });
+                                    } catch (e) { }
 
-                                for (const c of pgResults) {
-                                    // PG Deduplication: If exists, ignore (PG is usually reliable, duplicates are unlikely to be better)
-                                    if (c && !deduplicator.checkDuplicate(c)) {
+                                    // 3. Extract from Side Panel
+                                    const details = await page!.evaluate(() => {
+                                        const side = document.querySelector('div[role="complementary"]');
+                                        if (!side) return null;
+
+                                        const title = side.querySelector('h2')?.textContent?.trim() || '';
+
+                                        // Website
+                                        const webBtn = Array.from(side.querySelectorAll('a')).find(a =>
+                                            a.textContent?.toLowerCase().includes('sito') ||
+                                            a.textContent?.toLowerCase().includes('website') ||
+                                            a.getAttribute('aria-label')?.toLowerCase().includes('sito')
+                                        );
+                                        let website = webBtn?.getAttribute('href') || '';
+                                        if (website.includes('/url?q=')) website = website.split('/url?q=')[1].split('&')[0];
+                                        website = decodeURIComponent(website);
+
+                                        // Phone
+                                        let phone = '';
+                                        const phoneBtn = Array.from(side.querySelectorAll('button[data-tooltip*="Chiama"], button[aria-label*="Call"], button[data-item-id="phone"]')).find(x => x);
+                                        if (phoneBtn) {
+                                            phone = phoneBtn.getAttribute('aria-label') || phoneBtn.getAttribute('data-item-id') || '';
+                                        }
+                                        if (!phone || phone.length < 5) {
+                                            const text = (side as HTMLElement).innerText || '';
+                                            const match = text.match(/((\+|00)39)?\s?0\d{1,4}[\s-]?\d{4,10}/);
+                                            if (match) phone = match[0];
+                                        }
+                                        phone = phone.replace(/[^0-9+ ]/g, '').trim();
+
+                                        // Address
+                                        const addrBtn = Array.from(side.querySelectorAll('button[data-item-id="address"]')).find(x => x);
+                                        const address = addrBtn?.textContent?.trim() || '';
+
+                                        return { company_name: title, website, phone, address };
+                                    });
+
+                                    if (details && details.company_name) {
+                                        //  console.log(`         ✅ Deep Matched: ${details.company_name}`);
+                                        gResults.push({
+                                            company_name: details.company_name,
+                                            city: city, // Main City Context
+                                            query_location: location, // Specific Municipality Scraped
+                                            address: details.address,
+                                            phone: details.phone,
+                                            website: details.website || undefined,
+                                            category: keyword,
+                                            source: 'GoogleMaps_Deep'
+                                        });
+                                    } else {
+                                        gResults.push({
+                                            company_name: basicName,
+                                            city: city,
+                                            query_location: location,
+                                            category: keyword,
+                                            source: 'Google_Shallow',
+                                            website: undefined
+                                        });
+                                    }
+
+                                    await delay(300 + Math.random() * 500);
+
+                                } catch (e) { }
+                            }
+
+                            // Process Google Results with Highlander Logic
+
+                            // Note: We don't filter simple names here because deduplicator is smart enough?
+                            // Actually, we should still filter 'paginegialle' junk.
+
+                            const cleanGResults = gResults.filter(c => {
+                                const n = c.company_name.toLowerCase();
+                                return !n.includes('paginegialle') && !n.includes('risultati') && n.length < 60;
+                            });
+
+                            if (cleanGResults.length > 0) {
+                                console.log(`      🗺️  [Maps] ${location}: found ${cleanGResults.length} unique items`);
+
+                                for (const c of cleanGResults) {
+                                    // --- THE HIGHLANDER MERGE ---
+                                    const existing = deduplicator.checkDuplicate(c);
+
+                                    if (existing) {
+                                        console.log(`         🔄 Merging info for: ${existing.company_name}`);
+                                        // Highlander Logic: Maps enriches Website & Phone
+                                        if (c.website && !existing.website) existing.website = c.website;
+                                        if (c.phone && !existing.phone) existing.phone = c.phone;
+                                        existing.source = 'Hybrid (PG+Maps)'; // Mark as enriched
+                                    } else {
+                                        // New Company found by Maps
+                                        c.source = 'Maps_Only';
                                         deduplicator.add(c);
                                         cityCompanies.push(c);
                                         totalFound++;
                                     }
                                 }
-                                // No immediate write
-                            } else {
-                                hasNext = false;
                             }
 
-                            pageNum++;
-                            await delay(3000); // Increased from 1000 to avoid PG rate limiting
-                        }
-                    } catch (e) {
-                        console.log(`   ⚠️ PG Error in ${location}: ${(e as Error).message}`);
-                        logError(`PG Scraping - ${location}`, (e as Error).message);
-                    }
-
-                    // --- SOURCE 2: GOOGLE MAPS (Local Pack / SERP) ---
-                    // Executed for EACH location (Main City OR Cluster Municipality)
-                    try {
-                        // Use 'location' (e.g. "Villafranca di Verona") instead of generic 'city'
-                        const gUrl = `https://www.google.it/search?q=${encodeURIComponent(keyword + ' ' + location)}&gl=it&hl=it`;
-                        await retry(async () => {
-                            await page!.goto(gUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                            await smashCookies(page!);
-                        });
-
-                        // --- DEEP SCRAPING (Click & Extract) ---
-                        let items = await page!.$$('div.VkpGBb, div[jscontroller="AtSb"], .dbg0pd');
-
-                        // TASK 4: DEEP SEARCH RECOVERY
-                        if (items.length === 0) {
-                            console.log(`      ⚠️ [Maps] Zero results for "${location}". Triggering Provincial Recovery...`);
-                            const recoveryUrl = `https://www.google.it/search?q=${encodeURIComponent(keyword + ' Provincia di ' + city)}&gl=it&hl=it`;
-
-                            await retry(async () => {
-                                await page!.goto(recoveryUrl, { waitUntil: 'domcontentloaded', timeout: 20000 });
-                                await smashCookies(page!);
-                            });
-
-                            items = await page!.$$('div.VkpGBb, div[jscontroller="AtSb"], .dbg0pd');
-                            if (items.length > 0) console.log(`      🔄 Recovery found: ${items.length} items (Regional fallback)`);
+                        } catch (e) {
+                            console.log(`   ⚠️ Google Error in ${location}: ${(e as Error).message}`);
+                            logError(`Maps Scrape - ${location}`, (e as Error).message);
                         }
 
-                        const gResults: any[] = [];
+                        // Slow down slightly between locations
+                        await delay(500);
 
-                        if (items.length > 0) {
-                            console.log(`      📍 [Maps] ${location}: Found ${items.length} candidates. Deep scanning...`);
-                        }
+                    } // End Location Loop
 
-                        for (const item of items) {
-                            try {
-                                // 1. Get Basic Name first
-                                const basicName = await item.evaluate(el => el.textContent?.split('\n')[0].trim() || 'Unknown');
+                    // Close page after keyword is done
+                    if (page) await page.close();
+                    page = undefined;
 
-                                // 2. Click to open side panel
-                                await item.click();
-                                try {
-                                    await page!.waitForSelector('div[role="complementary"]', { timeout: 3000 });
-                                } catch (e) { }
+                } finally {
+                    // Ensure closed if error
+                    if (page) await page.close();
+                }
 
-                                // 3. Extract from Side Panel
-                                const details = await page!.evaluate(() => {
-                                    const side = document.querySelector('div[role="complementary"]');
-                                    if (!side) return null;
-
-                                    const title = side.querySelector('h2')?.textContent?.trim() || '';
-
-                                    // Website
-                                    const webBtn = Array.from(side.querySelectorAll('a')).find(a =>
-                                        a.textContent?.toLowerCase().includes('sito') ||
-                                        a.textContent?.toLowerCase().includes('website') ||
-                                        a.getAttribute('aria-label')?.toLowerCase().includes('sito')
-                                    );
-                                    let website = webBtn?.getAttribute('href') || '';
-                                    if (website.includes('/url?q=')) website = website.split('/url?q=')[1].split('&')[0];
-                                    website = decodeURIComponent(website);
-
-                                    // Phone
-                                    let phone = '';
-                                    const phoneBtn = Array.from(side.querySelectorAll('button[data-tooltip*="Chiama"], button[aria-label*="Call"], button[data-item-id="phone"]')).find(x => x);
-                                    if (phoneBtn) {
-                                        phone = phoneBtn.getAttribute('aria-label') || phoneBtn.getAttribute('data-item-id') || '';
-                                    }
-                                    if (!phone || phone.length < 5) {
-                                        const text = (side as HTMLElement).innerText || '';
-                                        const match = text.match(/((\+|00)39)?\s?0\d{1,4}[\s-]?\d{4,10}/);
-                                        if (match) phone = match[0];
-                                    }
-                                    phone = phone.replace(/[^0-9+ ]/g, '').trim();
-
-                                    // Address
-                                    const addrBtn = Array.from(side.querySelectorAll('button[data-item-id="address"]')).find(x => x);
-                                    const address = addrBtn?.textContent?.trim() || '';
-
-                                    return { company_name: title, website, phone, address };
-                                });
-
-                                if (details && details.company_name) {
-                                    //  console.log(`         ✅ Deep Matched: ${details.company_name}`);
-                                    gResults.push({
-                                        company_name: details.company_name,
-                                        city: city, // Main City Context
-                                        query_location: location, // Specific Municipality Scraped
-                                        address: details.address,
-                                        phone: details.phone,
-                                        website: details.website || undefined,
-                                        category: keyword,
-                                        source: 'GoogleMaps_Deep'
-                                    });
-                                } else {
-                                    gResults.push({
-                                        company_name: basicName,
-                                        city: city,
-                                        query_location: location,
-                                        category: keyword,
-                                        source: 'Google_Shallow',
-                                        website: undefined
-                                    });
-                                }
-
-                                await delay(300 + Math.random() * 500);
-
-                            } catch (e) { }
-                        }
-
-                        // Process Google Results with Highlander Logic
-
-                        // Note: We don't filter simple names here because deduplicator is smart enough?
-                        // Actually, we should still filter 'paginegialle' junk.
-
-                        const cleanGResults = gResults.filter(c => {
-                            const n = c.company_name.toLowerCase();
-                            return !n.includes('paginegialle') && !n.includes('risultati') && n.length < 60;
-                        });
-
-                        if (cleanGResults.length > 0) {
-                            console.log(`      🗺️  [Maps] ${location}: found ${cleanGResults.length} unique items`);
-
-                            for (const c of cleanGResults) {
-                                // --- THE HIGHLANDER MERGE ---
-                                const existing = deduplicator.checkDuplicate(c);
-
-                                if (existing) {
-                                    console.log(`         🔄 Merging info for: ${existing.company_name}`);
-                                    // Highlander Logic: Maps enriches Website & Phone
-                                    if (c.website && !existing.website) existing.website = c.website;
-                                    if (c.phone && !existing.phone) existing.phone = c.phone;
-                                    existing.source = 'Hybrid (PG+Maps)'; // Mark as enriched
-                                } else {
-                                    // New Company found by Maps
-                                    c.source = 'Maps_Only';
-                                    deduplicator.add(c);
-                                    cityCompanies.push(c);
-                                    totalFound++;
-                                }
-                            }
-                        }
-
-                    } catch (e) {
-                        console.log(`   ⚠️ Google Error in ${location}: ${(e as Error).message}`);
-                        logError(`Maps Scrape - ${location}`, (e as Error).message);
-                    }
-
-                    // Slow down slightly between locations
-                    await delay(500);
-
-                } // End Location Loop
             } // End Keyword Loop
 
             // --- BATCH WRITE AT END OF CITY ---
             if (cityCompanies.length > 0) {
                 console.log(`\n☢️  STARTING NUCLEAR ENRICHMENT for ${cityCompanies.length} companies...`);
 
+                // New page for enrichment
+                page = await browserFactory.newPage();
+
+
                 // Nuclear Enrichment Loop
                 for (const comp of cityCompanies) {
                     await enrichCompany(comp, page!);
                 }
+
+                if (page) await page.close();
+                page = undefined;
 
                 console.log(`\n💾 Saving ${cityCompanies.length} unique companies for ${city}...`);
                 await csvWriter.writeRecords(cityCompanies);
