@@ -26,17 +26,17 @@ async function main() {
     EnvValidator.validate();
 
     // 1. RUN 1: FAST (Process Everything)
-    const run1Input = await loadCompanies(INPUT_FILE); // From raw input
-    await executeRun(1, DiscoveryMode.FAST_RUN1, run1Input);
+    const allInput = await loadCompanies(INPUT_FILE); // From raw input
 
-    // 2. RUN 2: DEEP (Process Invalid + Not Found from Run 1)
-    const run2Input = [
-        ...await loadCompanies(path.join(OUTPUT_DIR, 'run1_found_invalid.csv')),
-        ...await loadCompanies(path.join(OUTPUT_DIR, 'run1_not_found.csv'))
-    ];
-    await executeRun(2, DiscoveryMode.DEEP_RUN2, run2Input);
+    // 🦘 USER OVERRIDE: SKIPPING RUN 1 (FAST)
+    Logger.info('🦘 SKIPPING RUN 1 (FAST) -> JUMPING DIRECTLY TO RUN 2 (DEEP)');
+    // await executeRun(1, DiscoveryMode.FAST_RUN1, allInput);
 
-    // 3. RUN 3: AGGRESSIVE (Process remaining issues)
+    // 2. RUN 2: DEEP (Process EVERYTHING using Deep Mode)
+    // We feed the full 'allInput' list directly into Run 2
+    await executeRun(2, DiscoveryMode.DEEP_RUN2, allInput);
+
+    // 3. RUN 3: AGGRESSIVE (Process remaining issues from Run 2)
     const run3Input = [
         ...await loadCompanies(path.join(OUTPUT_DIR, 'run2_found_invalid.csv')),
         ...await loadCompanies(path.join(OUTPUT_DIR, 'run2_not_found.csv'))
