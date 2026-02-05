@@ -1,25 +1,51 @@
 version: '3.8'
+
+# 🚀 ANTIGRAVITY DOCKER STACK
+# Run with: docker-compose up -d
+
 services:
-  app:
-    build: .
-    volumes:
-      - .:/app
-    environment:
-      - REDIS_HOST=redis
-    depends_on:
-      - redis
+  # 🗄️ REDIS - Job Queue & Cache
   redis:
-    image: redis:alpine
+    image: redis:7-alpine
+    container_name: antigravity-redis
+    restart: unless-stopped
     ports:
       - "6379:6379"
-  neo4j:
-    image: neo4j:community
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    environment:
-      - NEO4J_AUTH=neo4j/password
     volumes:
-      - neo4j_data:/data
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 📊 BULL-BOARD - Queue Dashboard (http://localhost:3001)
+  bull-board:
+    image: venatum/bull-board
+    container_name: antigravity-dashboard
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      - redis
+
+  # 🌐 ENRICHER - Main Worker (to be containerized in Task 10)
+  # enricher:
+  #   build: .
+  #   container_name: antigravity-worker
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - redis
+  #   environment:
+  #     REDIS_URL: redis://redis:6379
+  #   volumes:
+  #     - ./data:/app/data
+  #     - ./output:/app/output
+
 volumes:
-  neo4j_data:
+  redis_data:
+    driver: local

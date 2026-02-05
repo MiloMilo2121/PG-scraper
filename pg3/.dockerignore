@@ -1,0 +1,19 @@
+# .dockerignore - Reduce Docker context size
+node_modules
+dist
+*.log
+.git
+.gitignore
+.env
+.env.local
+*.md
+!README.md
+coverage
+.nyc_output
+*.test.ts
+*.spec.ts
+__tests__
+.vscode
+.idea
+output/
+data/*.db

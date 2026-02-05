@@ -54,9 +54,10 @@ async function main() {
     // 4. FINAL MERGE
     await mergeResults();
 
-    // Close resources
-    // (BrowserFactory is singleton, usually stays open on server or we close it here)
-    process.exit(0);
+    // Close resources gracefully
+    Logger.info('🏁 PIPELINE COMPLETE. Closing browser...');
+    await BrowserFactory.getInstance().close();
+    Logger.info('✅ All resources released.');
 }
 
 
@@ -117,15 +118,13 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
     const limit = pLimit(25); // 🚀 OVERDRIVE: Optimized for 32GB RAM (Increased from 12)
     let processedCount = companies.length - pending.length;
 
-    // Memory Watchdog Interval
+    // Memory Watchdog Interval (LOG ONLY - NO EXIT)
     const memoryWatchdog = setInterval(() => {
         const used = process.memoryUsage().heapUsed / 1024 / 1024;
-        if (used > 28000) { // 28GB
-            Logger.warn(`🚨 MEMORY CRITICAL (${Math.round(used)}MB). Pausing workers...`);
-            // We can't easily pause p-limit, but we can exit to prompt restart
-            process.exit(1);
+        if (used > 20000) { // 20GB warning threshold
+            Logger.warn(`🚨 MEMORY HIGH (${Math.round(used)}MB). Consider reducing concurrency.`);
         }
-    }, 5000);
+    }, 10000);
 
 
     const tasks = pending.map(company => limit(async () => {
@@ -160,11 +159,10 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
             console.error(`Error processing ${company.company_name}:`, error);
         } finally {
             processedCount++;
-            // HARAKIRI: Exit after 50 items to clean memory/Chrome/Resources
-            // The outer bash loop will restart us immediately.
+            // Memory cleanup: Close idle browser contexts periodically
             if (processedCount % 50 === 0) {
-                Logger.info(`☠️ HARAKIRI: Refreshing process after 50 items (Memory cleanup)`);
-                process.exit(0);
+                Logger.info(`🔄 [${processedCount}/${companies.length}] Periodic cleanup...`);
+                // BrowserFactory will handle context cleanup internally
             }
             if (processedCount % 20 === 0) console.log(`[Run ${runId}] ${processedCount}/${companies.length}`);
         }

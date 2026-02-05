@@ -1,85 +1,91 @@
-
 import * as fs from 'fs';
 import * as path from 'path';
+import { parse } from 'fast-csv';
 import { createObjectCsvWriter } from 'csv-writer';
 
 const INPUT_FILE = 'output/campaigns/RESCUE_BOARD_MASTER.csv';
 const OUTPUT_FILE = 'output/campaigns/BOARD_FINAL_SANITISED.csv';
 
 async function sanitize() {
-    console.log("🧹 STARTING SANITIZATION...");
+    console.log("🧹 STARTING ROBUST SANITIZATION (FAST-CSV v2)...");
 
-    const content = fs.readFileSync(INPUT_FILE, 'utf-8');
-    const lines = content.split('\n');
-    const cleanedRecords: any[] = [];
+    if (!fs.existsSync(INPUT_FILE)) {
+        console.error(`❌ Input file not found: ${INPUT_FILE}`);
+        process.exit(1);
+    }
 
-    let currentRecord: any = null;
-    let inAddress = false;
+    const records: any[] = [];
+    const seenMap = new Set<string>(); // Deduplication
 
-    // Skip header
-    for (let i = 1; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
+    await new Promise<void>((resolve, reject) => {
+        fs.createReadStream(INPUT_FILE)
+            .pipe(parse({
+                headers: true,
+                ignoreEmpty: true,
+                discardUnmappedColumns: true,
+                strictColumnHandling: false,
+                quote: '"',
+                escape: '"',
+                ltrim: true,
+                rtrim: true
+            }))
+            .on('error', error => {
+                console.error("Parsing Error:", error);
+                reject(error);
+            })
+            .on('data', (row) => {
+                // 1. Clean up the messy address/phone fields
+                let name = row.company_name?.trim() || 'Unknown';
+                let city = row.city?.trim() || '';
+                // Address often contains newlines and tabs
+                let address = row.address?.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim() || '';
+                let phone = row.phone?.replace(/[\r\n\t]+/g, '').trim() || '';
+                let website = row.website?.trim() || '';
+                let category = row.category?.trim() || '';
 
-        // Pattern Check: Does it start with a new record? (Company name usually doesn't have a leading quote unless it's a Maps shallow result)
-        // PagineGialle results: name,city,"address
-        const pgMatch = line.match(/^([^,]+),([^,]+),"(.*)$/);
-        const shallowMatch = line.match(/^"(.*)"/);
+                // 2. Extract Province from Address if missing
+                let province = row.province || '';
+                if (!province) {
+                    const provMatch = address.match(/\(([A-Z]{2})\)/);
+                    if (provMatch) province = provMatch[1];
+                }
 
-        if (pgMatch) {
-            // New PG Record
-            currentRecord = {
-                company_name: pgMatch[1].replace(/["']/g, '').trim(),
-                city: pgMatch[2].replace(/["']/g, '').trim(),
-                address: pgMatch[3].replace(/["']/g, '').trim(),
-                phone: '',
-                website: '',
-                category: ''
-            };
-            inAddress = true;
-            continue;
-        }
+                // 3. Default Category
+                if (!category || category.toLowerCase() === 'industry') category = 'Meccanica/Automazione';
 
-        if (shallowMatch && !inAddress) {
-            // Shallow Maps Record
-            const text = shallowMatch[1];
-            const phoneMatch = text.match(/\+39\s?[\d\s-]{8,20}/);
-            const name = text.split(/\d\.\d/)[0].split(/·|·/)[0].trim().replace(/^Sponsored/, '');
+                // 4. Fallback for weird rows (sometimes city gets stuck in name?)
+                // If name is huge and city is empty, split it? 
+                // Let's trust fast-csv for now, but ensure we don't have empty critical fields.
+                if (name.length > 100 && !city) {
+                    // heuristics... skip for now
+                }
 
-            cleanedRecords.push({
-                company_name: name || "Unknown",
-                city: "Local Area",
-                address: text.split('·').slice(1, 3).join(' ').trim() || text.substring(0, 50),
-                phone: phoneMatch ? phoneMatch[0].trim() : "",
-                website: text.toLowerCase().includes("website") ? "Yes" : "",
-                category: "Industry"
+                // Deduplication Key
+                const key = `${name.toLowerCase()}|${city.toLowerCase()}`;
+
+                if (!seenMap.has(key)) {
+                    seenMap.add(key);
+                    records.push({
+                        company_name: name,
+                        city: city,
+                        province: province,
+                        address: address,
+                        phone: phone,
+                        website: website,
+                        category: category
+                    });
+                }
+            })
+            .on('end', () => {
+                resolve();
             });
-            continue;
-        }
+    });
 
-        if (inAddress) {
-            // We are inside a multiline address
-            if (line.includes('",')) {
-                // End of address
-                const [addrPart, rest] = line.split('",');
-                currentRecord.address += " " + addrPart.replace(/["']/g, '').trim();
+    console.log(`✅ Parsed ${records.length} valid unique records.`);
 
-                const parts = rest.split(',');
-                currentRecord.phone = parts[0].replace(/["']/g, '').replace(/[\n\r]/g, ' ').trim();
-                currentRecord.website = parts[1]?.replace(/["']/g, '').trim() || '';
-                currentRecord.category = parts[2]?.replace(/["']/g, '').trim() || '';
-
-
-                // Cleanup address
-                currentRecord.address = currentRecord.address.replace(/\s+/g, ' ').trim();
-
-                cleanedRecords.push({ ...currentRecord });
-                inAddress = false;
-            } else {
-
-                currentRecord.address += " " + line.replace(/["']/g, '').trim();
-            }
-        }
+    if (records.length === 0) {
+        console.warn("⚠️ No records parsed! Check the input format or headers.");
+        return;
     }
 
     const csvWriter = createObjectCsvWriter({
@@ -95,17 +101,8 @@ async function sanitize() {
         ]
     });
 
-    // Final Touch: Extract Province and Sector
-    const finalRecords = cleanedRecords.map(r => {
-        const provMatch = r.address.match(/\(([A-Z]{2})\)/);
-        r.province = provMatch ? provMatch[1] : '';
-        if (!r.category || r.category === 'Industry') r.category = 'Meccanica/Automazione';
-        return r;
-    });
-
-    await csvWriter.writeRecords(finalRecords);
-
-    console.log(`✨ SANITIZATION COMPLETE! Saved ${cleanedRecords.length} clean records to ${OUTPUT_FILE}`);
+    await csvWriter.writeRecords(records);
+    console.log(`✨ SANITIZATION COMPLETE! Saved to ${OUTPUT_FILE}`);
 }
 
-sanitize();
+sanitize().catch(console.error);

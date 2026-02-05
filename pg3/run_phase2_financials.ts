@@ -4,9 +4,9 @@ import * as path from 'path';
 import { parse } from 'fast-csv';
 import { createObjectCsvWriter } from 'csv-writer';
 import pLimit from 'p-limit';
-import { FinancialService } from './src/core/financial/service';
-import { Logger } from './src/utils/logger';
-import { CompanyInput } from './src/core/company_types';
+import { FinancialService } from './src/enricher/core/financial/service';
+import { Logger } from './src/enricher/utils/logger';
+import { CompanyInput } from './src/enricher/types';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
