@@ -1,3 +1,13 @@
+/**
+ * 🌊 UNIFIED DISCOVERY SERVICE v2
+ * WAVE-BASED ARCHITECTURE
+ * 
+ * Wave 1: THE SWARM (Parallel: HyperGuesser + Google Name + Google Address + Google Phone)
+ * Wave 2: THE NET (Fallback: Bing + DuckDuckGo)
+ * Wave 3: THE JUDGE (AI Validation if Regex fails)
+ * 
+ * NO REGISTRY CALLS HERE - Registries are for Financial data only
+ */
 
 import pLimit from 'p-limit';
 import { BrowserFactory } from '../browser/factory_v2';
@@ -7,45 +17,49 @@ import { Logger } from '../../utils/logger';
 import { RateLimiter, MemoryRateLimiter } from '../rate_limiter';
 import { ContentFilter } from './content_filter';
 import { HyperGuesser } from './hyper_guesser_v2';
-import { ItalianRegistrySearch } from './italian_registry';
 import { GoogleSerpAnalyzer } from './serp_analyzer';
 import { DuckDuckGoSerpAnalyzer } from './ddg_analyzer';
-import { NuclearStrategy } from './nuclear_strategy';
-import { DomainGuesser } from '../../utils/domain_guesser';
 import { LLMValidator } from '../ai/llm_validator';
 import { AntigravityClient } from '../../observability/antigravity_client';
-import { SatelliteVerifier } from '../verification/satellite_verifier';
 import { HoneyPotDetector } from '../security/honeypot_detector';
 
-export enum DiscoveryMode {
-    FAST_RUN1 = 'FAST',           // High precision, Hyperspeed
-    DEEP_RUN2 = 'DEEP',           // Fallback, exhaustive search
-    AGGRESSIVE_RUN3 = 'AGGRESSIVE', // Creative, probabilistic
-    NUCLEAR_RUN4 = 'NUCLEAR'      // ☢️ Total saturation (20+ methods)
-}
-
-const THRESHOLDS = {
-    FAST_STRICT: 0.9,
-    DEEP_RELAXED: 0.85,
-    REGISTRY: 0.8,
-    AI_HIGH: 0.95,
-    AI_LOW: 0.85
-};
+// ============================================================================
+// INTERFACES
+// ============================================================================
 
 export interface DiscoveryResult {
     url: string | null;
     status: 'FOUND_VALID' | 'FOUND_INVALID' | 'NOT_FOUND' | 'ERROR';
     method: string;
     confidence: number;
+    wave: string;
     details: any;
 }
 
+export interface WaveResult {
+    candidates: Array<{
+        url: string;
+        source: string;
+        rawConfidence: number;
+    }>;
+}
+
+const THRESHOLDS = {
+    WAVE1_SWARM: 0.85,      // High bar for Swarm results
+    WAVE2_NET: 0.75,        // Medium bar for fallback engines
+    WAVE3_JUDGE: 0.70,      // AI final decision
+    MINIMUM_VALID: 0.6      // Floor for any acceptance
+};
+
+// ============================================================================
+// UNIFIED DISCOVERY SERVICE v2
+// ============================================================================
+
 export class UnifiedDiscoveryService {
     private browserFactory: BrowserFactory;
-    private domainGuesser: any;
-    private nuclearStrategy: NuclearStrategy;
-    private validatorLimit = pLimit(5); // Parallel validations per company
     private rateLimiter: RateLimiter;
+    private validatorLimit = pLimit(5);
+    private fingerprinter: GeneticFingerprinter;
 
     constructor(
         browserFactory?: BrowserFactory,
@@ -53,439 +67,485 @@ export class UnifiedDiscoveryService {
     ) {
         this.browserFactory = browserFactory || BrowserFactory.getInstance();
         this.rateLimiter = rateLimiter || new MemoryRateLimiter();
-        this.domainGuesser = new DomainGuesser();
-        this.nuclearStrategy = new NuclearStrategy();
+        this.fingerprinter = GeneticFingerprinter.getInstance();
     }
 
-    public async discover(company: CompanyInput, mode: DiscoveryMode): Promise<DiscoveryResult> {
-        Logger.info(`[Unified] Analyzing "${company.company_name}" (Mode: ${mode})`);
-
-        // Notify Antigravity: START
-        AntigravityClient.getInstance().trackCompanyUpdate(company, 'SEARCHING', { mode });
+    // =========================================================================
+    // 🌊 MAIN DISCOVERY ENTRY POINT
+    // =========================================================================
+    public async discover(company: CompanyInput): Promise<DiscoveryResult> {
+        Logger.info(`[Discovery] 🌊 Starting WAVE discovery for "${company.company_name}"`);
+        AntigravityClient.getInstance().trackCompanyUpdate(company, 'SEARCHING', { mode: 'WAVES' });
 
         try {
-            // --- STRATEGY 0: PRE-VALIDATION (Check Website from Step 1) ---
+            // --- PRE-CHECK: Validate existing website if present ---
             if (company.website && company.website.length > 5 && !company.website.includes('paginegialle.it')) {
-                Logger.info(`[Unified] 🏁 Verifying Pre-Scraped Website: ${company.website}`);
-                const preVer = await this.deepVerify(company.website, company);
-                if (preVer && preVer.confidence >= 0.6) {
-                    const res: DiscoveryResult = {
+                Logger.info(`[Discovery] 🏁 Pre-validating existing website: ${company.website}`);
+                const preCheck = await this.deepVerify(company.website, company);
+                if (preCheck && preCheck.confidence >= THRESHOLDS.MINIMUM_VALID) {
+                    const result: DiscoveryResult = {
                         url: company.website,
                         status: 'FOUND_VALID',
-                        method: 'step1_scraped',
-                        confidence: preVer.confidence,
-                        details: preVer
+                        method: 'pre_existing',
+                        confidence: preCheck.confidence,
+                        wave: 'PRE',
+                        details: preCheck
                     };
-                    this.notifySuccess(company, res);
-                    return res;
+                    this.notifySuccess(company, result);
+                    return result;
                 }
             }
 
-            // --- STRATEGY 1: FAST RUN (HyperGuess + Registry + Top Google) ---
-            if (mode === DiscoveryMode.FAST_RUN1) {
-                return await this.executeFastRun(company);
+            // =====================================================================
+            // 🌊 WAVE 1: THE SWARM (Parallel Execution)
+            // =====================================================================
+            Logger.info(`[Discovery] 🐝 WAVE 1: THE SWARM`);
+            const wave1Result = await this.executeWave1Swarm(company);
+            if (wave1Result) {
+                this.notifySuccess(company, wave1Result);
+                return wave1Result;
             }
 
-            // --- STRATEGY 2: DEEP RUN (Search Fallbacks + Social + Extended Guess) ---
-            if (mode === DiscoveryMode.DEEP_RUN2) {
-                return await this.executeDeepRun(company);
+            // =====================================================================
+            // 🌊 WAVE 2: THE NET (Bing + DuckDuckGo)
+            // =====================================================================
+            Logger.info(`[Discovery] 🕸️ WAVE 2: THE NET`);
+            const wave2Result = await this.executeWave2Net(company);
+            if (wave2Result) {
+                this.notifySuccess(company, wave2Result);
+                return wave2Result;
             }
 
-            // --- STRATEGY 3: AGGRESSIVE RUN (Domain Gen + Loose Validation) ---
-            if (mode === DiscoveryMode.AGGRESSIVE_RUN3) {
-                return await this.executeAggressiveRun(company);
+            // =====================================================================
+            // 🌊 WAVE 3: THE JUDGE (AI Validation)
+            // =====================================================================
+            Logger.info(`[Discovery] ⚖️ WAVE 3: THE JUDGE`);
+            const wave3Result = await this.executeWave3Judge(company);
+            if (wave3Result) {
+                this.notifySuccess(company, wave3Result);
+                return wave3Result;
             }
 
-            // --- STRATEGY 4: NUCLEAR RUN (Total War) ---
-            if (mode === DiscoveryMode.NUCLEAR_RUN4) {
-                return await this.executeNuclearRun(company);
-            }
+            // All waves exhausted
+            AntigravityClient.getInstance().trackCompanyUpdate(company, 'FAILED', { reason: 'All waves exhausted' });
+            return {
+                url: null,
+                status: 'NOT_FOUND',
+                method: 'waves_exhausted',
+                confidence: 0,
+                wave: 'ALL',
+                details: {}
+            };
 
         } catch (error) {
-            Logger.error(`[Unified] Error processing ${company.company_name}`, error);
+            Logger.error(`[Discovery] Error for ${company.company_name}:`, error);
             AntigravityClient.getInstance().trackCompanyUpdate(company, 'FAILED', { error: (error as Error).message });
-            return { url: null, status: 'ERROR', method: 'exception', confidence: 0, details: { error: (error as Error).message } };
+            return {
+                url: null,
+                status: 'ERROR',
+                method: 'exception',
+                confidence: 0,
+                wave: 'ERROR',
+                details: { error: (error as Error).message }
+            };
         }
-
-        // Notify Antigravity: NOT FOUND
-        AntigravityClient.getInstance().trackCompanyUpdate(company, 'FAILED', { reason: 'Exhausted strategies' });
-        return { url: null, status: 'NOT_FOUND', method: 'exhausted', confidence: 0, details: {} };
-    }
-
-    private notifySuccess(company: CompanyInput, res: DiscoveryResult) {
-        AntigravityClient.getInstance().trackCompanyUpdate(company, 'FOUND', {
-            url: res.url,
-            method: res.method,
-            confidence: res.confidence
-        });
-
-        // 🕸️ KNOWLEDGE GRAPH UPDATE
-        try {
-            // Enrich company input with found website before merging
-            const enrichedCompany = { ...company, website: res.url || company.website };
-            import('../knowledge/graph_client').then(({ GraphClient }) => {
-                const client = GraphClient.getInstance();
-                // Fire and forget to not block flow
-                client.mergeCompany(enrichedCompany).catch(e => {
-                    // Silent fail for now if DB down
-                });
-            });
-        } catch (e) { }
     }
 
     // =========================================================================
-    // 🚀 RUN 1: FAST (Precision First)
+    // 🐝 WAVE 1: THE SWARM
+    // Parallel: HyperGuesser + Google Name + Google Address + Google Phone
     // =========================================================================
-    private async executeFastRun(company: CompanyInput): Promise<DiscoveryResult> {
-        // 1. HyperGuesser (Top 10 only)
+    private async executeWave1Swarm(company: CompanyInput): Promise<DiscoveryResult | null> {
         const c = company as any;
-        const guesses = HyperGuesser.generate(c.company_name, c.city || '', c.province || '', c.category || '');
-        const topGuesses = guesses.slice(0, 10);
 
-        const guessRes = await this.validateCandidates(topGuesses, company, THRESHOLDS.FAST_STRICT); // High threshold
-        if (guessRes) { this.notifySuccess(company, guessRes); return guessRes; }
+        // Launch all methods in parallel
+        const [
+            hyperGuessResult,
+            googleNameResult,
+            googleAddressResult,
+            googlePhoneResult
+        ] = await Promise.all([
+            this.hyperGuesserAttack(company),
+            this.googleSearchByName(company),
+            this.googleSearchByAddress(company),
+            this.googleSearchByPhone(company)
+        ]);
 
-        // 2. Direct Registry (UfficioCamerale etc.)
-        const regRes = await this.checkRegistries(company);
-        if (regRes) { this.notifySuccess(company, regRes); return regRes; }
+        // Collect all candidates
+        const allCandidates: Array<{ url: string; source: string; confidence: number }> = [];
 
-        // 3. Primary Search Engine (Google only, top 3)
-        await this.rateLimiter.waitForSlot('google');
-        const googleRes = await this.searchEngineLookup('google', company, 3);
-        if (googleRes) { this.notifySuccess(company, googleRes); return googleRes; }
+        if (hyperGuessResult) allCandidates.push(...hyperGuessResult);
+        if (googleNameResult) allCandidates.push(...googleNameResult);
+        if (googleAddressResult) allCandidates.push(...googleAddressResult);
+        if (googlePhoneResult) allCandidates.push(...googlePhoneResult);
 
-        // 3b. REVERSE LOOKUP (Phone) - "045 12345" sito web
-        if (company.phone && company.phone.length > 5) {
-            Logger.info(`[Unified] 📞 Reverse searching phone: "${company.phone}"`);
+        Logger.info(`[Wave1] 🐝 Collected ${allCandidates.length} candidates from Swarm`);
+
+        // Validate candidates in parallel
+        return await this.validateAndSelectBest(allCandidates, company, 'WAVE1_SWARM', THRESHOLDS.WAVE1_SWARM);
+    }
+
+    private async hyperGuesserAttack(company: CompanyInput): Promise<Array<{ url: string; source: string; confidence: number }> | null> {
+        try {
+            const c = company as any;
+            const guesses = HyperGuesser.generate(c.company_name, c.city || '', c.province || '', c.category || '');
+
+            // Take top 15 guesses for DNS resolution
+            const topGuesses = guesses.slice(0, 15);
+            Logger.info(`[HyperGuesser] Generated ${topGuesses.length} domain candidates`);
+
+            return topGuesses.map(url => ({
+                url,
+                source: 'hyper_guesser',
+                confidence: 0.7 // Initial confidence, will be verified
+            }));
+        } catch (e) {
+            Logger.warn(`[HyperGuesser] Failed:`, e);
+            return null;
+        }
+    }
+
+    private async googleSearchByName(company: CompanyInput): Promise<Array<{ url: string; source: string; confidence: number }> | null> {
+        try {
+            await this.rateLimiter.waitForSlot('google');
+            const query = `"${company.company_name}" ${company.city || ''} sito ufficiale`;
+            const results = await this.scrapeGoogleDIY(query);
+
+            this.rateLimiter.reportSuccess('google');
+            return results.slice(0, 5).map(r => ({
+                url: r.link,
+                source: 'google_name',
+                confidence: 0.75
+            }));
+        } catch (e) {
+            this.rateLimiter.reportFailure('google');
+            return null;
+        }
+    }
+
+    private async googleSearchByAddress(company: CompanyInput): Promise<Array<{ url: string; source: string; confidence: number }> | null> {
+        if (!company.address) return null;
+
+        try {
+            await this.rateLimiter.waitForSlot('google');
+            // Task 04: Reverse Address Search with exact match
+            const query = `"${company.address}" ${company.city || ''} sito web`;
+            const results = await this.scrapeGoogleDIY(query);
+
+            this.rateLimiter.reportSuccess('google');
+            return results.slice(0, 3).map(r => ({
+                url: r.link,
+                source: 'google_address',
+                confidence: 0.8 // Higher confidence for address match
+            }));
+        } catch (e) {
+            this.rateLimiter.reportFailure('google');
+            return null;
+        }
+    }
+
+    private async googleSearchByPhone(company: CompanyInput): Promise<Array<{ url: string; source: string; confidence: number }> | null> {
+        if (!company.phone || company.phone.length < 6) return null;
+
+        try {
             await this.rateLimiter.waitForSlot('google');
             const query = `"${company.phone}" sito web`;
-            const phoneRes = await this.searchEngineLookup('google', { ...company, company_name: query }, 3);
-            if (phoneRes) {
-                const res: DiscoveryResult = { ...phoneRes, method: 'reverse_phone' };
-                this.notifySuccess(company, res);
-                return res;
-            }
+            const results = await this.scrapeGoogleDIY(query);
+
+            this.rateLimiter.reportSuccess('google');
+            return results.slice(0, 3).map(r => ({
+                url: r.link,
+                source: 'google_phone',
+                confidence: 0.85 // High confidence for phone match
+            }));
+        } catch (e) {
+            this.rateLimiter.reportFailure('google');
+            return null;
         }
-
-        // Fallback to DDG
-        await this.rateLimiter.waitForSlot('duckduckgo');
-        const ddgRes = await this.searchEngineLookup('duckduckgo', company, 3);
-        if (ddgRes) { this.notifySuccess(company, ddgRes); return ddgRes; }
-
-        return { url: null, status: 'NOT_FOUND', method: 'fast_exhausted', confidence: 0, details: {} };
     }
 
     // =========================================================================
-    // 💰 ENRICHMENT: FINANCIALS (Revenue / P.IVA)
+    // 🕸️ WAVE 2: THE NET (Bing + DuckDuckGo)
     // =========================================================================
-    public async enrichFinancials(company: CompanyInput): Promise<CompanyInput> {
-        const targetId = company.piva || company.vat_code || company.fiscal_code;
-        if (targetId) {
-            Logger.info(`[Financials] Searching revenue for P.IVA: ${targetId}`);
-            // Logic placeholder
+    private async executeWave2Net(company: CompanyInput): Promise<DiscoveryResult | null> {
+        const allCandidates: Array<{ url: string; source: string; confidence: number }> = [];
+
+        // Bing search
+        try {
+            await this.rateLimiter.waitForSlot('bing');
+            const query = `${company.company_name} ${company.city || ''} sito`;
+            const bingResults = await this.scrapeBingDIY(query);
+            bingResults.slice(0, 5).forEach(r => {
+                allCandidates.push({ url: r.link, source: 'bing', confidence: 0.65 });
+            });
+            this.rateLimiter.reportSuccess('bing');
+        } catch (e) {
+            this.rateLimiter.reportFailure('bing');
         }
-        return company;
+
+        // DuckDuckGo search
+        try {
+            await this.rateLimiter.waitForSlot('duckduckgo');
+            const query = `${company.company_name} ${company.city || ''} sito ufficiale`;
+            const ddgResults = await this.scrapeDDGDIY(query);
+            ddgResults.slice(0, 5).forEach(r => {
+                allCandidates.push({ url: r.link, source: 'duckduckgo', confidence: 0.65 });
+            });
+            this.rateLimiter.reportSuccess('duckduckgo');
+        } catch (e) {
+            this.rateLimiter.reportFailure('duckduckgo');
+        }
+
+        Logger.info(`[Wave2] 🕸️ Collected ${allCandidates.length} candidates from Net`);
+
+        return await this.validateAndSelectBest(allCandidates, company, 'WAVE2_NET', THRESHOLDS.WAVE2_NET);
     }
 
     // =========================================================================
-    // 🧠 RUN 2: DEEP (Coverage First)
+    // ⚖️ WAVE 3: THE JUDGE (AI-powered final validation)
     // =========================================================================
-    private async executeDeepRun(company: CompanyInput): Promise<DiscoveryResult> {
-        AntigravityClient.getInstance().trackCompanyUpdate(company, 'SEARCHING', { step: 'Deep Run Escalation' });
+    private async executeWave3Judge(company: CompanyInput): Promise<DiscoveryResult | null> {
+        // Collect any remaining unverified candidates and use AI for final validation
+        Logger.info(`[Wave3] ⚖️ AI Judge - attempting low-confidence redemption`);
 
-        // 1. Extended HyperGuesser
+        // Try DNS-based domain guessing with AI validation
         const c = company as any;
         const guesses = HyperGuesser.generate(c.company_name, c.city || '', c.province || '', c.category || '');
-        const guessRes = await this.validateCandidates(guesses.slice(10), company, THRESHOLDS.DEEP_RELAXED);
-        if (guessRes) { this.notifySuccess(company, guessRes); return guessRes; }
 
-        // 2. Secondary Search
-        await this.rateLimiter.waitForSlot('duckduckgo');
-        const res = await this.searchEngineLookup('duckduckgo', company, 3);
-        if (res) { this.notifySuccess(company, res); return res; }
-
-        await this.rateLimiter.waitForSlot('bing');
-        const resBing = await this.searchEngineLookup('bing', company, 3);
-        if (resBing) { this.notifySuccess(company, resBing); return resBing; }
-
-        return { url: null, status: 'NOT_FOUND', method: 'deep_exhausted', confidence: 0, details: {} };
-    }
-
-    // =========================================================================
-    // 🧨 RUN 3: AGGRESSIVE (Probabilistic)
-    // =========================================================================
-    private async executeAggressiveRun(company: CompanyInput): Promise<DiscoveryResult> {
-        const guessedDomain = await (this.domainGuesser as any).guessAndVerify(company.company_name);
-        if (guessedDomain) {
-            const url = `http://${guessedDomain}`;
-            const verification = await this.deepVerify(url, company);
-            if (verification && verification.confidence >= 0.4) { // Lower bar
-                const res: DiscoveryResult = {
-                    url,
-                    status: 'FOUND_VALID',
-                    method: 'dns_inference',
-                    confidence: 0.6,
-                    details: verification
-                };
-                this.notifySuccess(company, res);
-                return res;
-            }
-        }
-        return { url: null, status: 'NOT_FOUND', method: 'aggressive_exhausted', confidence: 0, details: {} };
-    }
-
-    // =========================================================================
-    // ☢️ RUN 4: NUCLEAR (Total Saturation)
-    // =========================================================================
-    private async executeNuclearRun(company: CompanyInput): Promise<DiscoveryResult> {
-        AntigravityClient.getInstance().trackCompanyUpdate(company, 'SEARCHING', { step: 'NUCLEAR LAUNCH DETECTED' });
-        const res = await this.nuclearStrategy.execute(company);
-
-        if (res.url) {
-            const result: DiscoveryResult = {
-                url: res.url,
-                status: 'FOUND_VALID',
-                method: res.method,
-                confidence: res.confidence,
-                details: { level: 'Nuclear' }
-            };
-            this.notifySuccess(company, result);
-            return result;
-        }
-
-        // 🛰️ SATELLITE VERIFICATION (Fall back if no web found but we want physical confirmation)
-        if (company.address && company.city && process.env.ENABLE_SATELLITE_VERIFICATION === 'true') {
-            Logger.info(`[Nuclear] 🛰️ Initiating Satellite Verification for: ${company.address}`);
-            const satellite = SatelliteVerifier.getInstance();
-            const image = await satellite.fetchStreetView(company.address, company.city);
-
-            if (image) {
-                const analysis = await satellite.analyzeImage(image, company.company_name);
-                if (analysis.isCommercial && analysis.confidence > 0.7) {
+        // Try remaining guesses (after top 15 used in Wave 1)
+        for (const url of guesses.slice(15, 30)) {
+            try {
+                const verification = await this.deepVerifyWithAI(url, company);
+                if (verification && verification.confidence >= THRESHOLDS.WAVE3_JUDGE) {
                     return {
-                        url: null, // No website
-                        status: 'FOUND_VALID', // But valid business!
-                        method: 'satellite_vision',
-                        confidence: analysis.confidence,
-                        details: { ...analysis, note: 'Physical Presence Verified' }
+                        url,
+                        status: 'FOUND_VALID',
+                        method: 'ai_judge',
+                        confidence: verification.confidence,
+                        wave: 'WAVE3_JUDGE',
+                        details: verification
                     };
                 }
+            } catch (e) {
+                continue;
             }
-        }
-
-        return { url: null, status: 'NOT_FOUND', method: 'nuclear_exhausted', confidence: 0, details: {} };
-    }
-
-    // =========================================================================
-    // HELPER METHODS
-    // =========================================================================
-
-    private async validateCandidates(urls: string[], company: CompanyInput, threshold: number): Promise<DiscoveryResult | null> {
-        // Parallel Verification
-        const results = await Promise.all(
-            urls.map(url => this.validatorLimit(async () => {
-                const res = await this.deepVerify(url, company);
-                if (res && res.confidence >= threshold) return { url, details: res };
-                return null;
-            }))
-        );
-
-        // Filter valid
-        const validCandidates = results.filter(r => r !== null) as { url: string, details: any }[];
-
-        if (validCandidates.length === 0) return null;
-        if (validCandidates.length === 1) {
-            return {
-                url: validCandidates[0].url,
-                status: 'FOUND_VALID',
-                method: 'hyper_guess',
-                confidence: validCandidates[0].details.confidence,
-                details: validCandidates[0].details
-            };
-        }
-
-        // ⚖️ TRUST ARBITER: Resolve conflicts
-        // We need to import TrustArbiter dynamically or statically
-        const { TrustArbiter } = require('../knowledge/trust_arbiter'); // Lazy load to avoid circular if any
-        const arbiter = new TrustArbiter(); // Or singleton if available
-
-        // Map to Arbiter Candidates
-        const arbiterCandidates = validCandidates.map(c => ({
-            source: 'WebScraper',
-            url: c.url,
-            confidence: c.details.confidence,
-            metadata: c.details
-        }));
-
-        const best = await arbiter.resolve(company, arbiterCandidates);
-
-        if (best) {
-            return {
-                url: best.url,
-                status: 'FOUND_VALID',
-                method: 'trust_arbiter_consensus',
-                confidence: best.confidence,
-                details: best.metadata
-            };
         }
 
         return null;
     }
 
-    private async checkRegistries(company: CompanyInput): Promise<DiscoveryResult | null> {
-        const registries = [
-            `https://www.ufficiocamerale.it/search?q=${encodeURIComponent(company.company_name)}`,
-            `https://www.informazione-aziende.it/search?q=${encodeURIComponent(company.company_name)}`
-        ];
+    // =========================================================================
+    // VALIDATION HELPERS
+    // =========================================================================
 
-        for (const regUrl of registries) {
-            try {
-                const regRes = await ItalianRegistrySearch.extractFromRegistryPage(regUrl);
-                if (regRes.website) {
-                    const verification = await this.deepVerify(regRes.website, company);
-                    if (verification && verification.confidence >= THRESHOLDS.REGISTRY) {
+    private async validateAndSelectBest(
+        candidates: Array<{ url: string; source: string; confidence: number }>,
+        company: CompanyInput,
+        wave: string,
+        threshold: number
+    ): Promise<DiscoveryResult | null> {
+        if (candidates.length === 0) return null;
+
+        // Deduplicate by URL
+        const seen = new Set<string>();
+        const unique = candidates.filter(c => {
+            if (seen.has(c.url)) return false;
+            if (ContentFilter.isDirectoryOrSocial(c.url)) return false;
+            seen.add(c.url);
+            return true;
+        });
+
+        Logger.info(`[${wave}] Validating ${unique.length} unique candidates...`);
+
+        // Parallel verification with concurrency limit
+        const verifications = await Promise.all(
+            unique.slice(0, 10).map(candidate =>
+                this.validatorLimit(async () => {
+                    const result = await this.deepVerify(candidate.url, company);
+                    if (result && result.confidence >= threshold) {
                         return {
-                            url: regRes.website,
-                            status: 'FOUND_VALID',
-                            method: 'registry_extraction',
-                            confidence: verification.confidence,
-                            details: verification
+                            url: candidate.url,
+                            source: candidate.source,
+                            confidence: result.confidence,
+                            details: result
                         };
                     }
-                }
-            } catch (e) { }
-        }
-        return null;
+                    return null;
+                })
+            )
+        );
+
+        // Filter valid results
+        const valid = verifications.filter(v => v !== null) as Array<{
+            url: string;
+            source: string;
+            confidence: number;
+            details: any;
+        }>;
+
+        if (valid.length === 0) return null;
+
+        // Select best by confidence
+        valid.sort((a, b) => b.confidence - a.confidence);
+        const best = valid[0];
+
+        return {
+            url: best.url,
+            status: 'FOUND_VALID',
+            method: best.source,
+            confidence: best.confidence,
+            wave,
+            details: best.details
+        };
     }
 
-    private async searchEngineLookup(engine: 'google' | 'duckduckgo' | 'bing', company: CompanyInput, limit: number): Promise<DiscoveryResult | null> {
-        const query = `${company.company_name} ${company.city || ''} sito ufficiale`;
-        let results: { link: string }[] = [];
-
-        try {
-            if (engine === 'google') results = await this.scrapeGoogleDIY(query);
-            else if (engine === 'duckduckgo') results = await this.scrapeDDGDIY(query);
-            else if (engine === 'bing') results = await this.scrapeBingDIY(query);
-
-            if (results && results.length > 0) {
-                this.rateLimiter.reportSuccess(engine);
-                for (const res of results.slice(0, limit)) {
-                    const verification = await this.deepVerify(res.link, company);
-                    if (verification) {
-                        if (verification.confidence >= 0.8) { // Base trust
-                            return {
-                                url: res.link,
-                                status: 'FOUND_VALID',
-                                method: `${engine}_search`,
-                                confidence: verification.confidence,
-                                details: verification
-                            };
-                        }
-                    }
-                }
-            } else {
-                this.rateLimiter.reportFailure(engine);
-            }
-        } catch (e) {
-            this.rateLimiter.reportFailure(engine);
-        }
-        return null;
-    }
+    // =========================================================================
+    // DEEP VERIFICATION
+    // =========================================================================
 
     private async deepVerify(url: string, company: CompanyInput): Promise<any | null> {
         if (!url || ContentFilter.isDirectoryOrSocial(url)) return null;
+
         let page;
         try {
             page = await this.browserFactory.newPage();
 
-            // Resource optimization
+            // Block unnecessary resources
             await page.setRequestInterception(true);
             page.on('request', (req) => {
-                if (['image', 'media', 'font', 'stylesheet'].includes(req.resourceType())) req.abort();
-                else req.continue();
+                if (['image', 'media', 'font', 'stylesheet'].includes(req.resourceType())) {
+                    req.abort();
+                } else {
+                    req.continue();
+                }
             });
 
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
 
             const extraction = await page.evaluate(() => {
-                const text = document.body.innerText;
-                const html = document.body.innerHTML;
-                let structuredData: any[] = [];
-                try {
-                    document.querySelectorAll('script[type="application/ld+json"]').forEach(script => {
-                        structuredData.push(JSON.parse(script.innerHTML));
-                    });
-                } catch (e) { }
-                return { text, html, structuredData };
+                const text = document.body?.innerText || '';
+                const html = document.body?.innerHTML || '';
+                return { text, html };
             });
 
-            // 🛡️ HONEYPOT CHECK 2: Content Analysis
+            // 🛡️ HONEYPOT CHECK
             const honeyPot = HoneyPotDetector.getInstance();
             const safety = honeyPot.analyzeContent(extraction.html);
             if (!safety.safe) {
-                Logger.warn(`[DeepVerify] 🍯 Trap Detected: ${url} -> ${safety.reason}`);
+                Logger.warn(`[DeepVerify] 🍯 Trap: ${url} -> ${safety.reason}`);
                 return { confidence: 0, reason: safety.reason };
             }
 
-            // 1. Content Safety
+            // Content validation
             const filter = ContentFilter.isValidContent(extraction.text);
             if (!filter.valid) {
+                // Report failure to genetic algorithm if blocked
                 if (extraction.text.includes('Captcha') || extraction.text.includes('Access Denied')) {
                     const geneId = (page as any).__geneId;
-                    if (geneId) GeneticFingerprinter.getInstance().reportFailure(geneId);
+                    if (geneId) this.fingerprinter.reportFailure(geneId);
                 }
                 return { confidence: 0, reason: filter.reason };
             }
 
-            // 🧬 SUCCESS: We accessed the page effectively
+            // Report success to genetic algorithm
             const geneId = (page as any).__geneId;
-            if (geneId) GeneticFingerprinter.getInstance().reportSuccess(geneId);
+            if (geneId) this.fingerprinter.reportSuccess(geneId);
 
-            // 2. Language
-            if (!ContentFilter.isItalianLanguage(extraction.text)) return { confidence: 0.1, reason: 'Foreign Language' };
-
-            // 3. LLM/AI Validation
-            const llmRes = await LLMValidator.validateCompany(company, extraction.text);
-            if (llmRes.isValid) {
-                return {
-                    scraped_piva: '',
-                    confidence: llmRes.confidence,
-                    level: 'AI_Verified',
-                    reason: llmRes.reason
-                };
+            // Language check
+            if (!ContentFilter.isItalianLanguage(extraction.text)) {
+                return { confidence: 0.1, reason: 'Foreign Language' };
             }
 
-            // Fallback PIVA check
-            const pivas: string[] = extraction.text.match(/\d{11}/g) || [];
-            const targetPiva = company.vat_code || company.piva;
+            // REGEX VALIDATION FIRST (faster than AI)
+            const nameMatch = this.regexCompanyMatch(extraction.text, company);
+            if (nameMatch.confidence >= 0.8) {
+                return nameMatch;
+            }
 
+            // P.IVA match
+            const pivas = extraction.text.match(/\d{11}/g) || [];
+            const targetPiva = (company as any).vat_code || (company as any).piva;
             if (targetPiva && pivas.includes(targetPiva)) {
-                return { scraped_piva: pivas[0], confidence: 1.0, level: 'High', reason: 'PIVA Match' };
+                return { confidence: 1.0, reason: 'P.IVA Match', scraped_piva: targetPiva };
+            }
+
+            // Check for name presence
+            const companyNameLower = company.company_name.toLowerCase();
+            if (extraction.text.toLowerCase().includes(companyNameLower)) {
+                return { confidence: 0.7, reason: 'Name Present' };
             }
 
             return null;
 
-        } catch (e: any) {
-            // 👻 GHOST HUNTER: Website is dead? Check the archive.
-            if (e.message.includes('ERR_NAME_NOT_RESOLVED') || e.message.includes('timeout') || e.message.includes('404')) {
-                import('./ghost_hunter').then(async ({ GhostHunter }) => {
-                    const ghost = GhostHunter.getInstance();
-                    const ghostHtml = await ghost.recover(url);
-                    if (ghostHtml) {
-                        Logger.info(`[DeepVerify] 👻 Recovered dead site ${url} via Wayback Machine!`);
-                        // We could recursively validate this ghost content, but for now we log it.
-                        // Ideally call LLMValidator here.
-                    }
-                });
-            }
+        } catch (e) {
             return null;
         } finally {
             if (page) await this.browserFactory.closePage(page);
         }
     }
 
-    // --- SCRAPERS ---
-    private async scrapeGoogleDIY(query: string) {
+    private async deepVerifyWithAI(url: string, company: CompanyInput): Promise<any | null> {
+        let page;
+        try {
+            page = await this.browserFactory.newPage();
+            await page.setRequestInterception(true);
+            page.on('request', (req) => {
+                if (['image', 'media', 'font', 'stylesheet'].includes(req.resourceType())) {
+                    req.abort();
+                } else {
+                    req.continue();
+                }
+            });
+
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+
+            const text = await page.evaluate(() => document.body?.innerText || '');
+
+            // Use LLM for final validation
+            const llmResult = await LLMValidator.validateCompany(company, text);
+            if (llmResult.isValid) {
+                return {
+                    confidence: llmResult.confidence,
+                    reason: llmResult.reason,
+                    level: 'AI_Verified'
+                };
+            }
+
+            return null;
+        } catch (e) {
+            return null;
+        } finally {
+            if (page) await this.browserFactory.closePage(page);
+        }
+    }
+
+    private regexCompanyMatch(text: string, company: CompanyInput): { confidence: number; reason: string } {
+        const textLower = text.toLowerCase();
+        const nameLower = company.company_name.toLowerCase();
+
+        // Direct name match
+        if (textLower.includes(nameLower)) {
+            // Check for additional signals
+            const hasAddress = company.address && textLower.includes(company.address.toLowerCase());
+            const hasCity = company.city && textLower.includes(company.city.toLowerCase());
+            const hasPhone = company.phone && textLower.includes(company.phone.replace(/\s+/g, ''));
+
+            let confidence = 0.6;
+            if (hasAddress) confidence += 0.15;
+            if (hasCity) confidence += 0.1;
+            if (hasPhone) confidence += 0.15;
+
+            return { confidence: Math.min(confidence, 1.0), reason: 'Regex Match' };
+        }
+
+        return { confidence: 0, reason: 'No Match' };
+    }
+
+    // =========================================================================
+    // SCRAPERS
+    // =========================================================================
+
+    private async scrapeGoogleDIY(query: string): Promise<Array<{ link: string }>> {
         let page;
         try {
             page = await this.browserFactory.newPage();
@@ -494,10 +554,14 @@ export class UnifiedDiscoveryService {
             const html = await page.content();
             const results = await GoogleSerpAnalyzer.parseSerp(html);
             return results.map((r: any) => ({ link: r.url }));
-        } catch (e) { return []; } finally { if (page) await this.browserFactory.closePage(page); }
+        } catch (e) {
+            return [];
+        } finally {
+            if (page) await this.browserFactory.closePage(page);
+        }
     }
 
-    private async scrapeDDGDIY(query: string) {
+    private async scrapeDDGDIY(query: string): Promise<Array<{ link: string }>> {
         let page;
         try {
             page = await this.browserFactory.newPage();
@@ -506,10 +570,14 @@ export class UnifiedDiscoveryService {
             const html = await page.content();
             const results = DuckDuckGoSerpAnalyzer.parseSerp(html);
             return results.map((r: any) => ({ link: r.url }));
-        } catch (e) { return []; } finally { if (page) await this.browserFactory.closePage(page); }
+        } catch (e) {
+            return [];
+        } finally {
+            if (page) await this.browserFactory.closePage(page);
+        }
     }
 
-    private async scrapeBingDIY(query: string) {
+    private async scrapeBingDIY(query: string): Promise<Array<{ link: string }>> {
         let page;
         try {
             page = await this.browserFactory.newPage();
@@ -520,6 +588,25 @@ export class UnifiedDiscoveryService {
                 return items.slice(0, 5).map((a: any) => ({ link: (a as HTMLAnchorElement).href }));
             });
             return results;
-        } catch (e) { return []; } finally { if (page) await this.browserFactory.closePage(page); }
+        } catch (e) {
+            return [];
+        } finally {
+            if (page) await this.browserFactory.closePage(page);
+        }
+    }
+
+    // =========================================================================
+    // NOTIFICATIONS
+    // =========================================================================
+
+    private notifySuccess(company: CompanyInput, result: DiscoveryResult): void {
+        AntigravityClient.getInstance().trackCompanyUpdate(company, 'FOUND', {
+            url: result.url,
+            method: result.method,
+            wave: result.wave,
+            confidence: result.confidence
+        });
+
+        Logger.info(`[Discovery] ✅ FOUND: ${company.company_name} -> ${result.url} (${result.wave}/${result.method}, ${(result.confidence * 100).toFixed(0)}%)`);
     }
 }

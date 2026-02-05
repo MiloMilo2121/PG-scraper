@@ -6,8 +6,8 @@
  */
 
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import { parse } from 'fast-csv';
-import { v4 as uuidv4 } from 'uuid';
 import { Logger } from './utils/logger';
 import { config } from './config';
 import {
@@ -39,17 +39,25 @@ async function main() {
     const existingJobs = await enrichmentQueue.getJobCounts();
     Logger.info(`📋 Queue state: ${existingJobs.waiting} waiting, ${existingJobs.active} active, ${existingJobs.completed} completed`);
 
-    // Convert to job data format
-    const jobs: EnrichmentJobData[] = companies.map((c, idx) => ({
-        company_id: c.company_id || uuidv4(),
-        company_name: c.company_name,
-        city: c.city,
-        province: c.province,
-        address: c.address,
-        phone: c.phone,
-        website: c.website,
-        category: c.category,
-    }));
+    // Convert to job data format with DETERMINISTIC IDs (idempotent)
+    const jobs: EnrichmentJobData[] = companies.map((c, idx) => {
+        // T03: Deterministic ID = MD5(name + city) for idempotency
+        const deterministicId = c.company_id || crypto
+            .createHash('md5')
+            .update(`${c.company_name}${c.city || ''}`)
+            .digest('hex');
+
+        return {
+            company_id: deterministicId,
+            company_name: c.company_name,
+            city: c.city,
+            province: c.province,
+            address: c.address,
+            phone: c.phone,
+            website: c.website,
+            category: c.category,
+        };
+    });
 
     // Add jobs to queue in batches
     await addJobsBatch(enrichmentQueue, jobs);

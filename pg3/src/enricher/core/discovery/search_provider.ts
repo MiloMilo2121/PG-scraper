@@ -76,3 +76,59 @@ export class DDGSearchProvider implements SearchProvider {
         }
     }
 }
+
+/**
+ * 📍 REVERSE ADDRESS SEARCH PROVIDER
+ * Task 04: Find companies by exact address match
+ * Query: "{address}" {city} sito web
+ */
+export class ReverseAddressSearchProvider implements SearchProvider {
+    private browserFactory: BrowserFactory;
+
+    constructor() {
+        this.browserFactory = BrowserFactory.getInstance();
+    }
+
+    /**
+     * reverseAddressSearch - Find website by exact address match
+     * @param address - Full street address (e.g., "Via Roma 123")
+     * @param city - City name
+     */
+    async reverseAddressSearch(address: string, city: string): Promise<SerpResult[]> {
+        // Use exact match with quotes for address
+        const query = `"${address}" ${city} sito web`;
+        return this.search(query);
+    }
+
+    async search(query: string): Promise<SerpResult[]> {
+        let page;
+        try {
+            page = await this.browserFactory.newPage();
+            const url = `https://www.google.it/search?q=${encodeURIComponent(query)}&hl=it&gl=it`;
+
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+
+            // Basic consent handling
+            try {
+                await page.evaluate(() => {
+                    const buttons = Array.from(document.querySelectorAll('button'));
+                    const accept = buttons.find(b => /accetta|accept/i.test(b.innerText));
+                    if (accept) (accept as HTMLButtonElement).click();
+                });
+                await new Promise(r => setTimeout(r, 1000));
+            } catch (e) { }
+
+            const html = await page.content();
+            const results = await GoogleSerpAnalyzer.parseSerp(html);
+
+            Logger.info(`[ReverseAddress] Found ${results.length} results for "${query}"`);
+            return results;
+        } catch (e: any) {
+            Logger.warn(`[ReverseAddress] Search failed: ${e.message}`);
+            return [];
+        } finally {
+            if (page) await this.browserFactory.closePage(page);
+        }
+    }
+}
+
