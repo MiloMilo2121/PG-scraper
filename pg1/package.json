@@ -27,7 +27,7 @@
     "jsdom": "^27.4.0",
     "openai": "^6.16.0",
     "p-map": "^7.0.4",
-    "puppeteer": "^24.35.0",
+    "puppeteer": "^24.37.1",
     "puppeteer-cluster": "^0.25.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
