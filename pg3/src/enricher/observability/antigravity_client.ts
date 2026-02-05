@@ -63,7 +63,7 @@ export class AntigravityClient {
             // Visual Debug Log
             Logger.info(`🚀 [Antigravity] Pushed ${batch.length} updates to Dashboard.`);
         } catch (error) {
-            Logger.error('[Antigravity] Failed to push updates', error);
+            Logger.error('[Antigravity] Failed to push updates', { error: error as Error });
             // Optional: Re-queue logic could go here
         }
     }

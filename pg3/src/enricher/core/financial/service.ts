@@ -232,8 +232,8 @@ export class FinancialService {
                 return result;
             });
 
-        } catch (e) {
-            Logger.error(`[Financial] UfficioCamerale scrape failed:`, e);
+        } catch (e: any) {
+            Logger.error(`[Financial] UfficioCamerale scrape failed:`, { message: e.message });
             return {};
         } finally {
             if (page) await this.browserFactory.closePage(page);

@@ -138,7 +138,7 @@ export class UnifiedDiscoveryService {
             };
 
         } catch (error) {
-            Logger.error(`[Discovery] Error for ${company.company_name}:`, error);
+            Logger.error(`[Discovery] Error for ${company.company_name}:`, { error: error as Error });
             AntigravityClient.getInstance().trackCompanyUpdate(company, 'FAILED', { error: (error as Error).message });
             return {
                 url: null,
@@ -200,7 +200,7 @@ export class UnifiedDiscoveryService {
                 confidence: 0.7 // Initial confidence, will be verified
             }));
         } catch (e) {
-            Logger.warn(`[HyperGuesser] Failed:`, e);
+            Logger.warn(`[HyperGuesser] Failed:`, { error: e as Error });
             return null;
         }
     }
@@ -463,7 +463,7 @@ export class UnifiedDiscoveryService {
             }
 
             // P.IVA match
-            const pivas = extraction.text.match(/\d{11}/g) || [];
+            const pivas: string[] = extraction.text.match(/\d{11}/g) || [];
             const targetPiva = (company as any).vat_code || (company as any).piva;
             if (targetPiva && pivas.includes(targetPiva)) {
                 return { confidence: 1.0, reason: 'P.IVA Match', scraped_piva: targetPiva };

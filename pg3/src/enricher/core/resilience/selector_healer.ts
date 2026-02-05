@@ -75,7 +75,7 @@ export class SelectorHealer {
             return selector || null;
 
         } catch (error) {
-            Logger.error('[Healer] Failed to heal selector', error);
+            Logger.error('[Healer] Failed to heal selector', { error: error as Error });
             return null;
         }
     }

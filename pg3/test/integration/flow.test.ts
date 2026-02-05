@@ -36,8 +36,8 @@ async function runE2EAudit() {
     try {
         await redis.ping();
         Logger.info('   ✅ Redis is responding');
-    } catch (e) {
-        Logger.error('   ❌ Redis connection failed:', e);
+    } catch (e: any) {
+        Logger.error('   ❌ Redis connection failed:', { message: e.message });
         Logger.error('   Run: docker compose up -d');
         process.exit(1);
     }
@@ -101,8 +101,8 @@ async function runE2EAudit() {
             }
 
             db.close();
-        } catch (e) {
-            Logger.error('   ❌ SQLite error:', e);
+        } catch (e: any) {
+            Logger.error('   ❌ SQLite error:', { message: e.message });
         }
     } else {
         Logger.warn(`   ⚠️ Database file not found: ${dbPath}`);
@@ -132,7 +132,7 @@ async function runE2EAudit() {
     process.exit(0);
 }
 
-runE2EAudit().catch((err) => {
-    Logger.error('AUDIT 3 FATAL ERROR:', err);
+runE2EAudit().catch((err: any) => {
+    Logger.error('AUDIT 3 FATAL ERROR:', { message: err.message, stack: err.stack });
     process.exit(1);
 });

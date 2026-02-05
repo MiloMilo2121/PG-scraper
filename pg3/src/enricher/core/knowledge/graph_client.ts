@@ -87,7 +87,7 @@ export class GraphClient {
             });
             Logger.info(`[Graph] 🕸️ Merged company "${company.company_name}" into Knowledge Graph.`);
         } catch (error) {
-            Logger.error(`[Graph] Failed to merge company ${company.company_name}`, error);
+            Logger.error(`[Graph] Failed to merge company ${company.company_name}`, { error: error as Error });
         } finally {
             await session.close();
         }

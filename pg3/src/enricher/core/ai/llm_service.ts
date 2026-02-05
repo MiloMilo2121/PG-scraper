@@ -23,7 +23,7 @@ export class LLMService {
             const jsonStr = response.replace(/```json/g, '').replace(/```/g, '').trim();
             return JSON.parse(jsonStr) as T;
         } catch (e) {
-            Logger.error('[LLM] JSON Parse Error', e);
+            Logger.error('[LLM] JSON Parse Error', { error: e as Error });
             return null;
         }
     }

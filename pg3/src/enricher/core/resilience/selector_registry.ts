@@ -27,7 +27,7 @@ export class SelectorRegistry {
                 Logger.warn('[SelectorRegistry] Config not found, initializing empty.');
             }
         } catch (e) {
-            Logger.error('[SelectorRegistry] Failed to load config', e);
+            Logger.error('[SelectorRegistry] Failed to load config', { error: e as Error });
         }
     }
 
@@ -46,7 +46,7 @@ export class SelectorRegistry {
             fs.writeFileSync(this.configPath, JSON.stringify(this.selectors, null, 4));
             Logger.info(`[SelectorRegistry] 🩹 UPDATED SELECTOR [${scope}.${key}] -> ${value}`);
         } catch (e) {
-            Logger.error('[SelectorRegistry] Failed to save update', e);
+            Logger.error('[SelectorRegistry] Failed to save update', { error: e as Error });
         }
     }
 }

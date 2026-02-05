@@ -115,9 +115,8 @@ export class LLMValidator {
             };
 
         } catch (error) {
-            Logger.error(`[LLM] Validation Failed (${model})`, error);
-            // Return a neutral result so it might trigger fallback if this was Tier 1
-            return { valid: false, reason: `Exception ${model}`, confidence: 0.5 };
+            Logger.error(`[LLM] Validation Failed (${model})`, { error: error as Error });
+            return { valid: false, confidence: 0, reason: (error as Error).message };
         }
     }
 }

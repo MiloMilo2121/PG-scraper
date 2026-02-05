@@ -42,7 +42,7 @@ export class SatelliteVerifier {
             const response = await axios.get(url, { responseType: 'arraybuffer' });
             return Buffer.from(response.data, 'binary').toString('base64');
         } catch (error) {
-            Logger.error(`[Satellite] Failed to fetch Street View for ${location}`, error);
+            Logger.error(`[Satellite] Failed to fetch Street View for ${location}`, { error: error as Error });
             return null;
         }
     }
@@ -104,7 +104,7 @@ export class SatelliteVerifier {
             };
 
         } catch (error) {
-            Logger.error('[Satellite] Vision Analysis Failed', error);
+            Logger.error('[Satellite] Vision Analysis Failed', { error: error as Error });
             return { isCommercial: false, confidence: 0, buildingType: 'unknown', signageDetected: false, reason: 'Analysis Error' };
         }
     }

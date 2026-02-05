@@ -63,8 +63,8 @@ async function runFinancialAudit() {
         Logger.info('Check logs above for "🎯 P.IVA found... Targeting UfficioCamerale"');
         Logger.info('This indicates the P.IVA → Registry path was executed.');
 
-    } catch (error) {
-        Logger.error('❌ AUDIT 2 FAILED:', error);
+    } catch (error: any) {
+        Logger.error('❌ AUDIT 2 FAILED:', { message: error.message, stack: error.stack });
         throw error;
     }
 
