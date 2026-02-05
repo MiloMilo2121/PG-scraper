@@ -61,6 +61,7 @@ export interface JobResult {
     revenue?: string;
     employees?: string;
     website_found?: string;
+    website_url?: string;
     error?: string;
     error_category?: string;
 }

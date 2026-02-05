@@ -9,11 +9,11 @@ import { ResourceManager, PhaseType } from '../../utils/resource_manager';
 import { getRandomUserAgent } from './ua_db';
 import { GeneticFingerprinter } from './genetic_fingerprinter';
 // Task 8 & 9: Human Behavior
-import { HumanBehavior } from './human_behavior';
+import { ProxyManager } from './proxy_manager';
+import { Logger } from '../../utils/logger';
 import { config } from '../../config';
 import { BrowserEvasion } from './evasion';
 import { CookieConsent } from './cookie_consent';
-import { Logger } from '../../utils/logger';
 
 // Add plugin
 puppeteer.use(StealthPlugin());
@@ -115,6 +115,18 @@ export class BrowserFactory {
                 } catch (e) { console.error('Error finding chrome:', e); }
             }
 
+            // PROXY INTEGRATION
+            const proxyManager = ProxyManager.getInstance();
+            // Default to High Security proxy (Residential) for the browser instance
+            // We assume this browser will be primarily used for Google/UfficioCamerale in Phase 1/2
+            const proxyArgs = proxyManager.getLaunchArgsForUrl('https://www.google.com');
+
+            if (proxyArgs.length > 0) {
+                Logger.info(`[BrowserFactory:${this.instanceId}] 🛡️ Launching with Proxy: ${proxyArgs[0]}`);
+            } else {
+                Logger.warn(`[BrowserFactory:${this.instanceId}] ⚠️ No Proxy configured! Running raw (DIRECT).`);
+            }
+
             try {
                 let browser;
                 if (config.browser.mode === 'remote') {
@@ -127,15 +139,12 @@ export class BrowserFactory {
                 } else {
                     browser = await puppeteer.launch({
                         headless: true,
-
-
-
-
                         timeout: 60000,
                         protocolTimeout: 60000,
                         userDataDir: this.userDataDir,
                         executablePath: executablePath,
                         args: [
+                            ...proxyArgs, // <--- PROXY ARGS
                             '--no-sandbox',
                             '--disable-setuid-sandbox',
                             '--disable-infobars',
@@ -226,6 +235,10 @@ export class BrowserFactory {
                 get: () => concurrency,
             });
         }, gene.hardwareConcurrency);
+
+        // PROXY AUTHENTICATION
+        // We use google.com to get the Residential credentials if available
+        await ProxyManager.getInstance().authenticateProxy(page, 'https://www.google.com');
 
         // Task 12: Page timeout recovery
         page.setDefaultTimeout(30000);

@@ -26,17 +26,20 @@ import {
     moveToDeadLetter,
 } from './queue';
 import { FinancialService } from './core/financial/service';
+import { UnifiedDiscoveryService } from './core/discovery/unified_discovery_service';
 import { BrowserFactory } from './core/browser/factory_v2';
 
 // 🔧 Initialize Services
 const financialService = new FinancialService();
+const discoveryService = new UnifiedDiscoveryService();
 let isShuttingDown = false;
 
 /**
  * 🏭 Process a single enrichment job
  */
 async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobResult> {
-    const { company_name, city, website, company_id } = job.data;
+    const { company_name, city, company_id } = job.data;
+    let { website } = job.data;
     const startTime = Date.now();
 
     Logger.info(`🔄 Processing: ${company_name}`, {
@@ -46,7 +49,27 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
     });
 
     try {
-        // Call the financial enrichment service
+        // STEP 1: WEBSITE DISCOVERY (If missing)
+        if (!website || website.trim() === '' || website === 'null') {
+            Logger.info(`[Worker] 🔍 Website missing for "${company_name}". Launching Discovery Waves...`);
+            const discoveryResult = await discoveryService.discover({
+                company_name,
+                city,
+                address: job.data.address,
+                phone: job.data.phone,
+                category: job.data.category,
+                province: job.data.province
+            });
+
+            if (discoveryResult.url) {
+                website = discoveryResult.url;
+                Logger.info(`[Worker] ✅ Discovery success: ${company_name} -> ${website}`);
+            } else {
+                Logger.warn(`[Worker] ⚠️ Discovery failed for ${company_name} (Status: ${discoveryResult.status})`);
+            }
+        }
+
+        // STEP 2: FINANCIAL ENRICHMENT
         const result = await financialService.enrich(
             {
                 company_name,
@@ -64,7 +87,10 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             company_id,
             duration_ms: duration,
             vat: result.vat,
-            has_revenue: !!result.revenue,
+            revenue: result.revenue,
+            employees: result.employees,
+            website,
+            has_website: !!website
         });
 
         return {
@@ -74,6 +100,7 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             revenue: result.revenue,
             employees: result.employees,
             website_found: website ? 'Yes' : 'No',
+            website_url: website || undefined
         };
 
     } catch (error) {
