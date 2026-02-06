@@ -37,6 +37,7 @@ export class BrowserFactory {
     constructor() {
         this.instanceId = Math.random().toString(36).substring(7);
         this.userDataDir = path.join(process.cwd(), 'temp_profiles', `browser_${this.instanceId}`);
+        this.currentProfilePath = this.userDataDir; // FIX: Assign for cleanup in close()
         BrowserFactory.instances.add(this);
     }
 

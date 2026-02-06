@@ -65,9 +65,10 @@ RUN mkdir -p /app/data /app/output && chown -R antigravity:antigravity /app
 # Switch to non-root user
 USER antigravity
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+# Health check - verify process is running
+# Note: Worker doesn't expose HTTP, so we just check if node process exists
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+  CMD pgrep -f "node" > /dev/null || exit 1
 
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]

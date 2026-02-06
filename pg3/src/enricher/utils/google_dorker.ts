@@ -68,8 +68,8 @@ Return ONLY the queries, one per line.`,
      */
     private static getFallbackQueries(
         companyName: string,
-        goal: string,
-        city?: string
+        city: string | undefined,
+        goal: string
     ): string[] {
         const base = `"${companyName}"`;
         const loc = city ? ` ${city}` : '';

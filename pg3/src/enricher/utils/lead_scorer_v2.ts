@@ -12,6 +12,7 @@ import { Logger } from './logger';
 
 export interface LeadData {
     company_name: string;
+    city?: string;
     email?: string;
     phone?: string;
     website?: string;

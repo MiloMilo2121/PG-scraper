@@ -14,11 +14,14 @@
         "forceConsistentCasingInFileNames": true
     },
     "include": [
-        "src/**/*",
-        "run_bulletproof_batch.ts",
-        "run_nuclear.ts"
+        "src/enricher/**/*",
+        "src/index.ts"
     ],
     "exclude": [
-        "node_modules"
+        "node_modules",
+        "src/analytics",
+        "src/api",
+        "src/scripts",
+        "src/observability"
     ]
 }

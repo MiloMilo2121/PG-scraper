@@ -109,7 +109,49 @@ async function loadCompaniesFromCSV(filePath: string): Promise<CSVCompany[]> {
     });
 }
 
-main().catch((err) => {
-    Logger.fatal('Scheduler crashed', { error: err });
-    process.exit(1);
-});
+// Export for programmatic use
+export async function runScheduler(csvPath?: string) {
+    const inputFile = csvPath || INPUT_FILE;
+    Logger.info('📥 SCHEDULER: Starting job injection');
+
+    const events = createQueueEvents(QUEUE_NAMES.ENRICHMENT);
+    const companies = await loadCompaniesFromCSV(inputFile);
+    Logger.info(`📊 Loaded ${companies.length} companies from ${inputFile}`);
+
+    if (companies.length === 0) {
+        Logger.warn('⚠️ No companies to process.');
+        return;
+    }
+
+    const existingJobs = await enrichmentQueue.getJobCounts();
+    Logger.info(`📋 Queue state: ${existingJobs.waiting} waiting, ${existingJobs.active} active, ${existingJobs.completed} completed`);
+
+    const jobs: EnrichmentJobData[] = companies.map((c) => {
+        const deterministicId = c.company_id || crypto
+            .createHash('md5')
+            .update(`${c.company_name}${c.city || ''}`)
+            .digest('hex');
+
+        return {
+            company_id: deterministicId,
+            company_name: c.company_name,
+            city: c.city,
+            province: c.province,
+            address: c.address,
+            phone: c.phone,
+            website: c.website,
+            category: c.category,
+        };
+    });
+
+    await addJobsBatch(enrichmentQueue, jobs);
+    Logger.info(`✅ SCHEDULER: Injected ${jobs.length} jobs to queue`);
+}
+
+// Auto-run if executed directly
+if (require.main === module) {
+    main().catch((err) => {
+        Logger.fatal('Scheduler crashed', { error: err });
+        process.exit(1);
+    });
+}

@@ -207,8 +207,13 @@ async function main() {
 
     Logger.info('👷 Worker is running. Press Ctrl+C to stop.');
 }
+// Export for programmatic use
+export { startWorker };
 
-main().catch((err) => {
-    Logger.fatal('Worker crashed', { error: err });
-    process.exit(1);
-});
+// Auto-run if executed directly
+if (require.main === module) {
+    main().catch((err) => {
+        Logger.fatal('Worker crashed', { error: err });
+        process.exit(1);
+    });
+}

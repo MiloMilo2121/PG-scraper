@@ -27,6 +27,14 @@ import { HoneyPotDetector } from '../security/honeypot_detector';
 // INTERFACES
 // ============================================================================
 
+// Discovery modes for multi-run pipeline (runner.ts)
+export enum DiscoveryMode {
+    FAST_RUN1 = 'FAST_RUN1',         // Quick pass with basic methods
+    DEEP_RUN2 = 'DEEP_RUN2',         // Full wave execution
+    AGGRESSIVE_RUN3 = 'AGGRESSIVE_RUN3', // Retry with relaxed thresholds
+    NUCLEAR_RUN4 = 'NUCLEAR_RUN4'    // All methods, maximum effort
+}
+
 export interface DiscoveryResult {
     url: string | null;
     status: 'FOUND_VALID' | 'FOUND_INVALID' | 'NOT_FOUND' | 'ERROR';
@@ -73,9 +81,9 @@ export class UnifiedDiscoveryService {
     // =========================================================================
     // 🌊 MAIN DISCOVERY ENTRY POINT
     // =========================================================================
-    public async discover(company: CompanyInput): Promise<DiscoveryResult> {
-        Logger.info(`[Discovery] 🌊 Starting WAVE discovery for "${company.company_name}"`);
-        AntigravityClient.getInstance().trackCompanyUpdate(company, 'SEARCHING', { mode: 'WAVES' });
+    public async discover(company: CompanyInput, mode: DiscoveryMode = DiscoveryMode.DEEP_RUN2): Promise<DiscoveryResult> {
+        Logger.info(`[Discovery] 🌊 Starting WAVE discovery for "${company.company_name}" (Mode: ${mode})`);
+        AntigravityClient.getInstance().trackCompanyUpdate(company, 'SEARCHING', { mode });
 
         try {
             // --- PRE-CHECK: Validate existing website if present ---
