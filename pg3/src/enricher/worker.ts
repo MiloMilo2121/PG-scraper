@@ -12,7 +12,7 @@
  */
 
 import { Worker, Job } from 'bullmq';
-import { Logger, ErrorCategory } from './utils/logger';
+import { Logger } from './utils/logger';
 import { config } from './config';
 
 const CONCURRENCY_LIMIT = config.queue.concurrencyLimit;
@@ -33,6 +33,7 @@ import { BrowserFactory } from './core/browser/factory_v2';
 const financialService = new FinancialService();
 const discoveryService = new UnifiedDiscoveryService();
 let isShuttingDown = false;
+let processHandlersRegistered = false;
 
 /**
  * 🏭 Process a single enrichment job
@@ -105,7 +106,6 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
 
     } catch (error) {
         const err = error as Error;
-        const category = Logger.categorizeError(err);
         const duration = Date.now() - startTime;
 
         Logger.logError(`Failed: ${company_name}`, err, {
@@ -118,7 +118,13 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
 
         // If this is the last attempt, move to dead letter queue
         if (job.attemptsMade >= RETRY_ATTEMPTS - 1) {
-            await moveToDeadLetter(job);
+            await moveToDeadLetter(job).catch((dlqError: unknown) => {
+                Logger.error('Failed to move job to Dead Letter Queue', {
+                    company_name,
+                    job_id: job.id,
+                    error: dlqError as Error,
+                });
+            });
         }
 
         // Rethrow to trigger BullMQ retry
@@ -168,7 +174,7 @@ function startWorker(): Worker<EnrichmentJobData, JobResult> {
 /**
  * 🛑 Graceful Shutdown Handler (Task 6)
  */
-async function gracefulShutdown(worker: Worker, signal: string): Promise<void> {
+async function gracefulShutdown(worker: Worker, signal: string, exitCode: number = 0): Promise<void> {
     if (isShuttingDown) return;
     isShuttingDown = true;
 
@@ -188,11 +194,36 @@ async function gracefulShutdown(worker: Worker, signal: string): Promise<void> {
         Logger.info('🗄️ Redis connection closed');
 
         Logger.info('✅ Graceful shutdown complete');
-        process.exit(0);
+        process.exit(exitCode);
     } catch (error) {
         Logger.error('Error during shutdown', { error: error as Error });
         process.exit(1);
     }
+}
+
+function registerProcessHandlers(worker: Worker): void {
+    if (processHandlersRegistered) {
+        return;
+    }
+    processHandlersRegistered = true;
+
+    process.once('SIGTERM', () => {
+        void gracefulShutdown(worker, 'SIGTERM', 0);
+    });
+    process.once('SIGINT', () => {
+        void gracefulShutdown(worker, 'SIGINT', 0);
+    });
+
+    process.on('unhandledRejection', (reason: unknown) => {
+        Logger.fatal('Unhandled Promise Rejection', {
+            reason: reason instanceof Error ? reason : String(reason),
+        });
+    });
+
+    process.on('uncaughtException', (error: Error) => {
+        Logger.fatal('Uncaught Exception', { error });
+        void gracefulShutdown(worker, 'UNCAUGHT_EXCEPTION', 1);
+    });
 }
 
 // 🚀 Main Entry Point
@@ -202,9 +233,8 @@ export async function runWorker(): Promise<Worker<EnrichmentJobData, JobResult>>
 
     const worker = startWorker();
 
-    // Register shutdown handlers (Task 6)
-    process.on('SIGTERM', () => gracefulShutdown(worker, 'SIGTERM'));
-    process.on('SIGINT', () => gracefulShutdown(worker, 'SIGINT'));
+    // Register shutdown and crash handlers
+    registerProcessHandlers(worker);
 
     Logger.info('👷 Worker is running. Press Ctrl+C to stop.');
     return worker;

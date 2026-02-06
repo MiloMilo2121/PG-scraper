@@ -27,12 +27,14 @@ export class BrowserFactory {
     private instanceId: string;
     private lastHealthCheck: number = Date.now();
     private currentProfilePath: string | null = null;
+    private browserCounted = false;
 
     // Configuration
     private static readonly MAX_CONCURRENCY = 25; // 🚀 OVERDRIVE: Stabilized for server 32GB
     private static MAX_TABS_PER_BROWSER = 8;
     public static ACTIVE_INSTANCES = 0;
     public static instances: Set<BrowserFactory> = new Set();
+    private static shutdownHooksRegistered = false;
 
     constructor() {
         this.instanceId = Math.random().toString(36).substring(7);
@@ -44,12 +46,26 @@ export class BrowserFactory {
     public static getInstance(): BrowserFactory {
         if (!BrowserFactory.instance) {
             BrowserFactory.instance = new BrowserFactory();
-            // Zombie Cleanup
-            ['exit', 'SIGINT', 'SIGTERM'].forEach(signal => {
-                process.on(signal, () => BrowserFactory.instance.close());
-            });
+            BrowserFactory.registerShutdownHooks();
         }
         return BrowserFactory.instance;
+    }
+
+    private static registerShutdownHooks(): void {
+        if (BrowserFactory.shutdownHooksRegistered) {
+            return;
+        }
+        BrowserFactory.shutdownHooksRegistered = true;
+
+        const shutdown = () => {
+            if (BrowserFactory.instance) {
+                void BrowserFactory.instance.close();
+            }
+        };
+
+        process.once('SIGINT', shutdown);
+        process.once('SIGTERM', shutdown);
+        process.once('beforeExit', shutdown);
     }
 
 
@@ -100,6 +116,7 @@ export class BrowserFactory {
 
             const freeMem = os.freemem() / 1024 / 1024;
             console.log(`[BrowserFactory:${this.instanceId}] 🚀 Spawning Browser (Free RAM: ${Math.round(freeMem)}MB)`);
+            this.currentProfilePath = this.userDataDir;
 
             // Task 10: Cloak webdriver
             let executablePath = process.env.CHROME_PATH;
@@ -169,7 +186,17 @@ export class BrowserFactory {
                 }
 
                 this.browser = browser;
+                this.browserCounted = true;
                 BrowserFactory.ACTIVE_INSTANCES++;
+                browser.once('disconnected', () => {
+                    if (this.browserCounted) {
+                        BrowserFactory.ACTIVE_INSTANCES = Math.max(0, BrowserFactory.ACTIVE_INSTANCES - 1);
+                        this.browserCounted = false;
+                    }
+                    if (this.browser === browser) {
+                        this.browser = null;
+                    }
+                });
                 this.lastHealthCheck = Date.now();
                 return browser;
             } catch (error) {
@@ -253,15 +280,23 @@ export class BrowserFactory {
         return page;
     }
 
-    public async forceKill(): Promise<void> {
-        if (this.browser && this.browser.process()) {
-            const pid = this.browser.process()?.pid;
+    public async forceKill(targetBrowser: Browser | null = this.browser): Promise<void> {
+        if (targetBrowser && targetBrowser.process()) {
+            const pid = targetBrowser.process()?.pid;
             if (pid) {
                 try {
                     console.log(`[BrowserFactory] 💀 Force killing PID ${pid}`);
                     process.kill(pid, 'SIGKILL');
                 } catch (e) { }
             }
+        }
+
+        if (targetBrowser && targetBrowser === this.browser) {
+            this.browser = null;
+        }
+        if (this.browserCounted) {
+            BrowserFactory.ACTIVE_INSTANCES = Math.max(0, BrowserFactory.ACTIVE_INSTANCES - 1);
+            this.browserCounted = false;
         }
     }
 
@@ -281,11 +316,18 @@ export class BrowserFactory {
         this.activePages.clear();
 
         if (this.browser) {
-            try {
-                await this.browser.close();
-            } catch { }
+            const browserToClose = this.browser;
             this.browser = null;
-            BrowserFactory.ACTIVE_INSTANCES--;
+            if (this.browserCounted) {
+                BrowserFactory.ACTIVE_INSTANCES = Math.max(0, BrowserFactory.ACTIVE_INSTANCES - 1);
+                this.browserCounted = false;
+            }
+
+            try {
+                await browserToClose.close();
+            } catch {
+                await this.forceKill(browserToClose);
+            }
         }
 
         // Cleanup temporary profile

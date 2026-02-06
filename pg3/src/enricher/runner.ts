@@ -67,31 +67,16 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
     const invalidPath = path.join(OUTPUT_DIR, `run${runId}_found_invalid.csv`);
     const notFoundPath = path.join(OUTPUT_DIR, `run${runId}_not_found.csv`);
 
-    // 1. Calculate Already Processed
     const processedMap = new Set<string>();
-    [validPath, invalidPath, notFoundPath].forEach(p => {
-        if (fs.existsSync(p)) {
-            const content = fs.readFileSync(p, 'utf-8');
-            // Simple parsing to get company names (assuming unique)
-            // Or better, just count how many lines? No, we need to know WHICH ones.
-            // Let's assume input order is constant or matching name.
-            // Fast approach: regex match all company names?
-            // Better: parse fully using fast-csv is safest but slower startup.
-            // Let's just use a simple regex for the first column if headers match.
-        }
-    });
-
-    // Actually, simpler approach for loop: 
-    // We can just Read all output files into memory first (it's small, 1342 rows max).
     const alreadyDone = [
         ...await loadCompanies(validPath),
         ...await loadCompanies(invalidPath),
         ...await loadCompanies(notFoundPath)
     ];
-    alreadyDone.forEach(c => processedMap.add(c.company_name));
+    alreadyDone.forEach(c => processedMap.add(buildCompanyKey(c)));
 
     // Filter pending
-    const pending = companies.filter(c => !processedMap.has(c.company_name));
+    const pending = companies.filter(c => !processedMap.has(buildCompanyKey(c)));
 
     if (pending.length === 0) {
         Logger.info(`⚠️ RUN ${runId}: All ${companies.length} companies already processed. Skipping.`);
@@ -114,6 +99,7 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
     const validWriter = getWriter(validPath);
     const invalidWriter = getWriter(invalidPath);
     const notFoundWriter = getWriter(notFoundPath);
+    const writeQueue = pLimit(1);
 
     const limit = pLimit(25); // 🚀 OVERDRIVE: Optimized for 32GB RAM (Increased from 12)
     let processedCount = companies.length - pending.length;
@@ -142,17 +128,17 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
 
             if (res.status === 'FOUND_VALID') {
                 console.log(`✅ [${mode}] FOUND: ${company.company_name} -> ${res.url}`);
-                await validWriter.writeRecords([enriched]);
+                await writeQueue(() => validWriter.writeRecords([enriched]));
                 AntigravityClient.getInstance().trackCompanyUpdate(enriched, 'ENRICHED', {
                     final_url: res.url,
                     piva: res.details?.scraped_piva
                 });
             } else if (res.status === 'FOUND_INVALID') {
                 console.log(`⚠️ [${mode}] INVALID: ${company.company_name} -> ${res.url} (${res.details.reason})`);
-                await invalidWriter.writeRecords([enriched]);
+                await writeQueue(() => invalidWriter.writeRecords([enriched]));
                 AntigravityClient.getInstance().trackCompanyUpdate(enriched, 'FAILED', { reason: 'Invalid Content' });
             } else {
-                await notFoundWriter.writeRecords([enriched]);
+                await writeQueue(() => notFoundWriter.writeRecords([enriched]));
                 AntigravityClient.getInstance().trackCompanyUpdate(enriched, 'FAILED', { reason: 'Not Found' });
             }
         } catch (error) {
@@ -168,8 +154,12 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
         }
     }));
 
-    await Promise.all(tasks);
-    Logger.info(`🏁 RUN ${runId} COMPLETED`);
+    try {
+        await Promise.all(tasks);
+        Logger.info(`🏁 RUN ${runId} COMPLETED`);
+    } finally {
+        clearInterval(memoryWatchdog);
+    }
 }
 
 function getHeaders() {
@@ -208,6 +198,14 @@ function enrichCompanyWithResult(company: CompanyInput, res: DiscoveryResult): a
         validation_level: res.details?.level || '',
         validation_reason: res.details?.reason || ''
     };
+}
+
+function buildCompanyKey(company: CompanyInput): string {
+    return [
+        company.company_name?.toLowerCase().trim() || '',
+        company.city?.toLowerCase().trim() || '',
+        company.address?.toLowerCase().trim() || ''
+    ].join('|');
 }
 
 async function loadCompanies(filePath: string): Promise<CompanyInput[]> {
@@ -260,4 +258,9 @@ async function mergeResults() {
     Logger.info(`✅ PIPELINE COMPLETE. Final Valid Yield: ${unique.size}`);
 }
 
-main().catch(console.error);
+if (require.main === module) {
+    main().catch((error) => {
+        Logger.error('Runner crashed', { error: error as Error });
+        process.exit(1);
+    });
+}

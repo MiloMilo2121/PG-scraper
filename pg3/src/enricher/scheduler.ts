@@ -15,9 +15,19 @@ import {
   createQueueEvents,
   QUEUE_NAMES,
   closeQueueResources,
+  redisConnection,
 } from './queue';
 
 const INPUT_FILE = process.argv[3] || 'output/campaigns/BOARD_FINAL_SANITISED.csv';
+const SCHEDULER_LOCK_KEY = process.env.SCHEDULER_LOCK_KEY || `${QUEUE_NAMES.ENRICHMENT}:scheduler:lock`;
+const SCHEDULER_LOCK_TTL_MS = parseInt(process.env.SCHEDULER_LOCK_TTL_MS || '900000', 10);
+const RELEASE_LOCK_SCRIPT = `
+if redis.call("get", KEYS[1]) == ARGV[1] then
+  return redis.call("del", KEYS[1])
+end
+return 0
+`;
+let activeSchedulerRuns = 0;
 
 export interface SchedulerSummary {
   loaded: number;
@@ -107,12 +117,42 @@ async function loadCompaniesFromCSV(filePath: string): Promise<CSVCompany[]> {
   });
 }
 
+async function acquireSchedulerLock(): Promise<string | null> {
+  const lockToken = crypto.randomUUID();
+  const result = await redisConnection.set(
+    SCHEDULER_LOCK_KEY,
+    lockToken,
+    'PX',
+    SCHEDULER_LOCK_TTL_MS,
+    'NX'
+  );
+  return result === 'OK' ? lockToken : null;
+}
+
+async function releaseSchedulerLock(lockToken: string): Promise<void> {
+  await redisConnection.eval(RELEASE_LOCK_SCRIPT, 1, SCHEDULER_LOCK_KEY, lockToken);
+}
+
 export async function runScheduler(csvPath?: string): Promise<SchedulerSummary> {
   const startedAt = Date.now();
   const inputFile = csvPath || INPUT_FILE;
   let events: QueueEvents | null = null;
+  let lockToken: string | null = null;
+
+  activeSchedulerRuns += 1;
 
   try {
+    lockToken = await acquireSchedulerLock();
+    if (!lockToken) {
+      Logger.warn('⚠️ Scheduler overlap detected. Another scheduler instance is already running.');
+      return {
+        loaded: 0,
+        enqueued: 0,
+        skipped: 0,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+
     Logger.info('📥 SCHEDULER: Starting job injection');
     events = createQueueEvents(QUEUE_NAMES.ENRICHMENT);
 
@@ -153,7 +193,16 @@ export async function runScheduler(csvPath?: string): Promise<SchedulerSummary> 
       });
     }
 
-    await closeQueueResources();
+    if (lockToken) {
+      await releaseSchedulerLock(lockToken).catch((error: unknown) => {
+        Logger.warn('Scheduler lock release failed', { error: error as Error });
+      });
+    }
+
+    activeSchedulerRuns = Math.max(activeSchedulerRuns - 1, 0);
+    if (activeSchedulerRuns === 0) {
+      await closeQueueResources();
+    }
   }
 }
 

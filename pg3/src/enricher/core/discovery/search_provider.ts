@@ -1,4 +1,5 @@
 
+import { Page } from 'puppeteer';
 import { BrowserFactory } from '../browser/factory_v2';
 import { Logger } from '../../utils/logger';
 import { GoogleSerpAnalyzer, SerpResult } from './serp_analyzer';
@@ -6,6 +7,34 @@ import { DuckDuckGoSerpAnalyzer } from './ddg_analyzer';
 
 export interface SearchProvider {
     search(query: string): Promise<SerpResult[]>;
+}
+
+async function acceptGoogleConsentIfPresent(page: Page): Promise<void> {
+    const clicked = await page.evaluate(() => {
+        const buttons = Array.from(
+            document.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"]')
+        ) as Array<HTMLElement | HTMLInputElement>;
+
+        const consentRegex = /(accetta tutto|accetta|accept all|i agree|agree)/i;
+        for (const button of buttons) {
+            const text = button.textContent?.trim() || (button as HTMLInputElement).value?.trim() || '';
+            if (text && consentRegex.test(text)) {
+                button.click();
+                return true;
+            }
+        }
+
+        return false;
+    });
+
+    if (!clicked) {
+        return;
+    }
+
+    await Promise.race([
+        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 6000 }).catch(() => undefined),
+        new Promise<void>((resolve) => setTimeout(resolve, 1200)),
+    ]);
 }
 
 export class GoogleSearchProvider implements SearchProvider {
@@ -24,18 +53,7 @@ export class GoogleSearchProvider implements SearchProvider {
             // Randomize timeout to look human
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-            // Consent Handling (Basic)
-            try {
-                const btn = await page.evaluate(() => {
-                    const buttons = Array.from(document.querySelectorAll('button'));
-                    // "Accetta tutto" or "Accept all"
-                    return buttons.find(b => /accetta|accept/i.test(b.innerText))?.innerText;
-                });
-                if (btn) {
-                    await page.click(`button ::-p-text(${btn})`);
-                    await page.waitForNavigation({ waitUntil: 'domcontentloaded' }).catch(() => { });
-                }
-            } catch (e) { }
+            await acceptGoogleConsentIfPresent(page);
 
             const html = await page.content();
             const results = await GoogleSerpAnalyzer.parseSerp(html);
@@ -108,15 +126,7 @@ export class ReverseAddressSearchProvider implements SearchProvider {
 
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-            // Basic consent handling
-            try {
-                await page.evaluate(() => {
-                    const buttons = Array.from(document.querySelectorAll('button'));
-                    const accept = buttons.find(b => /accetta|accept/i.test(b.innerText));
-                    if (accept) (accept as HTMLButtonElement).click();
-                });
-                await new Promise(r => setTimeout(r, 1000));
-            } catch (e) { }
+            await acceptGoogleConsentIfPresent(page);
 
             const html = await page.content();
             const results = await GoogleSerpAnalyzer.parseSerp(html);
@@ -131,4 +141,3 @@ export class ReverseAddressSearchProvider implements SearchProvider {
         }
     }
 }
-
