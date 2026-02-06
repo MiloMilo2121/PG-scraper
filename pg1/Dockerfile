@@ -31,6 +31,6 @@ COPY . .
 # Build TypeScript
 RUN npm run build
 
-# Default command
+# Default command (override CMD at runtime as needed)
 ENTRYPOINT ["node", "dist/cli.js"]
-CMD ["resolve", "--help"] // Override this
+CMD ["resolve", "--help"]
