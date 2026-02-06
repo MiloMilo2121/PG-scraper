@@ -11,10 +11,10 @@
  */
 
 import { Page } from 'puppeteer';
-import { BrowserFactory } from '../browser/factory_v2';
-import { HumanBehavior } from '../browser/human_behavior';
-import { GeneticFingerprinter } from '../browser/genetic_fingerprinter';
-import { ProxyManager, ProxyTier } from '../browser/proxy_manager';
+import { BrowserFactory } from '../modules/browser/factory_v2';
+import { HumanBehavior } from '../modules/browser/human_behavior';
+import { GeneticFingerprinter } from '../modules/browser/genetic_fingerprinter';
+import { ProxyManager, ProxyTier } from '../modules/browser/proxy_manager';
 
 export interface YellowResult {
     name: string;
