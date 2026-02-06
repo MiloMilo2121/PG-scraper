@@ -64,6 +64,7 @@ export class YellowNinja {
             const categorySlug = this.slugify(category);
             const locationSlug = this.slugify(location);
             const baseUrl = `https://www.paginegialle.it/ricerca/${categorySlug}/${locationSlug}`;
+            const activeProxy = this.proxyManager.getProxy(baseUrl);
 
             console.log(`🥷 Yellow Ninja: Hunting "${category}" in "${location}"`);
 
@@ -82,6 +83,9 @@ export class YellowNinja {
                 const isBlocked = await this.detectBlock(page);
                 if (isBlocked) {
                     console.warn('🚫 Yellow Ninja: Block detected! Starting hibernation...');
+                    if (activeProxy) {
+                        this.proxyManager.reportFailure(activeProxy);
+                    }
                     await this.startHibernation();
                     this.fingerprinter.reportFailure(geneId);
                     return results;
@@ -113,6 +117,9 @@ export class YellowNinja {
             }
 
             this.fingerprinter.reportSuccess(geneId);
+            if (activeProxy) {
+                this.proxyManager.reportSuccess(activeProxy);
+            }
             console.log(`🥷 Yellow Ninja: Extracted ${results.length} results for "${category}" in "${location}"`);
 
             return results;

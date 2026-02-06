@@ -55,6 +55,7 @@ export class MapsPhantom {
             console.log(`🗺️ Maps Phantom: Searching "${keyword}" in "${city}"`);
 
             await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+            await this.handleCookieConsent(page);
 
             // Wait for results to load
             await page.waitForSelector('[role="feed"]', { timeout: 15000 }).catch(() => null);
@@ -66,10 +67,12 @@ export class MapsPhantom {
             // Scroll and extract results
             let previousCount = 0;
             let noNewResultsCount = 0;
+            let stalledScrollCount = 0;
+            let previousScrollTop = -1;
 
-            while (results.length < maxResults && noNewResultsCount < 5) {
+            while (results.length < maxResults && noNewResultsCount < 8 && stalledScrollCount < 3) {
                 // Human-like scroll
-                await this.humanScroll(page);
+                const metrics = await this.humanScroll(page);
                 await HumanBehavior.randomPause(page, 1500, 3000);
 
                 // Extract visible results
@@ -90,6 +93,13 @@ export class MapsPhantom {
                     noNewResultsCount = 0;
                 }
                 previousCount = results.length;
+
+                if (metrics.scrollTop <= previousScrollTop && metrics.scrollTop + metrics.clientHeight >= metrics.scrollHeight - 5) {
+                    stalledScrollCount++;
+                } else {
+                    stalledScrollCount = 0;
+                }
+                previousScrollTop = metrics.scrollTop;
 
                 // Random mouse movement
                 await HumanBehavior.randomMouseMove(page);
@@ -113,8 +123,8 @@ export class MapsPhantom {
     /**
      * Human-like scroll simulation
      */
-    private async humanScroll(page: Page): Promise<void> {
-        await page.evaluate(() => {
+    private async humanScroll(page: Page): Promise<{ scrollTop: number; clientHeight: number; scrollHeight: number }> {
+        return await page.evaluate(() => {
             const feed = document.querySelector('[role="feed"]');
             if (feed) {
                 const scrollAmount = 300 + Math.random() * 200;
@@ -122,8 +132,36 @@ export class MapsPhantom {
                     top: scrollAmount,
                     behavior: 'smooth'
                 });
+                return {
+                    scrollTop: feed.scrollTop,
+                    clientHeight: feed.clientHeight,
+                    scrollHeight: feed.scrollHeight
+                };
             }
+            return { scrollTop: 0, clientHeight: 0, scrollHeight: 0 };
         });
+    }
+
+    private async handleCookieConsent(page: Page): Promise<void> {
+        const clicked = await page.evaluate(() => {
+            const consentRegex = /(accetta tutto|accetta|accept all|i agree|agree)/i;
+            const buttons = Array.from(
+                document.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"]')
+            ) as Array<HTMLElement | HTMLInputElement>;
+
+            for (const button of buttons) {
+                const text = button.textContent?.trim() || (button as HTMLInputElement).value?.trim() || '';
+                if (text && consentRegex.test(text)) {
+                    button.click();
+                    return true;
+                }
+            }
+            return false;
+        });
+
+        if (clicked) {
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+        }
     }
 
     /**

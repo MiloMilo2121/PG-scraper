@@ -10,6 +10,7 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import * as os from 'os';
 import * as path from 'path';
+import * as fs from 'fs';
 
 import { GeneticFingerprinter } from './genetic_fingerprinter';
 import { HumanBehavior } from './human_behavior';
@@ -27,25 +28,43 @@ export class BrowserFactory {
     private activePages: Set<Page> = new Set();
     private instanceId: string;
     private lastHealthCheck: number = Date.now();
+    private currentProfilePath: string | null = null;
+    private browserCounted = false;
 
     private static readonly MAX_CONCURRENCY = 25;
     private static MAX_TABS_PER_BROWSER = 8;
     public static ACTIVE_INSTANCES = 0;
+    private static shutdownHooksRegistered = false;
 
     constructor() {
         this.instanceId = Math.random().toString(36).substring(7);
         this.userDataDir = path.join(process.cwd(), 'temp_profiles', `browser_${this.instanceId}`);
+        this.currentProfilePath = this.userDataDir;
     }
 
     public static getInstance(): BrowserFactory {
         if (!BrowserFactory.instance) {
             BrowserFactory.instance = new BrowserFactory();
-            // Zombie cleanup
-            ['exit', 'SIGINT', 'SIGTERM'].forEach(signal => {
-                process.on(signal, () => BrowserFactory.instance.close());
-            });
+            BrowserFactory.registerShutdownHooks();
         }
         return BrowserFactory.instance;
+    }
+
+    private static registerShutdownHooks(): void {
+        if (BrowserFactory.shutdownHooksRegistered) {
+            return;
+        }
+        BrowserFactory.shutdownHooksRegistered = true;
+
+        const shutdown = () => {
+            if (BrowserFactory.instance) {
+                void BrowserFactory.instance.close();
+            }
+        };
+
+        process.once('SIGINT', shutdown);
+        process.once('SIGTERM', shutdown);
+        process.once('beforeExit', shutdown);
     }
 
     public async isHealthy(): Promise<boolean> {
@@ -84,6 +103,7 @@ export class BrowserFactory {
 
             const freeMem = os.freemem() / 1024 / 1024;
             console.log(`[BrowserFactory:${this.instanceId}] 🚀 initiateShadowProtocol (Free RAM: ${Math.round(freeMem)}MB)`);
+            this.currentProfilePath = this.userDataDir;
 
             let executablePath = process.env.CHROME_PATH;
             if (!executablePath && os.platform() === 'linux') {
@@ -98,6 +118,7 @@ export class BrowserFactory {
             }
 
             try {
+                const proxyArgs = ProxyManager.getInstance().getProxyArgs('https://www.google.com');
                 const browser = await puppeteer.launch({
                     headless: true,
                     timeout: 60000,
@@ -105,6 +126,7 @@ export class BrowserFactory {
                     userDataDir: this.userDataDir,
                     executablePath: executablePath,
                     args: [
+                        ...proxyArgs,
                         '--no-sandbox',
                         '--disable-setuid-sandbox',
                         '--disable-infobars',
@@ -121,7 +143,17 @@ export class BrowserFactory {
                 }) as unknown as Browser;
 
                 this.browser = browser;
+                this.browserCounted = true;
                 BrowserFactory.ACTIVE_INSTANCES++;
+                browser.once('disconnected', () => {
+                    if (this.browserCounted) {
+                        BrowserFactory.ACTIVE_INSTANCES = Math.max(0, BrowserFactory.ACTIVE_INSTANCES - 1);
+                        this.browserCounted = false;
+                    }
+                    if (this.browser === browser) {
+                        this.browser = null;
+                    }
+                });
                 this.lastHealthCheck = Date.now();
                 return browser;
             } catch (error) {
@@ -207,19 +239,42 @@ export class BrowserFactory {
         this.activePages.clear();
 
         if (this.browser) {
-            try {
-                await this.browser.close();
-            } catch { }
+            const browserToClose = this.browser;
             this.browser = null;
-            BrowserFactory.ACTIVE_INSTANCES--;
+            if (this.browserCounted) {
+                BrowserFactory.ACTIVE_INSTANCES = Math.max(0, BrowserFactory.ACTIVE_INSTANCES - 1);
+                this.browserCounted = false;
+            }
+
+            try {
+                await browserToClose.close();
+            } catch {
+                await this.forceKill(browserToClose);
+            }
+        }
+
+        if (this.currentProfilePath) {
+            try {
+                if (fs.existsSync(this.currentProfilePath)) {
+                    fs.rmSync(this.currentProfilePath, { recursive: true, force: true });
+                }
+            } catch { }
+            this.currentProfilePath = null;
         }
     }
 
-    public async forceKill(): Promise<void> {
-        if (this.browser?.process()?.pid) {
+    public async forceKill(targetBrowser: Browser | null = this.browser): Promise<void> {
+        if (targetBrowser?.process()?.pid) {
             try {
-                process.kill(this.browser.process()!.pid!, 'SIGKILL');
+                process.kill(targetBrowser.process()!.pid!, 'SIGKILL');
             } catch (e) { }
+        }
+        if (targetBrowser && targetBrowser === this.browser) {
+            this.browser = null;
+        }
+        if (this.browserCounted) {
+            BrowserFactory.ACTIVE_INSTANCES = Math.max(0, BrowserFactory.ACTIVE_INSTANCES - 1);
+            this.browserCounted = false;
         }
     }
 }

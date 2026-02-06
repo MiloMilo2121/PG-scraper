@@ -17,7 +17,7 @@ import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 
 // Configuration
-const PG3_INPUT_DIR = process.env.PG3_INPUT_DIR || '../pg3/input';
+const PG3_INPUT_DIR = path.resolve(process.cwd(), process.env.PG3_INPUT_DIR || '../pg3/input');
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 const QUEUE_NAME = 'enrichment';
 
@@ -45,6 +45,21 @@ export interface HandoverConfig {
     priority?: number;
 }
 
+function sanitizeCitySegment(cityName: string): string {
+    return cityName
+        .trim()
+        .replace(/[^\w.-]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        || 'unknown';
+}
+
+export async function closeHandoverResources(): Promise<void> {
+    await Promise.allSettled([
+        enrichmentQueue.close(),
+        redisConnection.quit()
+    ]);
+}
+
 /**
  * Execute handover from PG1 to PG3
  */
@@ -65,7 +80,8 @@ export async function executeHandover(config: HandoverConfig): Promise<void> {
 
     // Generate timestamped filename
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const destFilename = `${cityName}_${timestamp}.csv`;
+    const safeCityName = sanitizeCitySegment(cityName);
+    const destFilename = `${safeCityName}_${timestamp}.csv`;
     const destPath = path.join(PG3_INPUT_DIR, destFilename);
 
     // Copy file to PG3 input
@@ -111,26 +127,42 @@ export async function watchAndHandover(watchDir: string): Promise<void> {
     console.log(`👁️ Watching for new CSV files in: ${watchDir}`);
 
     const processed = new Set<string>();
+    const inFlight = new Set<string>();
+    let scanRunning = false;
 
     const checkForNewFiles = async () => {
+        if (scanRunning) {
+            return;
+        }
+        scanRunning = true;
+
         const files = fs.readdirSync(watchDir);
 
-        for (const file of files) {
-            if (!file.endsWith('.csv') || processed.has(file)) continue;
+        try {
+            for (const file of files) {
+                if (!file.endsWith('.csv') || processed.has(file) || inFlight.has(file)) {
+                    continue;
+                }
 
-            const filePath = path.join(watchDir, file);
-            const cityMatch = file.match(/^(.+?)_/);
-            const cityName = cityMatch ? cityMatch[1] : 'unknown';
+                const filePath = path.join(watchDir, file);
+                const cityMatch = file.match(/^(.+?)_/);
+                const cityName = cityMatch ? cityMatch[1] : 'unknown';
 
-            try {
-                await executeHandover({
-                    sourcePath: filePath,
-                    cityName,
-                });
-                processed.add(file);
-            } catch (error) {
-                console.error(`❌ Handover failed for ${file}:`, error);
+                inFlight.add(file);
+                try {
+                    await executeHandover({
+                        sourcePath: filePath,
+                        cityName,
+                    });
+                    processed.add(file);
+                } catch (error) {
+                    console.error(`❌ Handover failed for ${file}:`, error);
+                } finally {
+                    inFlight.delete(file);
+                }
             }
+        } finally {
+            scanRunning = false;
         }
     };
 
@@ -156,13 +188,26 @@ if (require.main === module) {
         const cityName = path.basename(sourcePath, '.csv');
 
         executeHandover({ sourcePath, cityName })
-            .then(() => process.exit(0))
+            .then(async () => {
+                await closeHandoverResources();
+                process.exit(0);
+            })
             .catch((error) => {
                 console.error(error);
-                process.exit(1);
+                closeHandoverResources()
+                    .finally(() => process.exit(1));
             });
     } else if (watchIndex !== -1 && args[watchIndex + 1]) {
-        watchAndHandover(args[watchIndex + 1]);
+        process.once('SIGINT', () => {
+            closeHandoverResources().finally(() => process.exit(0));
+        });
+        process.once('SIGTERM', () => {
+            closeHandoverResources().finally(() => process.exit(0));
+        });
+        watchAndHandover(args[watchIndex + 1]).catch((error) => {
+            console.error(error);
+            closeHandoverResources().finally(() => process.exit(1));
+        });
     } else {
         console.log(`
 🔗 HANDOVER PROTOCOL

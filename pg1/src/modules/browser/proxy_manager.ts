@@ -58,12 +58,14 @@ export class ProxyManager {
      */
     public getProxy(targetUrl: string): string | undefined {
         const tier = this.determineRequiredTier(targetUrl);
+        const residentialAvailable = this.residentialProxy && !this.failedProxies.has(this.residentialProxy);
+        const datacenterAvailable = this.datacenterProxy && !this.failedProxies.has(this.datacenterProxy);
 
         switch (tier) {
             case ProxyTier.RESIDENTIAL:
-                return this.residentialProxy;
+                return residentialAvailable ? this.residentialProxy : (datacenterAvailable ? this.datacenterProxy : undefined);
             case ProxyTier.DATACENTER:
-                return this.datacenterProxy || this.residentialProxy;
+                return datacenterAvailable ? this.datacenterProxy : (residentialAvailable ? this.residentialProxy : undefined);
             case ProxyTier.DIRECT:
             default:
                 return undefined;
@@ -74,7 +76,12 @@ export class ProxyManager {
      * Determine required tier based on target
      */
     private determineRequiredTier(url: string): ProxyTier {
-        const hostname = new URL(url).hostname.toLowerCase();
+        let hostname = '';
+        try {
+            hostname = new URL(url).hostname.toLowerCase();
+        } catch {
+            return ProxyTier.DIRECT;
+        }
 
         // High-security targets = Residential only
         const highSecurity = [
@@ -102,8 +109,19 @@ export class ProxyManager {
      * Report proxy failure for rotation
      */
     public reportFailure(proxyUrl: string): void {
+        if (!proxyUrl) return;
         this.failedProxies.add(proxyUrl);
         console.warn(`⚠️ Proxy marked as failed: ${proxyUrl}`);
+    }
+
+    /**
+     * Report proxy success and re-enable it if previously failed
+     */
+    public reportSuccess(proxyUrl: string): void {
+        if (!proxyUrl) return;
+        if (this.failedProxies.delete(proxyUrl)) {
+            console.log(`✅ Proxy restored: ${proxyUrl}`);
+        }
     }
 
     /**
