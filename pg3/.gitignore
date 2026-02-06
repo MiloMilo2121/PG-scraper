@@ -9,6 +9,11 @@ temp/
 *.log
 .DS_Store
 *.csv
+!tests/fixtures/*.csv
+*.png
+!examples/fixtures/*.png
+debug_fail_*.png
+debug_reportaziende.png
 # Keep the current input file if you want, but usually it's better to ignore and provide it separately
 # input_phase1_cleaned.csv 
 .gemini/

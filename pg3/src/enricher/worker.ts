@@ -13,10 +13,10 @@
 
 import { Worker, Job } from 'bullmq';
 import { Logger, ErrorCategory } from './utils/logger';
+import { config } from './config';
 
-// Environment config with defaults
-const CONCURRENCY_LIMIT = parseInt(process.env.CONCURRENCY_LIMIT || '10');
-const RETRY_ATTEMPTS = parseInt(process.env.RETRY_ATTEMPTS || '3');
+const CONCURRENCY_LIMIT = config.queue.concurrencyLimit;
+const RETRY_ATTEMPTS = config.queue.retryAttempts;
 
 import {
     redisConnection,
@@ -196,8 +196,9 @@ async function gracefulShutdown(worker: Worker, signal: string): Promise<void> {
 }
 
 // 🚀 Main Entry Point
-async function main() {
+export async function runWorker(): Promise<Worker<EnrichmentJobData, JobResult>> {
     Logger.info('🚀 WORKER: Starting enrichment processor');
+    Logger.info(`🤖 LLM model configured: ${config.llm.model}`);
 
     const worker = startWorker();
 
@@ -206,13 +207,15 @@ async function main() {
     process.on('SIGINT', () => gracefulShutdown(worker, 'SIGINT'));
 
     Logger.info('👷 Worker is running. Press Ctrl+C to stop.');
+    return worker;
 }
+
 // Export for programmatic use
 export { startWorker };
 
 // Auto-run if executed directly
 if (require.main === module) {
-    main().catch((err) => {
+    runWorker().catch((err) => {
         Logger.fatal('Worker crashed', { error: err });
         process.exit(1);
     });

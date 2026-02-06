@@ -8,21 +8,30 @@
  * - Dead Letter: Failed jobs go to DLQ for manual review
  */
 
-import { Queue, Worker, Job, QueueEvents } from 'bullmq';
+import { Queue, Job, QueueEvents } from 'bullmq';
 import IORedis from 'ioredis';
-import { z } from 'zod';
 import { Logger } from '../utils/logger';
+import { config } from '../config';
 
-// Environment config with defaults
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-const RETRY_ATTEMPTS = parseInt(process.env.RETRY_ATTEMPTS || '3');
-const RETRY_DELAY_MS = parseInt(process.env.RETRY_DELAY_MS || '1000');
-const QUEUE_BATCH_SIZE = parseInt(process.env.QUEUE_BATCH_SIZE || '100');
+const REDIS_URL = config.redis.url;
+const RETRY_ATTEMPTS = config.queue.retryAttempts;
+const RETRY_DELAY_MS = config.queue.retryDelayMs;
+const QUEUE_BATCH_SIZE = config.queue.batchSize;
+const REDIS_CONNECT_TIMEOUT_MS = parseInt(process.env.REDIS_CONNECT_TIMEOUT_MS || '5000', 10);
+const REDIS_CONNECT_RETRIES = parseInt(process.env.REDIS_CONNECT_RETRIES || '5', 10);
 
 // 🔌 Redis Connection (Singleton)
 export const redisConnection = new IORedis(REDIS_URL, {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
+    lazyConnect: true,
+    connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
+    retryStrategy: (times) => {
+        if (times > REDIS_CONNECT_RETRIES) {
+            return null;
+        }
+        return Math.min(times * 200, 2000);
+    },
 });
 
 redisConnection.on('error', (err) => {
@@ -120,8 +129,9 @@ export function createQueueEvents(name: string): QueueEvents {
 export async function addJobsBatch(
     queue: Queue<EnrichmentJobData, JobResult>,
     companies: EnrichmentJobData[]
-): Promise<void> {
+): Promise<number> {
     const batchSize = QUEUE_BATCH_SIZE;
+    let enqueued = 0;
 
     for (let i = 0; i < companies.length; i += batchSize) {
         const batch = companies.slice(i, i + batchSize);
@@ -133,9 +143,12 @@ export async function addJobsBatch(
             },
         }));
 
-        await queue.addBulk(jobs);
+        const added = await queue.addBulk(jobs);
+        enqueued += added.length;
         Logger.info(`📥 Added batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(companies.length / batchSize)} to queue`);
     }
+
+    return enqueued;
 }
 
 /**
@@ -176,4 +189,14 @@ export async function getQueueHealth(): Promise<{
             enrichmentQueue: { waiting: 0, active: 0, failed: 0, completed: 0 },
         };
     }
+}
+
+export async function closeQueueResources(): Promise<void> {
+    const closers: Array<Promise<unknown>> = [];
+
+    closers.push(enrichmentQueue.close());
+    closers.push(deadLetterQueue.close());
+    closers.push(redisConnection.quit());
+
+    await Promise.allSettled(closers);
 }

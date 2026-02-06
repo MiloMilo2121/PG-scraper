@@ -19,6 +19,7 @@ RUN npm ci
 
 # Copy source code
 COPY tsconfig.json ./
+COPY tsconfig.build.json ./
 COPY src ./src
 
 # Build TypeScript
@@ -74,4 +75,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 
 # Default command: run worker
-CMD ["node", "dist/enricher/worker.js"]
+CMD ["node", "dist/src/enricher/worker.js"]

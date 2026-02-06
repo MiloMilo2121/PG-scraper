@@ -1,40 +1,49 @@
-/**
- * 🚀 ANTIGRAVITY ENRICHER - Main Entry Point
- * 
- * This is the primary entry point for the enrichment service.
- * It can run in two modes:
- * 1. Worker Mode (default): Processes jobs from the BullMQ queue
- * 2. Scheduler Mode: Loads a CSV and schedules jobs to the queue
- * 
- * Usage:
- *   npm start                    # Starts the worker
- *   npm run scheduler <file.csv> # Schedules jobs from CSV
- */
-
 import { Logger } from './enricher/utils/logger';
 
-async function main() {
-    const mode = process.argv[2] || 'worker';
+const VALID_COMMANDS = new Set(['worker', 'scheduler']);
 
-    Logger.info(`🚀 ANTIGRAVITY Starting in ${mode.toUpperCase()} mode...`);
-
-    if (mode === 'scheduler') {
-        const csvPath = process.argv[3];
-        if (!csvPath) {
-            Logger.error('Usage: npm run scheduler <path/to/file.csv>');
-            process.exit(1);
-        }
-        // Dynamically import scheduler to avoid loading worker dependencies
-        const { runScheduler } = await import('./enricher/scheduler');
-        await runScheduler(csvPath);
-    } else {
-        // Default: Worker mode
-        const { startWorker } = await import('./enricher/worker');
-        await startWorker();
-    }
+function printUsage(): void {
+  Logger.info('Usage:');
+  Logger.info('  node dist/src/index.js worker');
+  Logger.info('  node dist/src/index.js scheduler <path/to/file.csv>');
 }
 
-main().catch(err => {
-    Logger.error('Fatal error:', { error: err });
+async function main(): Promise<void> {
+  const command = process.argv[2];
+
+  if (!command || !VALID_COMMANDS.has(command)) {
+    Logger.error(`Invalid command: ${command || '(missing)'}`);
+    printUsage();
     process.exit(1);
+  }
+
+  if (command === 'worker') {
+    Logger.info('🚀 ANTIGRAVITY starting in WORKER mode');
+    const { runWorker } = await import('./enricher/worker');
+    await runWorker();
+    return;
+  }
+
+  const csvPath = process.argv[3];
+  if (!csvPath) {
+    Logger.error('Missing CSV path for scheduler mode');
+    printUsage();
+    process.exit(1);
+  }
+
+  Logger.info('🚀 ANTIGRAVITY starting in SCHEDULER mode');
+  const { runScheduler } = await import('./enricher/scheduler');
+  const summary = await runScheduler(csvPath);
+
+  Logger.info('Scheduler summary', {
+    loaded: summary.loaded,
+    enqueued: summary.enqueued,
+    skipped: summary.skipped,
+    duration_ms: summary.durationMs,
+  });
+}
+
+main().catch((err) => {
+  Logger.error('Fatal error', { error: err as Error });
+  process.exit(1);
 });

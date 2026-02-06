@@ -1,157 +1,177 @@
 /**
  * 📥 SCHEDULER - Job Producer
- * Task 4: Loads companies from CSV and adds to BullMQ queue
- * 
- * Usage: npx ts-node src/enricher/scheduler.ts [input.csv]
+ * Loads companies from CSV and adds to BullMQ queue.
  */
 
-import * as fs from 'fs';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
+import { QueueEvents } from 'bullmq';
 import { parse } from 'fast-csv';
 import { Logger } from './utils/logger';
-import { config } from './config';
 import {
-    enrichmentQueue,
-    addJobsBatch,
-    EnrichmentJobData,
-    createQueueEvents,
-    QUEUE_NAMES,
+  enrichmentQueue,
+  addJobsBatch,
+  EnrichmentJobData,
+  createQueueEvents,
+  QUEUE_NAMES,
+  closeQueueResources,
 } from './queue';
 
-const INPUT_FILE = process.argv[2] || 'output/campaigns/BOARD_FINAL_SANITISED.csv';
+const INPUT_FILE = process.argv[3] || 'output/campaigns/BOARD_FINAL_SANITISED.csv';
 
-async function main() {
-    Logger.info('📥 SCHEDULER: Starting job injection');
-
-    // Subscribe to queue events for monitoring
-    const events = createQueueEvents(QUEUE_NAMES.ENRICHMENT);
-
-    // Load companies from CSV
-    const companies = await loadCompaniesFromCSV(INPUT_FILE);
-    Logger.info(`📊 Loaded ${companies.length} companies from ${INPUT_FILE}`);
-
-    if (companies.length === 0) {
-        Logger.warn('⚠️ No companies to process. Exiting.');
-        process.exit(0);
-    }
-
-    // Check existing queue state to avoid duplicates
-    const existingJobs = await enrichmentQueue.getJobCounts();
-    Logger.info(`📋 Queue state: ${existingJobs.waiting} waiting, ${existingJobs.active} active, ${existingJobs.completed} completed`);
-
-    // Convert to job data format with DETERMINISTIC IDs (idempotent)
-    const jobs: EnrichmentJobData[] = companies.map((c, idx) => {
-        // T03: Deterministic ID = MD5(name + city) for idempotency
-        const deterministicId = c.company_id || crypto
-            .createHash('md5')
-            .update(`${c.company_name}${c.city || ''}`)
-            .digest('hex');
-
-        return {
-            company_id: deterministicId,
-            company_name: c.company_name,
-            city: c.city,
-            province: c.province,
-            address: c.address,
-            phone: c.phone,
-            website: c.website,
-            category: c.category,
-        };
-    });
-
-    // Add jobs to queue in batches
-    await addJobsBatch(enrichmentQueue, jobs);
-
-    Logger.info(`✅ SCHEDULER: Injected ${jobs.length} jobs to queue`);
-    Logger.info('👷 Start workers with: npx ts-node src/enricher/worker.ts');
-
-    // Keep alive briefly to log initial events, then exit
-    setTimeout(() => {
-        Logger.info('📥 SCHEDULER: Job injection complete. Exiting.');
-        process.exit(0);
-    }, 3000);
+export interface SchedulerSummary {
+  loaded: number;
+  enqueued: number;
+  skipped: number;
+  durationMs: number;
 }
 
 interface CSVCompany {
-    company_id?: string;
-    company_name: string;
-    city?: string;
-    province?: string;
-    address?: string;
-    phone?: string;
-    website?: string;
-    category?: string;
+  company_id?: string;
+  company_name: string;
+  city?: string;
+  province?: string;
+  address?: string;
+  phone?: string;
+  website?: string;
+  category?: string;
+}
+
+function deterministicCompanyId(company: CSVCompany): string {
+  if (company.company_id && company.company_id.trim() !== '') {
+    return company.company_id.trim();
+  }
+
+  return crypto
+    .createHash('md5')
+    .update(`${company.company_name}${company.city || ''}`)
+    .digest('hex');
+}
+
+function mapCompaniesToJobs(companies: CSVCompany[]): { jobs: EnrichmentJobData[]; skipped: number } {
+  const uniqueJobs = new Map<string, EnrichmentJobData>();
+
+  for (const c of companies) {
+    const companyName = c.company_name.trim();
+    if (!companyName) {
+      continue;
+    }
+
+    const companyId = deterministicCompanyId(c);
+    if (uniqueJobs.has(companyId)) {
+      continue;
+    }
+
+    uniqueJobs.set(companyId, {
+      company_id: companyId,
+      company_name: companyName,
+      city: c.city?.trim() || undefined,
+      province: c.province?.trim() || undefined,
+      address: c.address?.trim() || undefined,
+      phone: c.phone?.trim() || undefined,
+      website: c.website?.trim() || undefined,
+      category: c.category?.trim() || undefined,
+    });
+  }
+
+  return {
+    jobs: Array.from(uniqueJobs.values()),
+    skipped: Math.max(companies.length - uniqueJobs.size, 0),
+  };
 }
 
 async function loadCompaniesFromCSV(filePath: string): Promise<CSVCompany[]> {
-    if (!fs.existsSync(filePath)) {
-        Logger.error(`❌ Input file not found: ${filePath}`);
-        return [];
-    }
+  if (!fs.existsSync(filePath)) {
+    Logger.error(`❌ Input file not found: ${filePath}`);
+    return [];
+  }
 
-    return new Promise((resolve) => {
-        const rows: CSVCompany[] = [];
-        fs.createReadStream(filePath)
-            .pipe(parse({ headers: true, ignoreEmpty: true }))
-            .on('data', (row: CSVCompany) => {
-                if (row.company_name?.trim()) {
-                    rows.push({
-                        ...row,
-                        company_name: row.company_name.trim(),
-                    });
-                }
-            })
-            .on('end', () => resolve(rows))
-            .on('error', (err) => {
-                Logger.error('CSV parsing error', { error: err });
-                resolve([]);
-            });
-    });
+  return new Promise((resolve) => {
+    const rows: CSVCompany[] = [];
+
+    fs.createReadStream(filePath)
+      .pipe(parse({ headers: true, ignoreEmpty: true }))
+      .on('data', (row: CSVCompany) => {
+        if (row.company_name?.trim()) {
+          rows.push({
+            ...row,
+            company_name: row.company_name.trim(),
+          });
+        }
+      })
+      .on('end', () => resolve(rows))
+      .on('error', (err) => {
+        Logger.error('CSV parsing error', { error: err });
+        resolve([]);
+      });
+  });
 }
 
-// Export for programmatic use
-export async function runScheduler(csvPath?: string) {
-    const inputFile = csvPath || INPUT_FILE;
-    Logger.info('📥 SCHEDULER: Starting job injection');
+export async function runScheduler(csvPath?: string): Promise<SchedulerSummary> {
+  const startedAt = Date.now();
+  const inputFile = csvPath || INPUT_FILE;
+  let events: QueueEvents | null = null;
 
-    const events = createQueueEvents(QUEUE_NAMES.ENRICHMENT);
+  try {
+    Logger.info('📥 SCHEDULER: Starting job injection');
+    events = createQueueEvents(QUEUE_NAMES.ENRICHMENT);
+
     const companies = await loadCompaniesFromCSV(inputFile);
     Logger.info(`📊 Loaded ${companies.length} companies from ${inputFile}`);
 
-    if (companies.length === 0) {
-        Logger.warn('⚠️ No companies to process.');
-        return;
+    const queueCounts = await enrichmentQueue.getJobCounts();
+    Logger.info(
+      `📋 Queue state: ${queueCounts.waiting} waiting, ${queueCounts.active} active, ${queueCounts.completed} completed`
+    );
+
+    const { jobs, skipped } = mapCompaniesToJobs(companies);
+
+    if (jobs.length === 0) {
+      Logger.warn('⚠️ No companies to process.');
+      return {
+        loaded: companies.length,
+        enqueued: 0,
+        skipped,
+        durationMs: Date.now() - startedAt,
+      };
     }
 
-    const existingJobs = await enrichmentQueue.getJobCounts();
-    Logger.info(`📋 Queue state: ${existingJobs.waiting} waiting, ${existingJobs.active} active, ${existingJobs.completed} completed`);
+    const enqueued = await addJobsBatch(enrichmentQueue, jobs);
 
-    const jobs: EnrichmentJobData[] = companies.map((c) => {
-        const deterministicId = c.company_id || crypto
-            .createHash('md5')
-            .update(`${c.company_name}${c.city || ''}`)
-            .digest('hex');
+    Logger.info(`✅ SCHEDULER: Injected ${enqueued} jobs to queue`);
 
-        return {
-            company_id: deterministicId,
-            company_name: c.company_name,
-            city: c.city,
-            province: c.province,
-            address: c.address,
-            phone: c.phone,
-            website: c.website,
-            category: c.category,
-        };
-    });
+    return {
+      loaded: companies.length,
+      enqueued,
+      skipped,
+      durationMs: Date.now() - startedAt,
+    };
+  } finally {
+    if (events) {
+      await events.close().catch((error: unknown) => {
+        Logger.warn('QueueEvents close failed', { error: error as Error });
+      });
+    }
 
-    await addJobsBatch(enrichmentQueue, jobs);
-    Logger.info(`✅ SCHEDULER: Injected ${jobs.length} jobs to queue`);
+    await closeQueueResources();
+  }
 }
 
-// Auto-run if executed directly
+async function main(): Promise<void> {
+  const csvPath = process.argv[3] || process.argv[2];
+  const summary = await runScheduler(csvPath);
+
+  Logger.info('📥 SCHEDULER: Complete', {
+    loaded: summary.loaded,
+    enqueued: summary.enqueued,
+    skipped: summary.skipped,
+    duration_ms: summary.durationMs,
+  });
+}
+
 if (require.main === module) {
-    main().catch((err) => {
-        Logger.fatal('Scheduler crashed', { error: err });
-        process.exit(1);
-    });
+  main().catch((err) => {
+    Logger.fatal('Scheduler crashed', { error: err as Error });
+    process.exit(1);
+  });
 }

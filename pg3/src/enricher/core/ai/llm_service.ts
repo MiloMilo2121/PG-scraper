@@ -3,18 +3,13 @@ import { config } from '../../config';
 import { Logger } from '../../utils/logger';
 import OpenAI from 'openai';
 
-interface LLMResponse {
-    content: string;
-    usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
-}
-
 export class LLMService {
     private static totalCost = 0;
     private static openai: OpenAI | null = null;
 
-    private static getClient(): OpenAI | null {
-        if (!LLMService.openai && process.env.OPENAI_API_KEY) {
-            LLMService.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    private static getClient(): OpenAI {
+        if (!LLMService.openai) {
+            LLMService.openai = new OpenAI({ apiKey: config.llm.apiKey });
         }
         return LLMService.openai;
     }
@@ -22,19 +17,12 @@ export class LLMService {
     public static async complete(prompt: string, model: string = config.llm.model): Promise<string> {
         const client = LLMService.getClient();
 
-        // If no API key, return mock response
-        if (!client) {
-            Logger.warn('[LLM] No OPENAI_API_KEY configured - returning mock response');
-            this.trackCost(100, 50, model);
-            return "{ \"status\": \"mock_response\" }";
-        }
-
         try {
             const response = await client.chat.completions.create({
                 model: model,
                 messages: [{ role: 'user', content: prompt }],
                 temperature: 0.2,
-                max_tokens: 1000,
+                max_tokens: config.llm.maxTokens,
             });
 
             const content = response.choices[0]?.message?.content || '';

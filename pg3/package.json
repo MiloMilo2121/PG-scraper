@@ -1,16 +1,20 @@
 {
   "name": "pg-step3-enrichment",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "PG3 enrichment pipeline",
+  "main": "dist/src/index.js",
   "scripts": {
-    "build": "tsc",
-    "start": "ts-node src/index.ts",
-    "start:worker": "ts-node src/enricher/worker.ts",
-    "start:scheduler": "ts-node src/enricher/scheduler.ts",
-    "dev": "ts-node src/index.ts",
-    "test": "echo \"Tests pending implementation\" && exit 0",
-    "lint": "tsc --noEmit"
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "npm run typecheck",
+    "test:unit": "OPENAI_API_KEY=test-key vitest run tests/unit --reporter=dot",
+    "test:smoke": "OPENAI_API_KEY=test-key REDIS_URL=redis://127.0.0.1:6379/15 vitest run tests/integration --reporter=dot",
+    "test": "npm run test:unit && npm run test:smoke",
+    "dev:worker": "ts-node src/index.ts worker",
+    "dev:scheduler": "ts-node src/index.ts scheduler",
+    "start": "node dist/src/index.js worker",
+    "start:worker": "node dist/src/enricher/worker.js",
+    "start:scheduler": "node dist/src/index.js scheduler"
   },
   "dependencies": {
     "@types/cheerio": "^0.22.35",
@@ -50,6 +54,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13"
+    "@types/better-sqlite3": "^7.6.13",
+    "vitest": "^3.2.4"
   }
 }

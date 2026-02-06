@@ -13,6 +13,7 @@ import OpenAI from 'openai';
 import { ViesService } from './vies';
 import { Logger } from '../../utils/logger';
 import { CaptchaSolver } from '../security/captcha_solver';
+import { config } from '../../config';
 
 export interface FinancialData {
     vat?: string;
@@ -32,7 +33,7 @@ export class FinancialService {
 
     constructor(apiKey?: string) {
         this.browserFactory = BrowserFactory.getInstance();
-        const key = apiKey || process.env.OPENAI_API_KEY || '';
+        const key = apiKey || config.llm.apiKey;
         this.openai = new OpenAI({ apiKey: key, dangerouslyAllowBrowser: true });
         this.vies = new ViesService();
     }

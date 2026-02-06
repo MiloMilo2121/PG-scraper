@@ -14,12 +14,11 @@
 import OpenAI from 'openai';
 import * as crypto from 'crypto';
 import { Logger } from '../../utils/logger';
+import { config } from '../../config';
 
-// Environment config with defaults
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const AI_MODEL_FAST = process.env.AI_MODEL_FAST || 'gpt-4o-mini';
-const AI_MODEL_SMART = process.env.AI_MODEL_SMART || 'gpt-4o';
-const AI_MAX_TOKENS = parseInt(process.env.AI_MAX_TOKENS || '500');
+const AI_MODEL_FAST = config.llm.fastModel;
+const AI_MODEL_SMART = config.llm.smartModel;
+const AI_MAX_TOKENS = config.llm.maxTokens;
 
 // Simple in-memory cache (Redis TODO)
 const responseCache: Map<string, { response: string; tokens: number }> = new Map();
@@ -46,7 +45,7 @@ export class AIService {
 
     constructor() {
         this.openai = new OpenAI({
-            apiKey: OPENAI_API_KEY,
+            apiKey: config.llm.apiKey,
         });
         this.fastModel = AI_MODEL_FAST;
         this.smartModel = AI_MODEL_SMART;
