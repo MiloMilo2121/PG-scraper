@@ -56,6 +56,19 @@ Obiettivo: portare la piattaforma a uno stato affidabile, osservabile e manuteni
 ### 2.6 Hygiene repository
 - Aggiornato `.gitignore` con `pg3/data` (artefatti locali di test).
 
+### 2.7 Aggiornamento successivo (continuazione)
+- Idempotenza applicata nel worker:
+  - skip se `company_id` già arricchita in DB
+  - persistenza `enrichment_results` su success
+  - scrittura `job_log` su success/retry/fail
+  - file: `pg3/src/enricher/worker.ts`
+- Scheduler ora persiste anagrafica aziende in DB prima dell’enqueue:
+  - file: `pg3/src/enricher/scheduler.ts`
+- Smoke test integration reso resiliente ad ambienti senza Redis raggiungibile:
+  - file: `pg3/tests/integration/scheduler-smoke.test.ts`
+- Ridotta duplicazione in `pg3` per genetic fingerprinter:
+  - `pg3/src/scraper/core/browser/genetic_fingerprinter.ts` ora riusa implementazione `enricher`.
+
 ## 3. Verifiche eseguite
 
 - `pg3`: `npm run typecheck` -> OK

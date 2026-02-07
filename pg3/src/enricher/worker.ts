@@ -28,7 +28,12 @@ import {
 import { FinancialService } from './core/financial/service';
 import { UnifiedDiscoveryService } from './core/discovery/unified_discovery_service';
 import { BrowserFactory } from './core/browser/factory_v2';
-import { initializeDatabase } from './db';
+import {
+    getEnrichmentResult,
+    initializeDatabase,
+    insertEnrichmentResult,
+    logJobResult,
+} from './db';
 
 // 🔧 Initialize Services
 const financialService = new FinancialService();
@@ -51,6 +56,25 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
     });
 
     try {
+        const existing = getEnrichmentResult(company_id);
+        if (existing) {
+            const duration = Date.now() - startTime;
+            Logger.info(`[Worker] ⏭️ Skipping already enriched company: ${company_name}`, {
+                company_id,
+                duration_ms: duration,
+            });
+            logJobResult(company_id, 'SUCCESS', duration, job.attemptsMade + 1);
+            return {
+                success: true,
+                company_id,
+                vat: existing.vat,
+                revenue: existing.revenue,
+                employees: existing.employees,
+                website_found: existing.website_validated ? 'Yes' : 'No',
+                website_url: existing.website_validated || undefined,
+            };
+        }
+
         // STEP 1: WEBSITE DISCOVERY (If missing)
         if (!website || website.trim() === '' || website === 'null') {
             Logger.info(`[Worker] 🔍 Website missing for "${company_name}". Launching Discovery Waves...`);
@@ -95,6 +119,19 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             has_website: !!website
         });
 
+        insertEnrichmentResult({
+            id: `er-${company_id}`,
+            company_id,
+            vat: result.vat,
+            revenue: result.revenue,
+            employees: result.employees,
+            is_estimated_employees: result.isEstimatedEmployees,
+            pec: result.pec,
+            website_validated: website || undefined,
+            data_source: result.source || undefined,
+        });
+        logJobResult(company_id, 'SUCCESS', duration, job.attemptsMade + 1);
+
         return {
             success: true,
             company_id,
@@ -116,6 +153,14 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             attempt: job.attemptsMade + 1,
             max_attempts: RETRY_ATTEMPTS,
         });
+        logJobResult(
+            company_id,
+            job.attemptsMade >= RETRY_ATTEMPTS - 1 ? 'FAILED' : 'RETRYING',
+            duration,
+            job.attemptsMade + 1,
+            err.message,
+            Logger.categorizeError(err)
+        );
 
         // If this is the last attempt, move to dead letter queue
         if (job.attemptsMade >= RETRY_ATTEMPTS - 1) {

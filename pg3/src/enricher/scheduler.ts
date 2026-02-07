@@ -9,7 +9,7 @@ import { QueueEvents } from 'bullmq';
 import { parse } from 'fast-csv';
 import { Logger } from './utils/logger';
 import { config } from './config';
-import { initializeDatabase } from './db';
+import { Company, initializeDatabase, insertCompanies } from './db';
 import {
   enrichmentQueue,
   addJobsBatch,
@@ -90,6 +90,19 @@ function mapCompaniesToJobs(companies: CSVCompany[]): { jobs: EnrichmentJobData[
     jobs: Array.from(uniqueJobs.values()),
     skipped: Math.max(companies.length - uniqueJobs.size, 0),
   };
+}
+
+function mapJobsToDbCompanies(jobs: EnrichmentJobData[]): Company[] {
+  return jobs.map((job) => ({
+    id: job.company_id,
+    company_name: job.company_name,
+    city: job.city,
+    province: job.province,
+    address: job.address,
+    phone: job.phone,
+    website: job.website,
+    category: job.category,
+  }));
 }
 
 async function loadCompaniesFromCSV(filePath: string): Promise<CSVCompany[]> {
@@ -179,6 +192,7 @@ export async function runScheduler(csvPath?: string): Promise<SchedulerSummary> 
       };
     }
 
+    insertCompanies(mapJobsToDbCompanies(jobs));
     const enqueued = await addJobsBatch(enrichmentQueue, jobs);
 
     Logger.info(`✅ SCHEDULER: Injected ${enqueued} jobs to queue`);
