@@ -44,12 +44,14 @@ export class ProxyManager {
     private static instance: ProxyManager;
     private residentialProxy: string | undefined;
     private datacenterProxy: string | undefined;
-    private rotationIndex = 0;
     private failedProxies: Set<string> = new Set();
+    private failedProxyTimers: Map<string, NodeJS.Timeout> = new Map();
+    private readonly failureCooldownMs: number;
 
     private constructor() {
         this.residentialProxy = PROXY_RESIDENTIAL_URL;
         this.datacenterProxy = PROXY_DATACENTER_URL;
+        this.failureCooldownMs = config.proxy.failureCooldownMs;
 
         if (this.residentialProxy) {
             Logger.info('🏠 Residential proxy configured');
@@ -152,10 +154,16 @@ export class ProxyManager {
         this.failedProxies.add(proxyUrl);
         Logger.warn(`🚫 Proxy marked as failed: ${proxyUrl}`);
 
-        // Auto-clear after 5 minutes
-        setTimeout(() => {
+        const existingTimer = this.failedProxyTimers.get(proxyUrl);
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+        }
+
+        const timer = setTimeout(() => {
             this.failedProxies.delete(proxyUrl);
-        }, 5 * 60 * 1000);
+            this.failedProxyTimers.delete(proxyUrl);
+        }, this.failureCooldownMs);
+        this.failedProxyTimers.set(proxyUrl, timer);
     }
 
     /**
@@ -179,6 +187,14 @@ export class ProxyManager {
                 password: proxy.password,
             });
         }
+    }
+
+    public dispose(): void {
+        for (const timer of this.failedProxyTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.failedProxyTimers.clear();
+        this.failedProxies.clear();
     }
 }
 

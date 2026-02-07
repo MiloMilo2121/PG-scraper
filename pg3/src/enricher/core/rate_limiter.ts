@@ -1,5 +1,6 @@
 
 import { config } from '../config';
+import { Logger } from '../utils/logger';
 
 export interface RateLimiter {
     waitForSlot(domain: string): Promise<void>;
@@ -43,7 +44,7 @@ export class RedisRateLimiter implements RateLimiter {
     constructor() {
         if (config.redis.host) {
             // this.client = new Redis(config.redis)
-            console.log("Redis Rate Limiter initialized (Mock)");
+            Logger.info('Redis Rate Limiter initialized (Mock)');
         }
     }
 

@@ -11,10 +11,14 @@ import { CompanyInput } from './types';
 import { AntigravityClient } from './observability/antigravity_client';
 import { EnvValidator } from './utils/env_validator';
 import { LeadScorer } from './utils/lead_scorer';
+import { config } from './config';
 
 const INPUT_FILE = process.argv[2] || 'input_phase1_cleaned.csv';
 const OUTPUT_DIR = './output/bulletproof';
 const SERVICE = new UnifiedDiscoveryService();
+const RUNNER_CONCURRENCY_LIMIT = config.runner.concurrencyLimit;
+const RUNNER_MEMORY_WARN_MB = config.runner.memoryWarnMb;
+const RUNNER_PROGRESS_LOG_EVERY = config.runner.progressLogEvery;
 
 // Ensure output dir exists
 if (!fs.existsSync(OUTPUT_DIR)) {
@@ -101,13 +105,13 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
     const notFoundWriter = getWriter(notFoundPath);
     const writeQueue = pLimit(1);
 
-    const limit = pLimit(25); // 🚀 OVERDRIVE: Optimized for 32GB RAM (Increased from 12)
+    const limit = pLimit(RUNNER_CONCURRENCY_LIMIT);
     let processedCount = companies.length - pending.length;
 
     // Memory Watchdog Interval (LOG ONLY - NO EXIT)
     const memoryWatchdog = setInterval(() => {
         const used = process.memoryUsage().heapUsed / 1024 / 1024;
-        if (used > 20000) { // 20GB warning threshold
+        if (used > RUNNER_MEMORY_WARN_MB) {
             Logger.warn(`🚨 MEMORY HIGH (${Math.round(used)}MB). Consider reducing concurrency.`);
         }
     }, 10000);
@@ -123,18 +127,17 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
             const score = LeadScorer.score(enriched);
             enriched = { ...enriched, lead_score: score };
 
-            // LOG EVERYTHING so we see why it fails
-            console.log(`[${mode}] ${company.company_name}: ${res.status} (${res.method}) [${res.confidence}] -> ${res.url || 'NULL'}`);
+            Logger.info(`[${mode}] ${company.company_name}: ${res.status} (${res.method}) [${res.confidence}] -> ${res.url || 'NULL'}`);
 
             if (res.status === 'FOUND_VALID') {
-                console.log(`✅ [${mode}] FOUND: ${company.company_name} -> ${res.url}`);
+                Logger.info(`[${mode}] FOUND: ${company.company_name} -> ${res.url}`);
                 await writeQueue(() => validWriter.writeRecords([enriched]));
                 AntigravityClient.getInstance().trackCompanyUpdate(enriched, 'ENRICHED', {
                     final_url: res.url,
                     piva: res.details?.scraped_piva
                 });
             } else if (res.status === 'FOUND_INVALID') {
-                console.log(`⚠️ [${mode}] INVALID: ${company.company_name} -> ${res.url} (${res.details.reason})`);
+                Logger.warn(`[${mode}] INVALID: ${company.company_name} -> ${res.url} (${res.details.reason})`);
                 await writeQueue(() => invalidWriter.writeRecords([enriched]));
                 AntigravityClient.getInstance().trackCompanyUpdate(enriched, 'FAILED', { reason: 'Invalid Content' });
             } else {
@@ -142,7 +145,7 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
                 AntigravityClient.getInstance().trackCompanyUpdate(enriched, 'FAILED', { reason: 'Not Found' });
             }
         } catch (error) {
-            console.error(`Error processing ${company.company_name}:`, error);
+            Logger.error(`Error processing ${company.company_name}`, { error: error as Error });
         } finally {
             processedCount++;
             // Memory cleanup: Close idle browser contexts periodically
@@ -150,7 +153,9 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
                 Logger.info(`🔄 [${processedCount}/${companies.length}] Periodic cleanup...`);
                 // BrowserFactory will handle context cleanup internally
             }
-            if (processedCount % 20 === 0) console.log(`[Run ${runId}] ${processedCount}/${companies.length}`);
+            if (processedCount % RUNNER_PROGRESS_LOG_EVERY === 0) {
+                Logger.info(`[Run ${runId}] ${processedCount}/${companies.length}`);
+            }
         }
     }));
 

@@ -1,6 +1,7 @@
 
 import { Page } from 'puppeteer';
 import * as cheerio from 'cheerio';
+import { Logger } from '../../utils/logger';
 
 /**
  * 🕵️ DEEP SCANNER 🕵️
@@ -28,7 +29,8 @@ export class DeepScanner {
                     .map(a => a.href);
             });
             return [...new Set(links)];
-        } catch {
+        } catch (error) {
+            Logger.warn('[DeepScanner] Failed to discover legal pages', { error: error as Error, base_url: baseUrl });
             return [];
         }
     }
@@ -52,7 +54,8 @@ export class DeepScanner {
                     .map(a => a.href);
             });
             return [...new Set(links)];
-        } catch {
+        } catch (error) {
+            Logger.warn('[DeepScanner] Failed to discover contact pages', { error: error as Error });
             return [];
         }
     }
@@ -83,7 +86,9 @@ export class DeepScanner {
             try {
                 // We would use fetch/axios here usually, passing for check
                 // return `${domain}${p}`;
-            } catch { }
+            } catch (error) {
+                Logger.warn('[DeepScanner] Sitemap probe failed', { error: error as Error, path: p, domain });
+            }
         }
         return null;
     }

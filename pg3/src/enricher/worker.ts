@@ -28,6 +28,7 @@ import {
 import { FinancialService } from './core/financial/service';
 import { UnifiedDiscoveryService } from './core/discovery/unified_discovery_service';
 import { BrowserFactory } from './core/browser/factory_v2';
+import { initializeDatabase } from './db';
 
 // 🔧 Initialize Services
 const financialService = new FinancialService();
@@ -230,6 +231,7 @@ function registerProcessHandlers(worker: Worker): void {
 export async function runWorker(): Promise<Worker<EnrichmentJobData, JobResult>> {
     Logger.info('🚀 WORKER: Starting enrichment processor');
     Logger.info(`🤖 LLM model configured: ${config.llm.model}`);
+    initializeDatabase();
 
     const worker = startWorker();
 

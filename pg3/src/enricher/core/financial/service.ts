@@ -191,8 +191,11 @@ export class FinancialService {
                     Logger.warn(`[Financial] ❌ CAPTCHA solving failed`);
                     return {};
                 }
-                // Wait for page reload after captcha
-                await new Promise(r => setTimeout(r, 3000));
+                // Prefer deterministic wait after CAPTCHA; fallback to short delay.
+                await Promise.race([
+                    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => null),
+                    new Promise((resolve) => setTimeout(resolve, 3000)),
+                ]);
             }
 
             // Step 4: Extract financial data
@@ -259,7 +262,7 @@ export class FinancialService {
             const firstResult = await page.$('.search-result a, .company-link');
             if (firstResult) {
                 await Promise.all([
-                    page.waitForNavigation({ timeout: 10000 }).catch(() => { }),
+                    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => null),
                     firstResult.click()
                 ]);
             }
@@ -278,6 +281,7 @@ export class FinancialService {
             });
 
         } catch (e) {
+            Logger.warn('[Financial] Secondary registries scrape failed', { error: e as Error, vat });
             return {};
         } finally {
             if (page) await this.browserFactory.closePage(page);
@@ -351,6 +355,10 @@ export class FinancialService {
             return {};
 
         } catch (e) {
+            Logger.warn('[Financial] Google name-based financial search failed', {
+                error: e as Error,
+                company_name: company.company_name,
+            });
             return {};
         } finally {
             if (page) await this.browserFactory.closePage(page);
@@ -387,6 +395,10 @@ export class FinancialService {
 
             return undefined;
         } catch (e) {
+            Logger.warn('[Financial] Google VAT search failed', {
+                error: e as Error,
+                company_name: company.company_name,
+            });
             return undefined;
         } finally {
             if (page) await this.browserFactory.closePage(page);
@@ -408,6 +420,7 @@ export class FinancialService {
             });
             return { vat: vat || undefined };
         } catch (e) {
+            Logger.warn('[Financial] Website VAT scrape failed', { error: e as Error, url });
             return {};
         } finally {
             if (page) await this.browserFactory.closePage(page);
@@ -431,7 +444,7 @@ export class FinancialService {
             const first = await page.$('.risultato-titolo a, .company-title a');
             if (first) {
                 await Promise.all([
-                    page.waitForNavigation({ timeout: 8000 }).catch(() => { }),
+                    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => null),
                     first.click()
                 ]);
             }
@@ -449,6 +462,7 @@ export class FinancialService {
                 return (r.revenue || r.employees) ? r : null;
             });
         } catch (e) {
+            Logger.warn('[Financial] ReportAziende scrape failed', { error: e as Error, company_name: name, city });
             return null;
         } finally {
             if (page) await this.browserFactory.closePage(page);
@@ -477,6 +491,11 @@ export class FinancialService {
             const result = completion.choices[0].message.content?.trim();
             return result !== 'unknown' ? result : undefined;
         } catch (e) {
+            Logger.warn('[Financial] Employee estimation failed', {
+                error: e as Error,
+                company_name: company.company_name,
+                url,
+            });
             return undefined;
         } finally {
             if (page) await this.browserFactory.closePage(page);
@@ -503,6 +522,7 @@ export class FinancialService {
 
             return pec;
         } catch (e) {
+            Logger.warn('[Financial] PEC search failed', { error: e as Error, company_name: name, city });
             return null;
         } finally {
             if (page) await this.browserFactory.closePage(page);

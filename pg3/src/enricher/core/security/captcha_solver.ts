@@ -8,9 +8,12 @@
  */
 
 import { Page } from 'puppeteer';
+import { Logger } from '../../utils/logger';
+import { config } from '../../config';
 
 // Environment config
 const CAPTCHA_API_KEY = process.env.CAPTCHA_2_API_KEY || process.env.TWOCAPTCHA_API_KEY;
+const CAPTCHA_MAX_ATTEMPTS = config.captcha.maxAttempts;
 
 export class CaptchaSolver {
     private static readonly API_URL = 'https://2captcha.com';
@@ -20,7 +23,7 @@ export class CaptchaSolver {
      */
     public static async neutralizeGatekeeper(page: Page): Promise<boolean> {
         if (!CAPTCHA_API_KEY) {
-            console.warn('⚠️ No 2Captcha API key configured. Cannot solve captcha.');
+            Logger.warn('No 2Captcha API key configured. Cannot solve captcha.');
             return false;
         }
 
@@ -32,7 +35,7 @@ export class CaptchaSolver {
                 return true; // No captcha detected
             }
 
-            console.log(`🔓 Captcha detected: ${captchaType}. Solving...`);
+            Logger.info(`Captcha detected: ${captchaType}. Solving...`);
 
             switch (captchaType) {
                 case 'recaptcha-v2':
@@ -44,11 +47,11 @@ export class CaptchaSolver {
                 case 'image':
                     return await this.solveImageCaptcha(page);
                 default:
-                    console.warn(`Unknown captcha type: ${captchaType}`);
+                    Logger.warn(`Unknown captcha type: ${captchaType}`);
                     return false;
             }
         } catch (error) {
-            console.error('❌ Captcha solving failed:', error);
+            Logger.error('Captcha solving failed', { error: error as Error });
             return false;
         }
     }
@@ -97,12 +100,12 @@ export class CaptchaSolver {
         });
 
         if (!sitekey) {
-            console.warn('Could not find reCAPTCHA sitekey');
+            Logger.warn('Could not find reCAPTCHA sitekey');
             return false;
         }
 
         const pageUrl = page.url();
-        console.log(`🔐 Solving reCAPTCHA v2 for ${pageUrl}`);
+        Logger.info(`Solving reCAPTCHA v2 for ${pageUrl}`);
 
         // Submit to 2Captcha
         const taskId = await this.createTask({
@@ -130,12 +133,14 @@ export class CaptchaSolver {
                 for (const key in clients) {
                     try {
                         clients[key].callback(token);
-                    } catch (e) { }
+                    } catch (e) {
+                        Logger.warn('reCAPTCHA callback invocation failed', { error: e as Error });
+                    }
                 }
             }
         }, solution);
 
-        console.log('✅ reCAPTCHA v2 solved!');
+        Logger.info('reCAPTCHA v2 solved');
         return true;
     }
 
@@ -143,7 +148,7 @@ export class CaptchaSolver {
      * Solve reCAPTCHA v3
      */
     private static async solveRecaptchaV3(page: Page): Promise<boolean> {
-        console.log('🔐 reCAPTCHA v3 requires enterprise solving - skipping');
+        Logger.info('reCAPTCHA v3 requires enterprise solving - skipping');
         return false;
     }
 
@@ -174,7 +179,7 @@ export class CaptchaSolver {
             if (textarea) textarea.value = token;
         }, solution);
 
-        console.log('✅ hCaptcha solved!');
+        Logger.info('hCaptcha solved');
         return true;
     }
 
@@ -182,7 +187,7 @@ export class CaptchaSolver {
      * Solve image captcha
      */
     private static async solveImageCaptcha(page: Page): Promise<boolean> {
-        console.log('🔐 Image captcha solving not yet implemented');
+        Logger.info('Image captcha solving not yet implemented');
         return false;
     }
 
@@ -205,10 +210,10 @@ export class CaptchaSolver {
             if (data.status === 1) {
                 return data.request;
             }
-            console.error('2Captcha error:', data.error_text);
+            Logger.error('2Captcha error while creating task', { error_text: data.error_text });
             return null;
         } catch (error) {
-            console.error('Failed to create 2Captcha task:', error);
+            Logger.error('Failed to create 2Captcha task', { error: error as Error });
             return null;
         }
     }
@@ -216,7 +221,7 @@ export class CaptchaSolver {
     /**
      * Wait for solution from 2Captcha
      */
-    private static async waitForSolution(taskId: string, maxAttempts = 30): Promise<string | null> {
+    private static async waitForSolution(taskId: string, maxAttempts = CAPTCHA_MAX_ATTEMPTS): Promise<string | null> {
         const url = new URL('/res.php', this.API_URL);
         url.searchParams.append('key', CAPTCHA_API_KEY!);
         url.searchParams.append('action', 'get');
@@ -235,15 +240,15 @@ export class CaptchaSolver {
                 }
 
                 if (data.request !== 'CAPCHA_NOT_READY') {
-                    console.error('2Captcha error:', data.request);
+                    Logger.error('2Captcha error while polling solution', { request: data.request });
                     return null;
                 }
             } catch (error) {
-                console.error('Failed to get 2Captcha solution:', error);
+                Logger.error('Failed to get 2Captcha solution', { error: error as Error });
             }
         }
 
-        console.error('2Captcha timeout - solution not ready');
+        Logger.error('2Captcha timeout - solution not ready', { task_id: taskId, max_attempts: maxAttempts });
         return null;
     }
 }

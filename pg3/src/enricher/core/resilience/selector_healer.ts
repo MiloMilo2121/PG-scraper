@@ -21,7 +21,7 @@ export class SelectorHealer {
      */
     public async heal(html: string, goal: string): Promise<string | null> {
         if (!this.API_KEY || !html) {
-            console.warn(`[Healer] Missing API Key or HTML (${!!html}). Using MOCK response.`);
+            Logger.warn(`[Healer] Missing API Key or HTML (${!!html}). Using MOCK response.`);
             if (goal.includes('anchor tag')) return '.result-container .actual-link';
             return null;
         }

@@ -61,7 +61,9 @@ export class DomainGuesser {
                     // Logger.info(`DNS verified: ${domain} has MX records`);
                     return domain;
                 }
-            } catch (e) { }
+            } catch (e) {
+                Logger.warn('[DomainGuesser] DNS verification failed', { error: e as Error, domain });
+            }
         }
         return null;
     }

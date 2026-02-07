@@ -8,6 +8,8 @@ import * as fs from 'fs';
 import { QueueEvents } from 'bullmq';
 import { parse } from 'fast-csv';
 import { Logger } from './utils/logger';
+import { config } from './config';
+import { initializeDatabase } from './db';
 import {
   enrichmentQueue,
   addJobsBatch,
@@ -20,7 +22,7 @@ import {
 
 const INPUT_FILE = process.argv[3] || 'output/campaigns/BOARD_FINAL_SANITISED.csv';
 const SCHEDULER_LOCK_KEY = process.env.SCHEDULER_LOCK_KEY || `${QUEUE_NAMES.ENRICHMENT}:scheduler:lock`;
-const SCHEDULER_LOCK_TTL_MS = parseInt(process.env.SCHEDULER_LOCK_TTL_MS || '900000', 10);
+const SCHEDULER_LOCK_TTL_MS = config.queue.schedulerLockTtlMs;
 const RELEASE_LOCK_SCRIPT = `
 if redis.call("get", KEYS[1]) == ARGV[1] then
   return redis.call("del", KEYS[1])
@@ -134,12 +136,13 @@ async function releaseSchedulerLock(lockToken: string): Promise<void> {
 }
 
 export async function runScheduler(csvPath?: string): Promise<SchedulerSummary> {
-  const startedAt = Date.now();
-  const inputFile = csvPath || INPUT_FILE;
-  let events: QueueEvents | null = null;
-  let lockToken: string | null = null;
+    const startedAt = Date.now();
+    const inputFile = csvPath || INPUT_FILE;
+    let events: QueueEvents | null = null;
+    let lockToken: string | null = null;
 
-  activeSchedulerRuns += 1;
+    initializeDatabase();
+    activeSchedulerRuns += 1;
 
   try {
     lockToken = await acquireSchedulerLock();

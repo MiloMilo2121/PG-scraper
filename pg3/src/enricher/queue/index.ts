@@ -17,8 +17,8 @@ const REDIS_URL = config.redis.url;
 const RETRY_ATTEMPTS = config.queue.retryAttempts;
 const RETRY_DELAY_MS = config.queue.retryDelayMs;
 const QUEUE_BATCH_SIZE = config.queue.batchSize;
-const REDIS_CONNECT_TIMEOUT_MS = parseInt(process.env.REDIS_CONNECT_TIMEOUT_MS || '5000', 10);
-const REDIS_CONNECT_RETRIES = parseInt(process.env.REDIS_CONNECT_RETRIES || '5', 10);
+const REDIS_CONNECT_TIMEOUT_MS = config.queue.redisConnectTimeoutMs;
+const REDIS_CONNECT_RETRIES = config.queue.redisConnectRetries;
 
 // 🔌 Redis Connection (Singleton)
 export const redisConnection = new IORedis(REDIS_URL, {
@@ -170,6 +170,7 @@ export async function moveToDeadLetter(job: Job<EnrichmentJobData>): Promise<voi
 export async function getQueueHealth(): Promise<{
     redis: boolean;
     enrichmentQueue: { waiting: number; active: number; failed: number; completed: number };
+    error?: string;
 }> {
     try {
         await redisConnection.ping();
@@ -184,9 +185,12 @@ export async function getQueueHealth(): Promise<{
             },
         };
     } catch (error) {
+        const err = error as Error;
+        Logger.warn('Queue health check failed', { error: err });
         return {
             redis: false,
             enrichmentQueue: { waiting: 0, active: 0, failed: 0, completed: 0 },
+            error: err.message,
         };
     }
 }

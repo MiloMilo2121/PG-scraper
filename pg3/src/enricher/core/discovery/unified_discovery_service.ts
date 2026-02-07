@@ -10,6 +10,7 @@
  */
 
 import pLimit from 'p-limit';
+import { HTTPRequest } from 'puppeteer';
 import { BrowserFactory } from '../browser/factory_v2';
 import { GeneticFingerprinter } from '../browser/genetic_fingerprinter';
 import { CompanyInput } from '../../types';
@@ -22,6 +23,7 @@ import { DuckDuckGoSerpAnalyzer } from './ddg_analyzer';
 import { LLMValidator } from '../ai/llm_validator';
 import { AntigravityClient } from '../../observability/antigravity_client';
 import { HoneyPotDetector } from '../security/honeypot_detector';
+import { config } from '../../config';
 
 // ============================================================================
 // INTERFACES
@@ -53,10 +55,10 @@ export interface WaveResult {
 }
 
 const THRESHOLDS = {
-    WAVE1_SWARM: 0.85,      // High bar for Swarm results
-    WAVE2_NET: 0.75,        // Medium bar for fallback engines
-    WAVE3_JUDGE: 0.70,      // AI final decision
-    MINIMUM_VALID: 0.6      // Floor for any acceptance
+    WAVE1_SWARM: config.discovery.thresholds.wave1,
+    WAVE2_NET: config.discovery.thresholds.wave2,
+    WAVE3_JUDGE: config.discovery.thresholds.wave3,
+    MINIMUM_VALID: config.discovery.thresholds.minValid
 };
 
 // ============================================================================
@@ -164,8 +166,6 @@ export class UnifiedDiscoveryService {
     // Parallel: HyperGuesser + Google Name + Google Address + Google Phone
     // =========================================================================
     private async executeWave1Swarm(company: CompanyInput): Promise<DiscoveryResult | null> {
-        const c = company as any;
-
         // Launch all methods in parallel
         const [
             hyperGuessResult,
@@ -195,8 +195,12 @@ export class UnifiedDiscoveryService {
 
     private async hyperGuesserAttack(company: CompanyInput): Promise<Array<{ url: string; source: string; confidence: number }> | null> {
         try {
-            const c = company as any;
-            const guesses = HyperGuesser.generate(c.company_name, c.city || '', c.province || '', c.category || '');
+            const guesses = HyperGuesser.generate(
+                company.company_name,
+                company.city || '',
+                company.province || '',
+                company.category || ''
+            );
 
             // Take top 15 guesses for DNS resolution
             const topGuesses = guesses.slice(0, 15);
@@ -227,6 +231,7 @@ export class UnifiedDiscoveryService {
             }));
         } catch (e) {
             this.rateLimiter.reportFailure('google');
+            Logger.warn('[Wave1] Google name search failed', { error: e as Error, company_name: company.company_name });
             return null;
         }
     }
@@ -248,6 +253,7 @@ export class UnifiedDiscoveryService {
             }));
         } catch (e) {
             this.rateLimiter.reportFailure('google');
+            Logger.warn('[Wave1] Google address search failed', { error: e as Error, company_name: company.company_name });
             return null;
         }
     }
@@ -268,6 +274,7 @@ export class UnifiedDiscoveryService {
             }));
         } catch (e) {
             this.rateLimiter.reportFailure('google');
+            Logger.warn('[Wave1] Google phone search failed', { error: e as Error, company_name: company.company_name });
             return null;
         }
     }
@@ -289,6 +296,7 @@ export class UnifiedDiscoveryService {
             this.rateLimiter.reportSuccess('bing');
         } catch (e) {
             this.rateLimiter.reportFailure('bing');
+            Logger.warn('[Wave2] Bing search failed', { error: e as Error, company_name: company.company_name });
         }
 
         // DuckDuckGo search
@@ -302,6 +310,7 @@ export class UnifiedDiscoveryService {
             this.rateLimiter.reportSuccess('duckduckgo');
         } catch (e) {
             this.rateLimiter.reportFailure('duckduckgo');
+            Logger.warn('[Wave2] DuckDuckGo search failed', { error: e as Error, company_name: company.company_name });
         }
 
         Logger.info(`[Wave2] 🕸️ Collected ${allCandidates.length} candidates from Net`);
@@ -317,8 +326,12 @@ export class UnifiedDiscoveryService {
         Logger.info(`[Wave3] ⚖️ AI Judge - attempting low-confidence redemption`);
 
         // Try DNS-based domain guessing with AI validation
-        const c = company as any;
-        const guesses = HyperGuesser.generate(c.company_name, c.city || '', c.province || '', c.category || '');
+        const guesses = HyperGuesser.generate(
+            company.company_name,
+            company.city || '',
+            company.province || '',
+            company.category || ''
+        );
 
         // Try remaining guesses (after top 15 used in Wave 1)
         for (const url of guesses.slice(15, 30)) {
@@ -335,6 +348,11 @@ export class UnifiedDiscoveryService {
                     };
                 }
             } catch (e) {
+                Logger.warn('[Wave3] AI judge candidate verification failed', {
+                    error: e as Error,
+                    company_name: company.company_name,
+                    url,
+                });
                 continue;
             }
         }
@@ -420,13 +438,14 @@ export class UnifiedDiscoveryService {
 
             // Block unnecessary resources
             await page.setRequestInterception(true);
-            page.on('request', (req) => {
+            const requestHandler = (req: HTTPRequest) => {
                 if (['image', 'media', 'font', 'stylesheet'].includes(req.resourceType())) {
                     req.abort();
                 } else {
                     req.continue();
                 }
-            });
+            };
+            page.on('request', requestHandler);
 
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
 
@@ -472,7 +491,7 @@ export class UnifiedDiscoveryService {
 
             // P.IVA match
             const pivas: string[] = extraction.text.match(/\d{11}/g) || [];
-            const targetPiva = (company as any).vat_code || (company as any).piva;
+            const targetPiva = company.vat_code || company.piva || company.vat;
             if (targetPiva && pivas.includes(targetPiva)) {
                 return { confidence: 1.0, reason: 'P.IVA Match', scraped_piva: targetPiva };
             }
@@ -486,9 +505,13 @@ export class UnifiedDiscoveryService {
             return null;
 
         } catch (e) {
+            Logger.warn('[DeepVerify] Verification failed', { error: e as Error, url, company_name: company.company_name });
             return null;
         } finally {
-            if (page) await this.browserFactory.closePage(page);
+            if (page) {
+                page.removeAllListeners('request');
+                await this.browserFactory.closePage(page);
+            }
         }
     }
 
@@ -497,13 +520,14 @@ export class UnifiedDiscoveryService {
         try {
             page = await this.browserFactory.newPage();
             await page.setRequestInterception(true);
-            page.on('request', (req) => {
+            const requestHandler = (req: HTTPRequest) => {
                 if (['image', 'media', 'font', 'stylesheet'].includes(req.resourceType())) {
                     req.abort();
                 } else {
                     req.continue();
                 }
-            });
+            };
+            page.on('request', requestHandler);
 
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
 
@@ -521,9 +545,13 @@ export class UnifiedDiscoveryService {
 
             return null;
         } catch (e) {
+            Logger.warn('[DeepVerifyWithAI] Verification failed', { error: e as Error, url, company_name: company.company_name });
             return null;
         } finally {
-            if (page) await this.browserFactory.closePage(page);
+            if (page) {
+                page.removeAllListeners('request');
+                await this.browserFactory.closePage(page);
+            }
         }
     }
 
@@ -561,8 +589,9 @@ export class UnifiedDiscoveryService {
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
             const html = await page.content();
             const results = await GoogleSerpAnalyzer.parseSerp(html);
-            return results.map((r: any) => ({ link: r.url }));
+            return results.map((r: { url: string }) => ({ link: r.url }));
         } catch (e) {
+            Logger.warn('[ScrapeGoogleDIY] Failed', { error: e as Error, query });
             return [];
         } finally {
             if (page) await this.browserFactory.closePage(page);
@@ -577,8 +606,9 @@ export class UnifiedDiscoveryService {
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
             const html = await page.content();
             const results = DuckDuckGoSerpAnalyzer.parseSerp(html);
-            return results.map((r: any) => ({ link: r.url }));
+            return results.map((r: { url: string }) => ({ link: r.url }));
         } catch (e) {
+            Logger.warn('[ScrapeDDGDIY] Failed', { error: e as Error, query });
             return [];
         } finally {
             if (page) await this.browserFactory.closePage(page);
@@ -592,11 +622,12 @@ export class UnifiedDiscoveryService {
             const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=it&cc=it`;
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
             const results = await page.evaluate(() => {
-                const items = Array.from(document.querySelectorAll('.b_algo h2 a'));
-                return items.slice(0, 5).map((a: any) => ({ link: (a as HTMLAnchorElement).href }));
+                const items = Array.from(document.querySelectorAll<HTMLAnchorElement>('.b_algo h2 a'));
+                return items.slice(0, 5).map((a) => ({ link: a.href }));
             });
             return results;
         } catch (e) {
+            Logger.warn('[ScrapeBingDIY] Failed', { error: e as Error, query });
             return [];
         } finally {
             if (page) await this.browserFactory.closePage(page);

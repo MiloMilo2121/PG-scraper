@@ -32,7 +32,7 @@ export class LeadScorer {
         // 5. EMAIL (Golden) - Bonus 10 pts (if we had it, usually comes from deep scrape)
         // Since we don't strictly scrape emails in Phase 1/2, we rely on other signals.
         // Let's use the 'discovery_confidence' if present.
-        const confidence = (company as any).discovery_confidence || 0;
+        const confidence = Number(company.discovery_confidence ?? 0);
         if (confidence > 0.8) {
             score += 10;
         }

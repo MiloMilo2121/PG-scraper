@@ -4,6 +4,7 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import * as os from 'os';
 import * as path from 'path';
+import * as fs from 'fs';
 
 import { ResourceManager, PhaseType } from '../../utils/resource_manager';
 import { getRandomUserAgent } from './ua_db';
@@ -30,7 +31,7 @@ export class BrowserFactory {
     private browserCounted = false;
 
     // Configuration
-    private static readonly MAX_CONCURRENCY = 25; // 🚀 OVERDRIVE: Stabilized for server 32GB
+    private static readonly MAX_CONCURRENCY = config.browser.maxConcurrency;
     private static MAX_TABS_PER_BROWSER = 8;
     public static ACTIVE_INSTANCES = 0;
     public static instances: Set<BrowserFactory> = new Set();
@@ -77,7 +78,7 @@ export class BrowserFactory {
 
         try {
             if (!this.browser.isConnected()) {
-                console.warn(`[BrowserFactory] ⚠️ Browser disconnected!`);
+                Logger.warn('[BrowserFactory] Browser disconnected');
                 return false;
             }
             const memUsage = process.memoryUsage();
@@ -85,12 +86,12 @@ export class BrowserFactory {
             const usedPercent = (memUsage.heapUsed / totalMem) * 100;
 
             if (usedPercent > 80) {
-                console.warn(`[BrowserFactory] ⚠️ Memory usage at ${usedPercent.toFixed(1)}%, restarting browser...`);
+                Logger.warn(`[BrowserFactory] Memory usage at ${usedPercent.toFixed(1)}%, restarting browser...`);
                 return false;
             }
             return true;
         } catch (e) {
-            console.error('[BrowserFactory] Health check error:', e);
+            Logger.error('[BrowserFactory] Health check error', { error: e as Error });
             return false;
         }
     }
@@ -98,7 +99,7 @@ export class BrowserFactory {
     private async ensureHealthy(): Promise<void> {
         if (Date.now() - this.lastHealthCheck < 30000 && this.browser?.isConnected()) return;
         if (!(await this.isHealthy())) {
-            console.log(`[BrowserFactory:${this.instanceId}] 🔄 Restarting unhealthy browser... (Healthy: false)`);
+            Logger.info(`[BrowserFactory:${this.instanceId}] Restarting unhealthy browser`);
             await this.close();
             await this.launch();
         }
@@ -115,7 +116,7 @@ export class BrowserFactory {
             }
 
             const freeMem = os.freemem() / 1024 / 1024;
-            console.log(`[BrowserFactory:${this.instanceId}] 🚀 Spawning Browser (Free RAM: ${Math.round(freeMem)}MB)`);
+            Logger.info(`[BrowserFactory:${this.instanceId}] Spawning browser`, { free_ram_mb: Math.round(freeMem) });
             this.currentProfilePath = this.userDataDir;
 
             // Task 10: Cloak webdriver
@@ -123,14 +124,15 @@ export class BrowserFactory {
             if (!executablePath && os.platform() === 'linux') {
                 try {
                     const paths = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium'];
-                    const fs = require('fs');
                     for (const p of paths) {
                         if (fs.existsSync(p)) {
                             executablePath = p;
                             break;
                         }
                     }
-                } catch (e) { console.error('Error finding chrome:', e); }
+                } catch (e) {
+                    Logger.warn('Error while searching for Chrome executable', { error: e as Error });
+                }
             }
 
             // PROXY INTEGRATION
@@ -200,7 +202,7 @@ export class BrowserFactory {
                 this.lastHealthCheck = Date.now();
                 return browser;
             } catch (error) {
-                console.error(`[BrowserFactory:${this.instanceId}] ❌ Launch Failed:`, error);
+                Logger.error(`[BrowserFactory:${this.instanceId}] Launch failed`, { error: error as Error });
                 throw error;
             }
         })();
@@ -269,8 +271,8 @@ export class BrowserFactory {
         await ProxyManager.getInstance().authenticateProxy(page, 'https://www.google.com');
 
         // Task 12: Page timeout recovery
-        page.setDefaultTimeout(30000);
-        page.setDefaultNavigationTimeout(30000);
+        page.setDefaultTimeout(config.scraping.timeout);
+        page.setDefaultNavigationTimeout(config.scraping.pageLoadTimeout);
 
         // Task: Anti-Fingerprinting
         await BrowserEvasion.apply(page);
@@ -285,9 +287,11 @@ export class BrowserFactory {
             const pid = targetBrowser.process()?.pid;
             if (pid) {
                 try {
-                    console.log(`[BrowserFactory] 💀 Force killing PID ${pid}`);
+                    Logger.warn(`[BrowserFactory] Force killing browser process`, { pid });
                     process.kill(pid, 'SIGKILL');
-                } catch (e) { }
+                } catch (e) {
+                    Logger.warn('[BrowserFactory] Failed to force kill process', { pid, error: e as Error });
+                }
             }
         }
 
@@ -303,7 +307,9 @@ export class BrowserFactory {
     public async closePage(page: Page): Promise<void> {
         try {
             if (!page.isClosed()) await page.close();
-        } catch (e) { }
+        } catch (e) {
+            Logger.warn('Failed to close page cleanly', { error: e as Error });
+        }
         this.activePages.delete(page);
     }
 
@@ -311,7 +317,9 @@ export class BrowserFactory {
         for (const page of this.activePages) {
             try {
                 if (!page.isClosed()) await page.close();
-            } catch { }
+            } catch (error) {
+                Logger.warn('Failed to close active page during shutdown', { error: error as Error });
+            }
         }
         this.activePages.clear();
 
@@ -333,12 +341,15 @@ export class BrowserFactory {
         // Cleanup temporary profile
         if (this.currentProfilePath) {
             try {
-                const fs = require('fs');
                 if (fs.existsSync(this.currentProfilePath)) {
                     fs.rmSync(this.currentProfilePath, { recursive: true, force: true });
                 }
-            } catch (e) { console.error('Failed to clean profile:', e); }
+            } catch (e) {
+                Logger.warn('Failed to clean temporary browser profile', { error: e as Error });
+            }
             this.currentProfilePath = null;
         }
+
+        ProxyManager.getInstance().dispose();
     }
 }

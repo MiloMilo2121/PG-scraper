@@ -10,9 +10,10 @@
 import * as http from 'http';
 import { Logger } from './utils/logger';
 import { getQueueHealth } from './queue';
-import { getStats as getDbStats } from './db';
+import { getStats as getDbStats, initializeDatabase } from './db';
+import { config } from './config';
 
-const PORT = parseInt(process.env.HEALTH_PORT || '3000');
+const PORT = config.health.port;
 
 const server = http.createServer(async (req, res) => {
     // CORS headers
@@ -30,6 +31,7 @@ const server = http.createServer(async (req, res) => {
                 timestamp: new Date().toISOString(),
                 redis: queueHealth.redis ? 'connected' : 'disconnected',
                 queue: queueHealth.enrichmentQueue,
+                error: queueHealth.error || null,
             }));
         } else if (req.url === '/stats') {
             const dbStats = getDbStats();
@@ -53,6 +55,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 export function startHealthServer(): void {
+    initializeDatabase();
     server.listen(PORT, () => {
         Logger.info(`🏥 Health check API running on http://localhost:${PORT}/health`);
     });

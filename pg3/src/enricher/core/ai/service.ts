@@ -19,13 +19,53 @@ import { config } from '../../config';
 const AI_MODEL_FAST = config.llm.fastModel;
 const AI_MODEL_SMART = config.llm.smartModel;
 const AI_MAX_TOKENS = config.llm.maxTokens;
+const AI_CACHE_MAX_ENTRIES = config.ai.cacheMaxEntries;
+const AI_CACHE_TTL_MS = config.ai.cacheTtlMs;
 
 // Simple in-memory cache (Redis TODO)
-const responseCache: Map<string, { response: string; tokens: number }> = new Map();
+type CachedResponse = {
+    response: string;
+    tokens: number;
+    cachedAt: number;
+};
+const responseCache: Map<string, CachedResponse> = new Map();
 
 // Token usage tracking
 let totalInputTokens = 0;
 let totalOutputTokens = 0;
+let totalCacheHits = 0;
+
+function getFromCache(cacheKey: string): CachedResponse | null {
+    const cached = responseCache.get(cacheKey);
+    if (!cached) {
+        return null;
+    }
+
+    if (Date.now() - cached.cachedAt > AI_CACHE_TTL_MS) {
+        responseCache.delete(cacheKey);
+        return null;
+    }
+
+    // Refresh insertion order for LRU-like eviction.
+    responseCache.delete(cacheKey);
+    responseCache.set(cacheKey, cached);
+    return cached;
+}
+
+function setCache(cacheKey: string, entry: Omit<CachedResponse, 'cachedAt'>): void {
+    responseCache.set(cacheKey, {
+        ...entry,
+        cachedAt: Date.now(),
+    });
+
+    while (responseCache.size > AI_CACHE_MAX_ENTRIES) {
+        const oldestKey = responseCache.keys().next().value;
+        if (!oldestKey) {
+            break;
+        }
+        responseCache.delete(oldestKey);
+    }
+}
 
 export interface AIExtractionResult {
     vat?: string;
@@ -106,8 +146,9 @@ export class AIService {
         const cacheKey = this.getCacheKey(prompt, model);
 
         // Check cache
-        const cached = responseCache.get(cacheKey);
+        const cached = getFromCache(cacheKey);
         if (cached) {
+            totalCacheHits += 1;
             Logger.info('🎯 AI cache hit', { model, tokens_saved: cached.tokens });
             return cached.response;
         }
@@ -129,7 +170,7 @@ export class AIService {
             totalOutputTokens += outputTokens;
 
             // Cache response
-            responseCache.set(cacheKey, {
+            setCache(cacheKey, {
                 response,
                 tokens: inputTokens + outputTokens,
             });
@@ -308,7 +349,7 @@ Answer ONLY "yes" or "no".`;
             totalInputTokens,
             totalOutputTokens,
             estimatedCostUSD: inputCost + outputCost,
-            cacheHits: responseCache.size,
+            cacheHits: totalCacheHits,
         };
     }
 

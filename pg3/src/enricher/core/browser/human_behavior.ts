@@ -1,5 +1,6 @@
 
 import { Page } from 'puppeteer';
+import { Logger } from '../../utils/logger';
 
 export class HumanBehavior {
 
@@ -32,7 +33,7 @@ export class HumanBehavior {
             await page.mouse.move(x, y, { steps });
             // console.log(`[Human] Moved mouse to ${x},${y}`);
         } catch (e) {
-            // Ignore errors if page is closed
+            Logger.warn('[HumanBehavior] randomMouseMove skipped', { error: e as Error });
         }
     }
 
@@ -47,6 +48,8 @@ export class HumanBehavior {
             });
             await this.randomPause(page, 500, 1500);
             await this.randomMouseMove(page);
-        } catch (e) { }
+        } catch (e) {
+            Logger.warn('[HumanBehavior] simulateReading skipped', { error: e as Error });
+        }
     }
 }

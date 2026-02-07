@@ -6,6 +6,7 @@
 import levenshtein from 'fast-levenshtein';
 import { DataNormalizer } from './normalizer';
 import { Logger } from './logger';
+import { config } from '../config';
 
 export interface DedupeResult {
     isDuplicate: boolean;
@@ -16,9 +17,11 @@ export interface DedupeResult {
 export class Deduplicator {
     private knownCompanies: Map<string, string> = new Map(); // cleanedName -> originalName
     private threshold: number;
+    private maxKnownCompanies: number;
 
     constructor(similarityThreshold: number = 0.85) {
         this.threshold = similarityThreshold;
+        this.maxKnownCompanies = config.deduplication.maxKnownCompanies;
     }
 
     /**
@@ -52,6 +55,12 @@ export class Deduplicator {
         }
 
         // Not a duplicate - add to known
+        if (this.knownCompanies.size >= this.maxKnownCompanies) {
+            const oldestKey = this.knownCompanies.keys().next().value;
+            if (oldestKey) {
+                this.knownCompanies.delete(oldestKey);
+            }
+        }
         this.knownCompanies.set(key, companyName);
         return {
             isDuplicate: false,

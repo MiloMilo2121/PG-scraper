@@ -92,7 +92,8 @@ export class BackupManager {
                 .filter(f => f.includes('backup'))
                 .sort()
                 .reverse();
-        } catch {
+        } catch (error) {
+            Logger.warn('Listing backups failed', { error: error as Error });
             return [];
         }
     }
@@ -113,7 +114,9 @@ export class BackupManager {
                 } else {
                     fs.unlinkSync(fullPath);
                 }
-            } catch { } // Ignore errors
+            } catch (error) {
+                Logger.warn('Failed to remove old backup', { error: error as Error, backup: fullPath });
+            }
         }
 
         if (toDelete.length > 0) {

@@ -12,9 +12,10 @@ import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as fs from 'fs';
 import { Logger } from '../utils/logger';
+import { config } from '../config';
 
 // Use environment or default
-const SQLITE_PATH = process.env.SQLITE_PATH || './data/antigravity.db';
+const SQLITE_PATH = process.env.SQLITE_PATH || config.sqlitePath;
 
 // Ensure data directory exists
 const dataDir = path.dirname(SQLITE_PATH);
@@ -30,11 +31,17 @@ db.pragma('cache_size = 10000');
 db.pragma('temp_store = MEMORY');
 
 Logger.info(`🗄️ SQLite connected: ${SQLITE_PATH} (WAL mode)`);
+let schemaInitialized = false;
+let statementsInitialized = false;
 
 /**
  * 📋 Initialize database schema
  */
 export function initializeDatabase(): void {
+    if (schemaInitialized) {
+        return;
+    }
+
     db.exec(`
         -- 📥 Input companies (raw data from CSV)
         CREATE TABLE IF NOT EXISTS companies (
@@ -90,6 +97,8 @@ export function initializeDatabase(): void {
         CREATE INDEX IF NOT EXISTS idx_job_log_status ON job_log(status);
     `);
 
+    schemaInitialized = true;
+    initializeStatements();
     Logger.info('✅ Database schema initialized');
 }
 
@@ -119,22 +128,60 @@ export interface EnrichmentResult {
     data_source?: string;
 }
 
-// 📥 Company Operations
-const insertCompanyStmt = db.prepare(`
-    INSERT OR REPLACE INTO companies (id, company_name, city, province, address, phone, website, category, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-`);
+let insertCompanyStmt: any;
+let getCompanyByIdStmt: any;
+let getCompanyByNameStmt: any;
+let getPendingCompaniesStmt: any;
+let insertResultStmt: any;
+let getResultByCompanyStmt: any;
+let insertJobLogStmt: any;
 
-const getCompanyByIdStmt = db.prepare('SELECT * FROM companies WHERE id = ?');
-const getCompanyByNameStmt = db.prepare('SELECT * FROM companies WHERE company_name = ? AND city = ?');
-const getPendingCompaniesStmt = db.prepare(`
-    SELECT c.* FROM companies c
-    LEFT JOIN enrichment_results er ON c.id = er.company_id
-    WHERE er.id IS NULL
-    LIMIT ?
-`);
+function initializeStatements(): void {
+    if (statementsInitialized) {
+        return;
+    }
+
+    insertCompanyStmt = db.prepare(`
+        INSERT OR REPLACE INTO companies (id, company_name, city, province, address, phone, website, category, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `);
+
+    getCompanyByIdStmt = db.prepare('SELECT * FROM companies WHERE id = ?');
+    getCompanyByNameStmt = db.prepare('SELECT * FROM companies WHERE company_name = ? AND city = ?');
+    getPendingCompaniesStmt = db.prepare(`
+        SELECT c.* FROM companies c
+        LEFT JOIN enrichment_results er ON c.id = er.company_id
+        WHERE er.id IS NULL
+        LIMIT ?
+    `);
+
+    insertResultStmt = db.prepare(`
+        INSERT OR REPLACE INTO enrichment_results 
+        (id, company_id, vat, revenue, revenue_year, employees, is_estimated_employees, pec, website_validated, lead_score, data_source, enriched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `);
+
+    getResultByCompanyStmt = db.prepare('SELECT * FROM enrichment_results WHERE company_id = ?');
+
+    insertJobLogStmt = db.prepare(`
+        INSERT INTO job_log (company_id, status, error_message, error_category, duration_ms, attempt)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    statementsInitialized = true;
+}
+
+function ensureReady(): void {
+    if (!schemaInitialized) {
+        throw new Error('Database not initialized. Call initializeDatabase() during application bootstrap.');
+    }
+    if (!statementsInitialized) {
+        initializeStatements();
+    }
+}
 
 export function insertCompany(company: Company): void {
+    ensureReady();
     insertCompanyStmt.run(
         company.id,
         company.company_name,
@@ -148,6 +195,7 @@ export function insertCompany(company: Company): void {
 }
 
 export function insertCompanies(companies: Company[]): void {
+    ensureReady();
     const insertMany = db.transaction((items: Company[]) => {
         for (const c of items) {
             insertCompanyStmt.run(c.id, c.company_name, c.city, c.province, c.address, c.phone, c.website, c.category);
@@ -158,23 +206,17 @@ export function insertCompanies(companies: Company[]): void {
 }
 
 export function getCompanyById(id: string): Company | undefined {
+    ensureReady();
     return getCompanyByIdStmt.get(id) as Company | undefined;
 }
 
 export function getPendingCompanies(limit: number = 100): Company[] {
+    ensureReady();
     return getPendingCompaniesStmt.all(limit) as Company[];
 }
 
-// 📊 Enrichment Result Operations
-const insertResultStmt = db.prepare(`
-    INSERT OR REPLACE INTO enrichment_results 
-    (id, company_id, vat, revenue, revenue_year, employees, is_estimated_employees, pec, website_validated, lead_score, data_source, enriched_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-`);
-
-const getResultByCompanyStmt = db.prepare('SELECT * FROM enrichment_results WHERE company_id = ?');
-
 export function insertEnrichmentResult(result: EnrichmentResult): void {
+    ensureReady();
     insertResultStmt.run(
         result.id,
         result.company_id,
@@ -191,14 +233,9 @@ export function insertEnrichmentResult(result: EnrichmentResult): void {
 }
 
 export function getEnrichmentResult(companyId: string): EnrichmentResult | undefined {
+    ensureReady();
     return getResultByCompanyStmt.get(companyId) as EnrichmentResult | undefined;
 }
-
-// 📜 Job Log Operations
-const insertJobLogStmt = db.prepare(`
-    INSERT INTO job_log (company_id, status, error_message, error_category, duration_ms, attempt)
-    VALUES (?, ?, ?, ?, ?, ?)
-`);
 
 export function logJobResult(
     companyId: string,
@@ -208,14 +245,16 @@ export function logJobResult(
     errorMessage?: string,
     errorCategory?: string
 ): void {
+    ensureReady();
     insertJobLogStmt.run(companyId, status, errorMessage, errorCategory, durationMs, attempt);
 }
 
 // 📊 Statistics
 export function getStats(): { total: number; enriched: number; pending: number; failed: number } {
-    const total = (db.prepare('SELECT COUNT(*) as count FROM companies').get() as any).count;
-    const enriched = (db.prepare('SELECT COUNT(*) as count FROM enrichment_results').get() as any).count;
-    const failed = (db.prepare('SELECT COUNT(DISTINCT company_id) as count FROM job_log WHERE status = ?').get('FAILED') as any).count;
+    ensureReady();
+    const total = (db.prepare('SELECT COUNT(*) as count FROM companies').get() as { count: number }).count;
+    const enriched = (db.prepare('SELECT COUNT(*) as count FROM enrichment_results').get() as { count: number }).count;
+    const failed = (db.prepare('SELECT COUNT(DISTINCT company_id) as count FROM job_log WHERE status = ?').get('FAILED') as { count: number }).count;
     return {
         total,
         enriched,
@@ -226,6 +265,7 @@ export function getStats(): { total: number; enriched: number; pending: number; 
 
 // 📤 Export to CSV
 export function exportEnrichedToCSV(outputPath: string): void {
+    ensureReady();
     const stmt = db.prepare(`
         SELECT 
             c.company_name, c.city, c.province, c.address, c.phone, c.category,
@@ -242,13 +282,15 @@ export function exportEnrichedToCSV(outputPath: string): void {
     }
 
     const headers = Object.keys(rows[0] as Record<string, unknown>).join(',');
-    const lines = rows.map(row => Object.values(row as Record<string, unknown>).map(v => `"${v || ''}"`).join(','));
+    const lines = rows.map((row) => Object.values(row as Record<string, unknown>).map(escapeCsvValue).join(','));
 
     fs.writeFileSync(outputPath, [headers, ...lines].join('\n'));
     Logger.info(`📤 Exported ${rows.length} enriched companies to ${outputPath}`);
 }
 
-// Initialize on import
-initializeDatabase();
+function escapeCsvValue(value: unknown): string {
+    const raw = value == null ? '' : String(value);
+    return `"${raw.replace(/"/g, '""')}"`;
+}
 
 export default db;
