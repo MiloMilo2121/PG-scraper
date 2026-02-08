@@ -2,8 +2,14 @@ import { Cluster } from 'puppeteer-cluster';
 import { logger } from '../observability';
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import fs from 'fs';
 
 puppeteer.use(StealthPlugin());
+
+function getSandboxArgs(): string[] {
+    const inDocker = process.env.RUNNING_IN_DOCKER === 'true' || fs.existsSync('/.dockerenv');
+    return inDocker ? ['--no-sandbox', '--disable-setuid-sandbox'] : [];
+}
 
 export class ClusterManager {
     private static instance: Cluster | null = null;
@@ -21,8 +27,7 @@ export class ClusterManager {
                     headless: true,
                     ignoreHTTPSErrors: true,
                     args: [
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
+                        ...getSandboxArgs(),
                         '--disable-dev-shm-usage',
                         '--disable-features=site-per-process'
                     ],

@@ -7,6 +7,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import { QueueEvents } from 'bullmq';
 import { parse } from 'fast-csv';
+import { z } from 'zod';
 import { Logger } from './utils/logger';
 import { config } from './config';
 import { Company, initializeDatabase, insertCompanies } from './db';
@@ -48,6 +49,17 @@ interface CSVCompany {
   website?: string;
   category?: string;
 }
+
+const CsvCompanySchema = z.object({
+  company_id: z.string().optional(),
+  company_name: z.string().trim().min(1),
+  city: z.string().optional(),
+  province: z.string().optional(),
+  address: z.string().optional(),
+  phone: z.string().optional(),
+  website: z.string().optional(),
+  category: z.string().optional(),
+});
 
 function deterministicCompanyId(company: CSVCompany): string {
   if (company.company_id && company.company_id.trim() !== '') {
@@ -117,12 +129,16 @@ async function loadCompaniesFromCSV(filePath: string): Promise<CSVCompany[]> {
     fs.createReadStream(filePath)
       .pipe(parse({ headers: true, ignoreEmpty: true }))
       .on('data', (row: CSVCompany) => {
-        if (row.company_name?.trim()) {
-          rows.push({
-            ...row,
-            company_name: row.company_name.trim(),
-          });
+        const parsed = CsvCompanySchema.safeParse(row);
+        if (!parsed.success) {
+          Logger.warn('Skipping invalid CSV row', { issues: parsed.error.issues });
+          return;
         }
+
+        rows.push({
+          ...parsed.data,
+          company_name: parsed.data.company_name.trim(),
+        });
       })
       .on('end', () => resolve(rows))
       .on('error', (err) => {

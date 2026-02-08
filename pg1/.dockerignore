@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+output
+temp_profiles
+*.log
+*.csv

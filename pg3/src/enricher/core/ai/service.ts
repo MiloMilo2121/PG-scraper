@@ -328,7 +328,7 @@ Answer ONLY "yes" or "no".`;
             const response = await this.call(prompt, 'classify');
             return response.toLowerCase().includes('yes');
         } catch {
-            return true; // Default to accepting if AI fails
+            return false; // Fail closed: don't accept VAT ownership when validation fails
         }
     }
 

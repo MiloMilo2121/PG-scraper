@@ -111,7 +111,7 @@ export class ProxyManager {
     public reportFailure(proxyUrl: string): void {
         if (!proxyUrl) return;
         this.failedProxies.add(proxyUrl);
-        console.warn(`⚠️ Proxy marked as failed: ${proxyUrl}`);
+        console.warn(`⚠️ Proxy marked as failed: ${this.redactProxy(proxyUrl)}`);
     }
 
     /**
@@ -120,7 +120,7 @@ export class ProxyManager {
     public reportSuccess(proxyUrl: string): void {
         if (!proxyUrl) return;
         if (this.failedProxies.delete(proxyUrl)) {
-            console.log(`✅ Proxy restored: ${proxyUrl}`);
+            console.log(`✅ Proxy restored: ${this.redactProxy(proxyUrl)}`);
         }
     }
 
@@ -137,8 +137,60 @@ export class ProxyManager {
     public getProxyArgs(targetUrl: string): string[] {
         const proxy = this.getProxy(targetUrl);
         if (proxy) {
-            return [`--proxy-server=${proxy}`];
+            const parsed = this.parseProxyUrl(proxy);
+            return [`--proxy-server=${parsed.server}`];
         }
         return [];
+    }
+
+    /**
+     * Apply proxy auth to page when credentials are present.
+     */
+    public async authenticateProxy(
+        page: { authenticate(credentials: { username: string; password: string }): Promise<void> },
+        targetUrl: string
+    ): Promise<void> {
+        const proxy = this.getProxy(targetUrl);
+        if (!proxy) return;
+        const parsed = this.parseProxyUrl(proxy);
+        if (parsed.username && parsed.password) {
+            await page.authenticate({
+                username: parsed.username,
+                password: parsed.password,
+            });
+        }
+    }
+
+    private parseProxyUrl(proxyUrl: string): { server: string; username?: string; password?: string } {
+        try {
+            const parsed = new URL(proxyUrl);
+            return {
+                server: `${parsed.protocol}//${parsed.host}`,
+                username: parsed.username || undefined,
+                password: parsed.password || undefined,
+            };
+        } catch {
+            // Legacy formats like host:port:user:pass
+            const parts = proxyUrl.split(':');
+            if (parts.length >= 2) {
+                return {
+                    server: `http://${parts[0]}:${parts[1]}`,
+                    username: parts[2] || undefined,
+                    password: parts[3] || undefined,
+                };
+            }
+            return { server: proxyUrl };
+        }
+    }
+
+    private redactProxy(proxyUrl: string): string {
+        try {
+            const parsed = new URL(proxyUrl);
+            if (parsed.username) parsed.username = '***';
+            if (parsed.password) parsed.password = '***';
+            return parsed.toString();
+        } catch {
+            return proxyUrl.replace(/\/\/([^:@/]+):([^@/]+)@/, '//***:***@');
+        }
     }
 }

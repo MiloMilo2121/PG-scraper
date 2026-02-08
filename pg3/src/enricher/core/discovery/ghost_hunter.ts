@@ -4,7 +4,7 @@ import { Logger } from '../../utils/logger';
 
 export class GhostHunter {
     private static instance: GhostHunter;
-    private readonly WAYBACK_API = 'http://archive.org/wayback/available';
+    private readonly WAYBACK_API = 'https://archive.org/wayback/available';
 
     private constructor() { }
 

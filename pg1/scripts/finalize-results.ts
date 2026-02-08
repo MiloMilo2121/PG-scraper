@@ -91,4 +91,7 @@ async function main() {
     processAndWrite();
 }
 
-main();
+main().catch((error) => {
+    console.error('Finalize results failed:', error);
+    process.exit(1);
+});

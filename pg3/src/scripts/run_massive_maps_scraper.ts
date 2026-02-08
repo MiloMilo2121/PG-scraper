@@ -39,6 +39,11 @@ const TARGET_CITIES = [
 const OUTPUT_DIR = 'output/massive_maps';
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
+function getSandboxArgs(): string[] {
+    const inDocker = process.env.RUNNING_IN_DOCKER === 'true' || fs.existsSync('/.dockerenv');
+    return inDocker ? ['--no-sandbox', '--disable-setuid-sandbox'] : [];
+}
+
 async function delay(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -73,33 +78,34 @@ async function main() {
 
     const browser = await puppeteer.launch({
         headless: false, // User wants to see the "Bomba" in action usually, or set true for server
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1920,1080'],
+        args: [...getSandboxArgs(), '--window-size=1920,1080'],
         defaultViewport: null
     });
 
-    const timestamp = new Date().toISOString().split('T')[0];
-    const outputFile = path.join(OUTPUT_DIR, `massive_maps_results_${timestamp}.csv`);
+    try {
+        const timestamp = new Date().toISOString().split('T')[0];
+        const outputFile = path.join(OUTPUT_DIR, `massive_maps_results_${timestamp}.csv`);
 
-    const csvWriter = createObjectCsvWriter({
-        path: outputFile,
-        header: [
-            { id: 'keyword', title: 'Keyword' },
-            { id: 'municipality', title: 'Municipality' },
-            { id: 'company_name', title: 'Company Name' },
-            { id: 'address', title: 'Address' },
-            { id: 'website', title: 'Website' },
-            { id: 'phone', title: 'Phone' },
-            { id: 'plus_code', title: 'Plus Code' },
-            { id: 'maps_url', title: 'Maps URL' }
-        ],
-        append: fs.existsSync(outputFile)
-    });
+        const csvWriter = createObjectCsvWriter({
+            path: outputFile,
+            header: [
+                { id: 'keyword', title: 'Keyword' },
+                { id: 'municipality', title: 'Municipality' },
+                { id: 'company_name', title: 'Company Name' },
+                { id: 'address', title: 'Address' },
+                { id: 'website', title: 'Website' },
+                { id: 'phone', title: 'Phone' },
+                { id: 'plus_code', title: 'Plus Code' },
+                { id: 'maps_url', title: 'Maps URL' }
+            ],
+            append: fs.existsSync(outputFile)
+        });
 
-    const page = await browser.newPage();
-    const seen = new Set<string>();
+        const page = await browser.newPage();
+        const seen = new Set<string>();
 
-    for (const city of TARGET_CITIES) {
-        for (const keyword of KEYWORDS) {
+        for (const city of TARGET_CITIES) {
+            for (const keyword of KEYWORDS) {
             try {
                 const query = `${keyword} ${city}`;
                 console.log(`\n🔎 Processing: "${query}"`);
@@ -190,11 +196,16 @@ async function main() {
             } catch (e) {
                 console.error(`   ❌ Failed query "${keyword} ${city}":`, e);
             }
+            }
         }
-    }
 
-    await browser.close();
-    console.log(`\n✨ DONE! Output saved to: ${outputFile}`);
+        console.log(`\n✨ DONE! Output saved to: ${outputFile}`);
+    } finally {
+        await browser.close();
+    }
 }
 
-main();
+main().catch((error) => {
+    console.error('Fatal error in massive maps scraper:', error);
+    process.exit(1);
+});

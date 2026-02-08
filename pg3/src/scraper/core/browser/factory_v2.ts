@@ -4,6 +4,7 @@ import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import * as os from 'os';
 import * as path from 'path';
+import * as fs from 'fs';
 
 import { ResourceManager, PhaseType } from '../../utils/resource_manager';
 import { getRandomUserAgent } from './ua_db';
@@ -18,6 +19,11 @@ import { Logger } from '../../utils/logger';
 // Add plugin
 puppeteer.use(StealthPlugin());
 
+function getSandboxArgs(): string[] {
+    const inDocker = process.env.RUNNING_IN_DOCKER === 'true' || fs.existsSync('/.dockerenv');
+    return inDocker ? ['--no-sandbox', '--disable-setuid-sandbox'] : [];
+}
+
 export class BrowserFactory {
     private static instance: BrowserFactory;
     private browser: Browser | null = null;
@@ -27,6 +33,7 @@ export class BrowserFactory {
     private instanceId: string;
     private lastHealthCheck: number = Date.now();
     private currentProfilePath: string | null = null;
+    private browserCounted = false;
 
     // Configuration
     private static readonly MAX_CONCURRENCY = 10; // Stabilized for server
@@ -37,6 +44,7 @@ export class BrowserFactory {
     constructor() {
         this.instanceId = Math.random().toString(36).substring(7);
         this.userDataDir = path.join(process.cwd(), 'temp_profiles', `browser_${this.instanceId}`);
+        this.currentProfilePath = this.userDataDir;
         BrowserFactory.instances.add(this);
     }
 
@@ -99,13 +107,13 @@ export class BrowserFactory {
 
             const freeMem = os.freemem() / 1024 / 1024;
             console.log(`[BrowserFactory:${this.instanceId}] 🚀 Spawning Browser (Free RAM: ${Math.round(freeMem)}MB)`);
+            this.currentProfilePath = this.userDataDir;
 
             // Task 10: Cloak webdriver
             let executablePath = process.env.CHROME_PATH;
             if (!executablePath && os.platform() === 'linux') {
                 try {
                     const paths = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium'];
-                    const fs = require('fs');
                     for (const p of paths) {
                         if (fs.existsSync(p)) {
                             executablePath = p;
@@ -136,8 +144,7 @@ export class BrowserFactory {
                         userDataDir: this.userDataDir,
                         executablePath: executablePath,
                         args: [
-                            '--no-sandbox',
-                            '--disable-setuid-sandbox',
+                            ...getSandboxArgs(),
                             '--disable-infobars',
                             '--disable-dev-shm-usage',
                             '--disable-gpu',
@@ -159,7 +166,17 @@ export class BrowserFactory {
                 }
 
                 this.browser = browser;
+                this.browserCounted = true;
                 BrowserFactory.ACTIVE_INSTANCES++;
+                browser.once('disconnected', () => {
+                    if (this.browserCounted) {
+                        BrowserFactory.ACTIVE_INSTANCES = Math.max(0, BrowserFactory.ACTIVE_INSTANCES - 1);
+                        this.browserCounted = false;
+                    }
+                    if (this.browser === browser) {
+                        this.browser = null;
+                    }
+                });
                 this.lastHealthCheck = Date.now();
                 return browser;
             } catch (error) {
@@ -249,6 +266,11 @@ export class BrowserFactory {
                 } catch (e) { }
             }
         }
+        this.browser = null;
+        if (this.browserCounted) {
+            BrowserFactory.ACTIVE_INSTANCES = Math.max(0, BrowserFactory.ACTIVE_INSTANCES - 1);
+            this.browserCounted = false;
+        }
     }
 
     public async closePage(page: Page): Promise<void> {
@@ -271,13 +293,15 @@ export class BrowserFactory {
                 await this.browser.close();
             } catch { }
             this.browser = null;
-            BrowserFactory.ACTIVE_INSTANCES--;
+            if (this.browserCounted) {
+                BrowserFactory.ACTIVE_INSTANCES = Math.max(0, BrowserFactory.ACTIVE_INSTANCES - 1);
+                this.browserCounted = false;
+            }
         }
 
         // Cleanup temporary profile
         if (this.currentProfilePath) {
             try {
-                const fs = require('fs');
                 if (fs.existsSync(this.currentProfilePath)) {
                     fs.rmSync(this.currentProfilePath, { recursive: true, force: true });
                 }

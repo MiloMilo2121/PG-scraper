@@ -4,6 +4,7 @@ import * as path from 'path';
 import { parse } from 'fast-csv';
 import { createObjectCsvWriter } from 'csv-writer';
 import pLimit from 'p-limit';
+import { z } from 'zod';
 import { UnifiedDiscoveryService, DiscoveryMode, DiscoveryResult } from './core/discovery/unified_discovery_service';
 import { BrowserFactory } from './core/browser/factory_v2';
 import { Logger } from './utils/logger';
@@ -19,6 +20,27 @@ const SERVICE = new UnifiedDiscoveryService();
 const RUNNER_CONCURRENCY_LIMIT = config.runner.concurrencyLimit;
 const RUNNER_MEMORY_WARN_MB = config.runner.memoryWarnMb;
 const RUNNER_PROGRESS_LOG_EVERY = config.runner.progressLogEvery;
+
+const RunnerCompanySchema = z.object({
+    company_name: z.string().trim().min(1),
+    city: z.string().optional(),
+    province: z.string().optional(),
+    address: z.string().optional(),
+    phone: z.string().optional(),
+    website: z.string().optional(),
+    category: z.string().optional(),
+    zip_code: z.string().optional(),
+    region: z.string().optional(),
+    vat: z.string().optional(),
+    piva: z.string().optional(),
+    website_found: z.string().optional(),
+    discovery_method: z.string().optional(),
+    discovery_confidence: z.union([z.string(), z.number()]).optional(),
+    scraped_piva: z.string().optional(),
+    validation_level: z.string().optional(),
+    validation_reason: z.string().optional(),
+    lead_score: z.union([z.string(), z.number()]).optional(),
+}).passthrough();
 
 // Ensure output dir exists
 if (!fs.existsSync(OUTPUT_DIR)) {
@@ -219,7 +241,14 @@ async function loadCompanies(filePath: string): Promise<CompanyInput[]> {
         const rows: CompanyInput[] = [];
         fs.createReadStream(filePath)
             .pipe(parse({ headers: true, strictColumnHandling: false, discardUnmappedColumns: true, ignoreEmpty: true }))
-            .on('data', r => rows.push(r))
+            .on('data', (r) => {
+                const parsed = RunnerCompanySchema.safeParse(r);
+                if (!parsed.success) {
+                    Logger.warn('Skipping invalid runner CSV row', { issues: parsed.error.issues });
+                    return;
+                }
+                rows.push(parsed.data as CompanyInput);
+            })
             .on('end', () => resolve(rows));
     });
 }

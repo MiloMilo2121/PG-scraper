@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import * as dotenv from 'dotenv';
+import { z } from 'zod';
 import { logger } from '../observability';
 
 dotenv.config();
@@ -23,6 +24,12 @@ export interface CandidateInfo {
     page_title?: string;
     content_snippet?: string;
 }
+
+const VerificationSchema = z.object({
+    is_match: z.boolean(),
+    confidence: z.number().min(0).max(100),
+    reason: z.string().min(1),
+});
 
 export class OpenAIVerifier {
     private static client: OpenAI | null = null;
@@ -95,7 +102,13 @@ oppure
             // Parse JSON response
             const jsonMatch = content.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
-                const result = JSON.parse(jsonMatch[0]) as VerificationResult;
+                const raw = JSON.parse(jsonMatch[0]);
+                const parsed = VerificationSchema.safeParse(raw);
+                if (!parsed.success) {
+                    logger.log('warn', `[OpenAI] Invalid JSON shape from model for ${candidate.url}`);
+                    return { is_match: false, confidence: 0, reason: 'Invalid AI response schema' };
+                }
+                const result = parsed.data;
                 logger.log('info', `[OpenAI] Verified ${candidate.url}: ${result.is_match ? 'MATCH' : 'NO MATCH'} (${result.confidence}%)`);
                 return result;
             }

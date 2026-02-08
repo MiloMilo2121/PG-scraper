@@ -152,7 +152,7 @@ export class ProxyManager {
      */
     public markFailed(proxyUrl: string): void {
         this.failedProxies.add(proxyUrl);
-        Logger.warn(`🚫 Proxy marked as failed: ${proxyUrl}`);
+        Logger.warn(`🚫 Proxy marked as failed: ${this.redactProxy(proxyUrl)}`);
 
         const existingTimer = this.failedProxyTimers.get(proxyUrl);
         if (existingTimer) {
@@ -195,6 +195,17 @@ export class ProxyManager {
         }
         this.failedProxyTimers.clear();
         this.failedProxies.clear();
+    }
+
+    private redactProxy(proxyUrl: string): string {
+        try {
+            const parsed = new URL(proxyUrl);
+            if (parsed.username) parsed.username = '***';
+            if (parsed.password) parsed.password = '***';
+            return parsed.toString();
+        } catch {
+            return proxyUrl.replace(/\/\/([^:@/]+):([^@/]+)@/, '//***:***@');
+        }
     }
 }
 

@@ -20,6 +20,11 @@ import { ProxyManager } from './proxy_manager';
 // Add stealth plugin
 puppeteer.use(StealthPlugin());
 
+function getSandboxArgs(): string[] {
+    const inDocker = process.env.RUNNING_IN_DOCKER === 'true' || fs.existsSync('/.dockerenv');
+    return inDocker ? ['--no-sandbox', '--disable-setuid-sandbox'] : [];
+}
+
 export class BrowserFactory {
     private static instance: BrowserFactory;
     private browser: Browser | null = null;
@@ -127,8 +132,7 @@ export class BrowserFactory {
                     executablePath: executablePath,
                     args: [
                         ...proxyArgs,
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
+                        ...getSandboxArgs(),
                         '--disable-infobars',
                         '--disable-dev-shm-usage',
                         '--disable-gpu',
@@ -188,6 +192,8 @@ export class BrowserFactory {
         const page = await this.browser!.newPage();
         this.activePages.add(page);
         page.once('close', () => this.activePages.delete(page));
+
+        await ProxyManager.getInstance().authenticateProxy(page, 'https://www.google.com');
 
         // 🧬 GENETIC EVOLUTION
         const fingerprinter = GeneticFingerprinter.getInstance();

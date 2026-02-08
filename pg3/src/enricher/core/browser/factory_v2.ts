@@ -19,6 +19,11 @@ import { CookieConsent } from './cookie_consent';
 // Add plugin
 puppeteer.use(StealthPlugin());
 
+function getSandboxArgs(): string[] {
+    const inDocker = process.env.RUNNING_IN_DOCKER === 'true' || fs.existsSync('/.dockerenv');
+    return inDocker ? ['--no-sandbox', '--disable-setuid-sandbox'] : [];
+}
+
 export class BrowserFactory {
     private static instance: BrowserFactory;
     private browser: Browser | null = null;
@@ -165,8 +170,7 @@ export class BrowserFactory {
                         executablePath: executablePath,
                         args: [
                             ...proxyArgs, // <--- PROXY ARGS
-                            '--no-sandbox',
-                            '--disable-setuid-sandbox',
+                            ...getSandboxArgs(),
                             '--disable-infobars',
                             '--disable-dev-shm-usage',
                             '--disable-gpu',

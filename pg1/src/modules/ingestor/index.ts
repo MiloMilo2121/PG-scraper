@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { parse } from 'csv-parse';
 import { InputRow } from '../../types';
+import { z } from 'zod';
 
 export interface IngestResult {
     row: InputRow;
@@ -9,6 +10,20 @@ export interface IngestResult {
 
 const MIN_REQUIRED_FIELDS = ['company_name'];
 const SIGNAL_FIELDS = ['phone', 'address', 'city', 'source_url'];
+
+const InputRowSchema = z.object({
+    company_name: z.string().trim().min(1),
+    vat_id: z.string().optional(),
+    phone: z.string().optional(),
+    address: z.string().optional(),
+    city: z.string().optional(),
+    province: z.string().optional(),
+    postal_code: z.string().optional(),
+    industry: z.string().optional(),
+    source_url: z.string().optional(),
+    initial_website: z.string().optional(),
+    country: z.string().optional(),
+}).passthrough();
 
 export async function* ingestCSV(filePath: string): AsyncGenerator<IngestResult, void, unknown> {
     const fileContent = fs.readFileSync(filePath, 'utf8'); // Read full file to auto-detect? Or stream?
@@ -35,7 +50,9 @@ export async function* ingestCSV(filePath: string): AsyncGenerator<IngestResult,
     let lineCount = 0;
     for await (const record of parser) {
         lineCount++;
-        const row = record as InputRow;
+        const parsed = InputRowSchema.safeParse(record);
+        if (!parsed.success) continue;
+        const row = parsed.data as InputRow;
 
         // Basic validation: must have company_name and at least one signal
         if (!row.company_name) continue;
