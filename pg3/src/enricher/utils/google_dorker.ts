@@ -15,44 +15,22 @@ export class GoogleDorker {
         goal: 'website' | 'vat' | 'email' | 'contact',
         city?: string
     ): Promise<string[]> {
-        const prompts: Record<string, string> = {
-            website: `Generate 3 Google search queries to find the official website of "${companyName}" in ${city || 'Italy'}. 
-Include queries with:
-1. Company name + city
-2. Company name + "sito ufficiale"
-3. Company name + industry terms
-Return ONLY the queries, one per line.`,
-
-            vat: `Generate 3 Google search queries to find the Partita IVA of "${companyName}" in ${city || 'Italy'}.
-Include queries with:
-1. Company name + "Partita IVA"
-2. Company name + "P.IVA"
-3. Company name + "visura camerale"
-Return ONLY the queries, one per line.`,
-
-            email: `Generate 3 Google search queries to find email contacts for "${companyName}" in ${city || 'Italy'}.
-Include queries with:
-1. Company name + "contatti"
-2. Company name + "@" + likely domain
-3. Company name + "email" + city
-Return ONLY the queries, one per line.`,
-
-            contact: `Generate 3 Google search queries to find the owner/CEO of "${companyName}" in ${city || 'Italy'}.
-Include queries with:
-1. Company name + "titolare"
-2. Company name + "amministratore"
-3. Company name + LinkedIn
-Return ONLY the queries, one per line.`,
-        };
-
         try {
-            const response = await aiService.searchVAT(companyName, city);
-            // Parse response into array
-            if (response) {
+            if (goal === 'vat') {
+                const vat = await aiService.searchVAT(companyName, city);
+                if (vat) {
+                    return [
+                        `"${companyName}" "${vat}"`,
+                        `"${companyName}" "Partita IVA ${vat}"`,
+                        `"${vat}" "${city || 'Italia'}"`,
+                    ];
+                }
+            }
+            if (goal === 'website') {
                 return [
                     `"${companyName}" ${city || ''} site:.it`,
-                    `"${companyName}" "Partita IVA"`,
-                    `${companyName} ${city || ''} azienda`,
+                    `"${companyName}" "${city || ''}" sito ufficiale`,
+                    `"${companyName}" "${city || ''}" contatti`,
                 ];
             }
         } catch (e) {
