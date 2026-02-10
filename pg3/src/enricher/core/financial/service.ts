@@ -14,6 +14,7 @@ import { ViesService } from './vies';
 import { Logger } from '../../utils/logger';
 import { CaptchaSolver } from '../security/captcha_solver';
 import { config } from '../../config';
+import { PagineGialleHarvester } from '../directories/paginegialle';
 
 export interface FinancialData {
     vat?: string;
@@ -47,30 +48,43 @@ export class FinancialService {
     async enrich(company: CompanyInput, websiteUrl?: string): Promise<FinancialData> {
         const data: FinancialData = { isEstimatedEmployees: false };
         let validVat: string | undefined;
+        let websiteSignals: { vat?: string; pec?: string } | null = null;
 
         // =====================================================================
         // PHASE 1: VAT DISCOVERY
         // =====================================================================
 
         // 1A. Check if company already has P.IVA
-        const existingVat = (company as any).vat_code || (company as any).piva || (company as any).fiscal_code;
+        const existingVatRaw = (company as any).vat_code || (company as any).piva || (company as any).fiscal_code;
+        const existingVat = typeof existingVatRaw === 'string' ? existingVatRaw.replace(/\D/g, '') : '';
         if (existingVat && /^\d{11}$/.test(existingVat)) {
-            Logger.info(`[Financial] 🎯 P.IVA already present: ${existingVat}`);
-            validVat = existingVat;
-            data.source = 'Pre-existing';
+            Logger.info(`[Financial] 🎯 P.IVA present in input: ${existingVat}`);
+            if (this.viesCache.has(existingVat)) {
+                validVat = existingVat;
+                data.source = 'Pre-existing (Cached VIES)';
+            } else {
+                const check = await this.vies.validateVat(existingVat);
+                if (check.isValid) {
+                    validVat = existingVat;
+                    this.viesCache.set(existingVat, true);
+                    data.source = 'Pre-existing + VIES';
+                } else {
+                    Logger.warn(`[Financial] ⚠️ Input P.IVA failed VIES validation: ${existingVat}`);
+                }
+            }
         }
 
         // 1B. Extract from website
         if (!validVat && websiteUrl) {
-            const webData = await this.scrapeWebsiteForVAT(websiteUrl);
-            if (webData.vat) {
-                if (this.viesCache.has(webData.vat)) {
-                    validVat = webData.vat;
+            websiteSignals = await this.scrapeWebsiteForVatAndPec(websiteUrl);
+            if (websiteSignals?.vat) {
+                if (this.viesCache.has(websiteSignals.vat)) {
+                    validVat = websiteSignals.vat;
                     data.source = 'Website (Cached VIES)';
                 } else {
-                    const check = await this.vies.validateVat(webData.vat);
+                    const check = await this.vies.validateVat(websiteSignals.vat);
                     if (check.isValid) {
-                        validVat = webData.vat;
+                        validVat = websiteSignals.vat;
                         this.viesCache.set(validVat, true);
                         data.source = 'Website + VIES';
                     }
@@ -78,8 +92,37 @@ export class FinancialService {
             }
         }
 
-        // 1C. Google search for VAT
-        if (!validVat) {
+        // 1C. Directory extraction (PagineGialle phone reverse)
+        if (!validVat && company.phone) {
+            const pg = await PagineGialleHarvester.harvestByPhone(company);
+            const pgVat = (pg?.vat || '').replace(/\D/g, '');
+            if (pgVat && /^\d{11}$/.test(pgVat)) {
+                if (this.viesCache.has(pgVat)) {
+                    validVat = pgVat;
+                    data.source = 'PagineGialle (Cached VIES)';
+                } else {
+                    const check = await this.vies.validateVat(pgVat);
+                    if (check.isValid) {
+                        validVat = pgVat;
+                        this.viesCache.set(pgVat, true);
+                        data.source = 'PagineGialle + VIES';
+                    } else {
+                        Logger.warn(`[Financial] ⚠️ PagineGialle VAT failed VIES validation: ${pgVat}`);
+                    }
+                }
+
+                // If PG email looks like a PEC, keep it.
+                if (!data.pec && pg?.email) {
+                    const maybe = pg.email.toLowerCase();
+                    if (maybe.includes('@pec.') || maybe.includes('legalmail') || maybe.includes('arubapec') || maybe.includes('postecert')) {
+                        data.pec = maybe;
+                    }
+                }
+            }
+        }
+
+        // 1D. Google search for VAT (only when proxy is available)
+        if (!validVat && process.env.DISABLE_PROXY !== 'true') {
             const googleVat = await this.googleSearchForVAT(company);
             if (googleVat) {
                 validVat = googleVat;
@@ -138,7 +181,19 @@ export class FinancialService {
         // =====================================================================
         // PHASE 5: PEC DISCOVERY
         // =====================================================================
-        data.pec = await this.findPecDIY(company.company_name, company.city) || undefined;
+        if (!data.pec && websiteUrl) {
+            if (!websiteSignals) {
+                websiteSignals = await this.scrapeWebsiteForVatAndPec(websiteUrl);
+            }
+            if (websiteSignals?.pec) {
+                data.pec = websiteSignals.pec;
+            }
+        }
+
+        // Fallback to Google only when proxy is available (otherwise it's mostly wasted work / blocks).
+        if (!data.pec && process.env.DISABLE_PROXY !== 'true') {
+            data.pec = await this.findPecDIY(company.company_name, company.city) || undefined;
+        }
 
         Logger.info(`[Financial] ✅ Enrichment complete for ${company.company_name}: VAT=${data.vat || 'N/A'}, Revenue=${data.revenue || 'N/A'}`);
         return data;
@@ -148,6 +203,10 @@ export class FinancialService {
     // P.IVA PATH: Direct UfficioCamerale with CaptchaSolver
     // =========================================================================
     private async scrapeUfficioCameraleDirect(vat: string): Promise<{ revenue?: string; employees?: string }> {
+        if (process.env.DISABLE_PROXY === 'true') {
+            Logger.info('[Financial] 🛡️ Proxy disabled - skipping Google-based registry lookup');
+            return {};
+        }
         let page;
         try {
             page = await this.browserFactory.newPage();
@@ -295,6 +354,10 @@ export class FinancialService {
     // NO P.IVA PATH: Google search by name for financials
     // =========================================================================
     private async googleSearchFinancialsByName(company: CompanyInput): Promise<{ revenue?: string; employees?: string }> {
+        if (process.env.DISABLE_PROXY === 'true') {
+            Logger.info('[Financial] 🛡️ Proxy disabled - skipping Google name-based financial search');
+            return {};
+        }
         let page;
         try {
             page = await this.browserFactory.newPage();
@@ -411,20 +474,27 @@ export class FinancialService {
     // =========================================================================
     // HELPER: Website VAT extraction
     // =========================================================================
-    private async scrapeWebsiteForVAT(url: string): Promise<{ vat?: string }> {
+    private async scrapeWebsiteForVatAndPec(url: string): Promise<{ vat?: string; pec?: string } | null> {
         let page;
         try {
             page = await this.browserFactory.newPage();
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-            const vat = await page.evaluate(() => {
+            const signals = await page.evaluate(() => {
                 const text = document.body.innerText;
-                const match = text.match(/(?:P\.?\s*I\.?\s*V\.?\s*A\.?|Partita\s*Iva)[:\s]*(?:IT)?[\s]?(\d{11})/i);
-                return match ? match[1] : null;
+                const vatMatch = text.match(/(?:P\.?\s*I\.?\s*V\.?\s*A\.?|Partita\s*Iva)[:\s]*(?:IT)?[\s]?(\d{11})/i);
+                const pecMatch = text.match(/([a-zA-Z0-9._%+-]+@(?:pec|legalmail|mypec|arubapec|postecert)\.[a-zA-Z0-9.-]+)/i);
+                return {
+                    vat: vatMatch ? vatMatch[1] : null,
+                    pec: pecMatch ? pecMatch[1] : null,
+                };
             });
-            return { vat: vat || undefined };
+            return {
+                vat: signals?.vat || undefined,
+                pec: signals?.pec ? String(signals.pec).toLowerCase() : undefined,
+            };
         } catch (e) {
-            Logger.warn('[Financial] Website VAT scrape failed', { error: e as Error, url });
-            return {};
+            Logger.warn('[Financial] Website VAT/PEC scrape failed', { error: e as Error, url });
+            return null;
         } finally {
             if (page) await this.browserFactory.closePage(page);
         }

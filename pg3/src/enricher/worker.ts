@@ -80,10 +80,16 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
         const discoveryInput = {
             company_name,
             city,
+            zip_code: job.data.zip_code,
+            region: job.data.region,
             address: job.data.address,
             phone: job.data.phone,
             category: job.data.category,
             province: job.data.province,
+            vat_code: job.data.vat_code,
+            pg_url: job.data.pg_url,
+            email: job.data.email,
+            source: job.data.source,
             website: website || undefined,
         };
 
@@ -93,6 +99,8 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             const verification = await discoveryService.verifyUrl(website, discoveryInput);
             const confidence = verification?.confidence ?? 0;
             if (confidence >= minValidWebsiteConfidence) {
+                // Normalize to the final navigated root (scheme matters for http-only sites).
+                website = verification?.final_url || website;
                 Logger.info(`[Worker] ✅ Provided website verified (${confidence.toFixed(2)}): ${company_name} -> ${website}`);
             } else {
                 Logger.warn(`[Worker] ⚠️ Provided website rejected (${confidence.toFixed(2)} < ${minValidWebsiteConfidence}): ${company_name} -> ${website}`);
@@ -122,9 +130,13 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             {
                 company_name,
                 city,
+                vat_code: job.data.vat_code,
+                zip_code: job.data.zip_code,
+                region: job.data.region,
                 address: job.data.address,
                 phone: job.data.phone,
                 category: job.data.category,
+                email: job.data.email,
             },
             website
         );

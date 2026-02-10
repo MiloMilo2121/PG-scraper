@@ -114,12 +114,15 @@ async function main() {
                     { id: 'company_name', title: 'company_name' },
                     { id: 'city', title: 'city' },
                     { id: 'province', title: 'province' },
+                    { id: 'zip_code', title: 'zip_code' },
+                    { id: 'region', title: 'region' },
                     { id: 'address', title: 'address' },
                     { id: 'phone', title: 'phone' },
                     { id: 'website', title: 'website' },
                     { id: 'category', title: 'category' },
                     { id: 'source', title: 'source' },
-                    { id: 'vat_code', title: 'vat_code' }
+                    { id: 'vat_code', title: 'vat_code' },
+                    { id: 'pg_url', title: 'pg_url' }
                 ]
             });
 
@@ -235,19 +238,34 @@ async function scrapePG(
             const items = await page.evaluate((loc, key) => {
                 return Array.from(document.querySelectorAll('.search-itm')).map(item => {
                     const name = item.querySelector('.search-itm__rag')?.textContent?.trim();
-                    const addr = item.querySelector('.search-itm__adr')?.textContent?.trim();
                     const tel = item.querySelector('.search-itm__phone')?.textContent?.trim();
                     const web = item.querySelector('.search-itm__url')?.getAttribute('href');
+                    const pgUrl = (item.querySelector('a.remove_blank_for_app') as HTMLAnchorElement | null)?.href;
+
+                    const adr = item.querySelector('.search-itm__adr') as HTMLElement | null;
+                    const addr = adr?.textContent?.replace(/\s+/g, ' ')?.trim();
+
+                    const region = (adr?.querySelector('div')?.textContent || '').trim() || undefined;
+                    const spans = adr ? Array.from(adr.querySelectorAll('span')).map(s => (s.textContent || '').trim()).filter(Boolean) : [];
+                    const street = spans[0] || '';
+                    const zip = spans[1] || undefined;
+                    const cityName = spans[2] || undefined;
+                    const provMatch = addr ? addr.match(/\(([A-Z]{2})\)/) : null;
+                    const province = provMatch && provMatch[1] ? provMatch[1] : undefined;
 
                     if (!name) return null;
                     return {
                         company_name: name,
-                        city: loc,
-                        address: addr,
+                        city: cityName || loc,
+                        province,
+                        zip_code: zip,
+                        region,
+                        address: addr || (street ? street : undefined),
                         phone: tel,
                         website: web,
                         category: key,
-                        source: 'PG'
+                        source: 'PG',
+                        pg_url: pgUrl
                     } as CompanyInput;
                 }).filter(x => x !== null);
             }, location, keyword);

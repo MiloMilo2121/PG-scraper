@@ -56,10 +56,16 @@ export interface EnrichmentJobData {
     company_name: string;
     city?: string;
     province?: string;
+    zip_code?: string;
+    region?: string;
     address?: string;
     phone?: string;
     website?: string;
     category?: string;
+    source?: string;
+    vat_code?: string;
+    pg_url?: string;
+    email?: string;
     attempt?: number;
 }
 

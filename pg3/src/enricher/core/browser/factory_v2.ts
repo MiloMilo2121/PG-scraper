@@ -171,6 +171,8 @@ export class BrowserFactory {
                         headless: true,
                         timeout: 60000,
                         protocolTimeout: 60000,
+                        // Many small business sites have misconfigured TLS; we still need to scrape/verify them.
+                        acceptInsecureCerts: true,
                         userDataDir: this.userDataDir,
                         executablePath: executablePath,
                         args: [

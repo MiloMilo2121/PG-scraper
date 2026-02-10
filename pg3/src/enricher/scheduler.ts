@@ -44,10 +44,16 @@ interface CSVCompany {
   company_name: string;
   city?: string;
   province?: string;
+  zip_code?: string;
+  region?: string;
   address?: string;
   phone?: string;
   website?: string;
   category?: string;
+  source?: string;
+  vat_code?: string;
+  pg_url?: string;
+  email?: string;
 }
 
 const CsvCompanySchema = z.object({
@@ -55,10 +61,16 @@ const CsvCompanySchema = z.object({
   company_name: z.string().trim().min(1),
   city: z.string().optional(),
   province: z.string().optional(),
+  zip_code: z.string().optional(),
+  region: z.string().optional(),
   address: z.string().optional(),
   phone: z.string().optional(),
   website: z.string().optional(),
   category: z.string().optional(),
+  source: z.string().optional(),
+  vat_code: z.string().optional(),
+  pg_url: z.string().optional(),
+  email: z.string().optional(),
 });
 
 function deterministicCompanyId(company: CSVCompany): string {
@@ -68,7 +80,15 @@ function deterministicCompanyId(company: CSVCompany): string {
 
   return crypto
     .createHash('md5')
-    .update(`${company.company_name}${company.city || ''}`)
+    // Phone is the strongest stable identifier when present. City can be a "hub" city and be wrong.
+    .update(
+      [
+        company.company_name,
+        (company.phone || '').replace(/\D/g, ''),
+        company.city || '',
+        company.address || '',
+      ].join('|')
+    )
     .digest('hex');
 }
 
@@ -91,10 +111,16 @@ function mapCompaniesToJobs(companies: CSVCompany[]): { jobs: EnrichmentJobData[
       company_name: companyName,
       city: c.city?.trim() || undefined,
       province: c.province?.trim() || undefined,
+      zip_code: c.zip_code?.trim() || undefined,
+      region: c.region?.trim() || undefined,
       address: c.address?.trim() || undefined,
       phone: c.phone?.trim() || undefined,
       website: c.website?.trim() || undefined,
       category: c.category?.trim() || undefined,
+      source: c.source?.trim() || undefined,
+      vat_code: c.vat_code?.trim() || undefined,
+      pg_url: c.pg_url?.trim() || undefined,
+      email: c.email?.trim() || undefined,
     });
   }
 
@@ -110,10 +136,16 @@ function mapJobsToDbCompanies(jobs: EnrichmentJobData[]): Company[] {
     company_name: job.company_name,
     city: job.city,
     province: job.province,
+    zip_code: job.zip_code,
+    region: job.region,
     address: job.address,
     phone: job.phone,
     website: job.website,
     category: job.category,
+    source: job.source,
+    vat_code: job.vat_code,
+    pg_url: job.pg_url,
+    email: job.email,
   }));
 }
 

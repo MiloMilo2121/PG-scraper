@@ -11,6 +11,8 @@
 
 import pLimit from 'p-limit';
 import { HTTPRequest, Page } from 'puppeteer';
+import axios from 'axios';
+import * as cheerio from 'cheerio';
 import { BrowserFactory } from '../browser/factory_v2';
 import { GeneticFingerprinter } from '../browser/genetic_fingerprinter';
 import { CompanyInput } from '../../types';
@@ -27,6 +29,7 @@ import { config } from '../../config';
 import { CompanyMatcher } from './company_matcher';
 import { DomainValidator } from '../../utils/domain_validator';
 import { NuclearStrategy } from './nuclear_strategy';
+import { PagineGialleHarvester } from '../directories/paginegialle';
 
 // ============================================================================
 // INTERFACES
@@ -178,7 +181,7 @@ export class UnifiedDiscoveryService {
                 const preCheck = await this.deepVerify(company.website, company);
                 if (preCheck && preCheck.confidence >= THRESHOLDS.MINIMUM_VALID) {
                     const result: DiscoveryResult = {
-                        url: company.website,
+                        url: preCheck.final_url || company.website,
                         status: 'FOUND_VALID',
                         method: 'pre_existing',
                         confidence: preCheck.confidence,
@@ -190,7 +193,7 @@ export class UnifiedDiscoveryService {
                 }
                 if (preCheck && preCheck.confidence >= MIN_INVALID_CONFIDENCE) {
                     bestInvalid = {
-                        url: company.website,
+                        url: preCheck.final_url || company.website,
                         status: 'FOUND_INVALID',
                         method: 'pre_existing',
                         confidence: preCheck.confidence,
@@ -306,7 +309,10 @@ export class UnifiedDiscoveryService {
     // =========================================================================
     private async executeWave1Swarm(company: CompanyInput, threshold: number, maxCandidates: number): Promise<DiscoveryResult | null> {
         const proxyDisabled = process.env.DISABLE_PROXY === 'true';
-        const promises: Array<Promise<Candidate[] | null>> = [this.hyperGuesserAttack(company)];
+        const promises: Array<Promise<Candidate[] | null>> = [
+            this.hyperGuesserAttack(company),
+            this.pagineGiallePhoneAttack(company),
+        ];
 
         if (proxyDisabled) {
             Logger.info('[Wave1] 🛡️ Proxy Disabled: Skipping Google, using Bing + DuckDuckGo');
@@ -362,6 +368,29 @@ export class UnifiedDiscoveryService {
         } catch (e) {
             this.rateLimiter.reportFailure('duckduckgo');
             Logger.warn('[Wave] DuckDuckGo search failed', { error: e as Error, company_name: company.company_name });
+            return null;
+        }
+    }
+
+    private async pagineGiallePhoneAttack(company: CompanyInput): Promise<Candidate[] | null> {
+        if (!company.phone || company.phone.length < 6) return null;
+
+        try {
+            await this.rateLimiter.waitForSlot('paginegialle');
+            const harvest = await PagineGialleHarvester.harvestByPhone(company);
+            this.rateLimiter.reportSuccess('paginegialle');
+            if (!harvest?.officialWebsite) return null;
+
+            return [
+                {
+                    url: harvest.officialWebsite,
+                    source: 'paginegialle_phone',
+                    confidence: 0.9,
+                },
+            ];
+        } catch (e) {
+            this.rateLimiter.reportFailure('paginegialle');
+            Logger.warn('[Wave] PagineGialle phone harvest failed', { error: e as Error, company_name: company.company_name });
             return null;
         }
     }
@@ -589,7 +618,7 @@ export class UnifiedDiscoveryService {
 
             if (verification.confidence >= threshold) {
                 return {
-                    url: nuclear.url,
+                    url: verification.final_url || nuclear.url,
                     status: 'FOUND_VALID',
                     method: `nuclear:${nuclear.method}`,
                     confidence: verification.confidence,
@@ -600,7 +629,7 @@ export class UnifiedDiscoveryService {
 
             if (verification.confidence >= MIN_INVALID_CONFIDENCE) {
                 return {
-                    url: nuclear.url,
+                    url: verification.final_url || nuclear.url,
                     status: 'FOUND_INVALID',
                     method: `nuclear:${nuclear.method}`,
                     confidence: verification.confidence,
@@ -653,8 +682,9 @@ export class UnifiedDiscoveryService {
                 this.validatorLimit(async () => {
                     const result = await this.deepVerify(candidate.url, company);
                     if (!result) return null;
+                    const finalUrl = (result.final_url || candidate.url) as string;
                     return {
-                        url: candidate.url,
+                        url: finalUrl,
                         source: candidate.source,
                         confidence: result.confidence,
                         details: result
@@ -677,7 +707,7 @@ export class UnifiedDiscoveryService {
 
         if (best.confidence >= threshold) {
             return {
-                url: best.url,
+                url: best.details?.final_url || best.url,
                 status: 'FOUND_VALID',
                 method: best.source,
                 confidence: best.confidence,
@@ -688,7 +718,7 @@ export class UnifiedDiscoveryService {
 
         if (best.confidence >= MIN_INVALID_CONFIDENCE) {
             return {
-                url: best.url,
+                url: best.details?.final_url || best.url,
                 status: 'FOUND_INVALID',
                 method: best.source,
                 confidence: best.confidence,
@@ -711,7 +741,8 @@ export class UnifiedDiscoveryService {
 
     private normalizeUrl(rawUrl: string): string | null {
         try {
-            const withProtocol = rawUrl.startsWith('http://') || rawUrl.startsWith('https://') ? rawUrl : `https://${rawUrl}`;
+            const hasProtocol = rawUrl.startsWith('http://') || rawUrl.startsWith('https://');
+            const withProtocol = hasProtocol ? rawUrl : `https://${rawUrl}`;
             const parsed = new URL(withProtocol);
             const hostname = parsed.hostname.replace(/^www\./, '').toLowerCase();
             if (!hostname) return null;
@@ -719,9 +750,33 @@ export class UnifiedDiscoveryService {
                 return null;
             }
             if (parsed.pathname.toLowerCase().endsWith('.pdf')) return null;
-            return `https://${hostname}`;
+            const protocol = parsed.protocol === 'http:' ? 'http' : 'https';
+            return `${protocol}://${hostname}`;
         } catch {
             return null;
+        }
+    }
+
+    private buildNavigationTargets(normalizedRootUrl: string): string[] {
+        try {
+            const parsed = new URL(normalizedRootUrl);
+            const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
+            const preferHttp = parsed.protocol === 'http:';
+
+            const protocols = preferHttp ? ['http', 'https'] : ['https', 'http'];
+            const hosts = [host, `www.${host}`];
+            const targets: string[] = [];
+
+            for (const protocol of protocols) {
+                for (const h of hosts) {
+                    targets.push(`${protocol}://${h}`);
+                }
+            }
+
+            // De-dupe while preserving order.
+            return [...new Set(targets)];
+        } catch {
+            return [normalizedRootUrl];
         }
     }
 
@@ -757,7 +812,28 @@ export class UnifiedDiscoveryService {
 
             // Block unnecessary resources
             await this.setupFastInterception(page);
-            await page.goto(normalizedUrl, { waitUntil: 'domcontentloaded', timeout: 18000 });
+            const navTargets = this.buildNavigationTargets(normalizedUrl);
+            let navigated = false;
+            let lastNavError: unknown = null;
+
+            for (const target of navTargets) {
+                try {
+                    await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 18000 });
+                    navigated = true;
+                    break;
+                } catch (e) {
+                    lastNavError = e;
+                }
+            }
+
+            if (!navigated) {
+                Logger.warn('[DeepVerify] Navigation failed', {
+                    error: lastNavError as Error,
+                    url: normalizedUrl,
+                    company_name: company.company_name,
+                });
+                return null;
+            }
 
             const currentUrl = this.normalizeUrl(page.url()) || normalizedUrl;
             if (ContentFilter.isDirectoryOrSocial(currentUrl)) {
@@ -805,7 +881,7 @@ export class UnifiedDiscoveryService {
 
             const candidateLinks = this.collectEvidenceLinks(extraction.links, currentUrl);
             if (evaluation.confidence < THRESHOLDS.WAVE2_NET && candidateLinks.length > 0) {
-                for (const link of candidateLinks.slice(0, 2)) {
+                for (const link of candidateLinks.slice(0, 4)) {
                     const extraText = await this.fetchSupplementalPageText(page, link);
                     if (extraText) {
                         combinedText += `\n${extraText}`;
@@ -873,7 +949,15 @@ export class UnifiedDiscoveryService {
             page = await this.browserFactory.newPage();
             await this.setupFastInterception(page);
 
-            await page.goto(normalizedUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+            const navTargets = this.buildNavigationTargets(normalizedUrl);
+            for (const target of navTargets) {
+                try {
+                    await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 15000 });
+                    break;
+                } catch {
+                    // try next
+                }
+            }
 
             const extraction = await this.extractPageEvidence(page);
             if (!extraction.text || extraction.text.length < 80) {
@@ -940,18 +1024,41 @@ export class UnifiedDiscoveryService {
         baseUrl: string
     ): string[] {
         try {
-            const baseHost = new URL(baseUrl).hostname.replace(/^www\./, '').toLowerCase();
-            const keywords = ['contatt', 'chi siamo', 'about', 'dove siamo', 'impressum', 'privacy', 'cookie'];
+            const stripWww = (host: string) => host.replace(/^www\./, '').toLowerCase();
+            const baseHost = stripWww(new URL(baseUrl).hostname);
+
+            const textKeywords = ['contatt', 'chi siamo', 'about', 'dove siamo', 'impressum', 'privacy', 'cookie'];
+            const hrefKeywords = [
+                'contatt',
+                'contact',
+                'chi-siamo',
+                'chisiamo',
+                'about',
+                'azienda',
+                'dove-siamo',
+                'dovesiamo',
+                'impressum',
+                'privacy',
+                'cookie',
+                'note-legali',
+                'legal',
+            ];
             const selected = new Set<string>();
 
             for (const link of links) {
-                const normalized = this.normalizeUrl(link.href);
-                if (!normalized) continue;
-                const host = new URL(normalized).hostname.replace(/^www\./, '').toLowerCase();
+                let urlObj: URL;
+                try {
+                    urlObj = new URL(link.href);
+                } catch {
+                    continue;
+                }
+
+                const host = stripWww(urlObj.hostname);
                 if (host !== baseHost) continue;
 
                 const text = (link.text || '').toLowerCase();
-                if (keywords.some((keyword) => text.includes(keyword))) {
+                const hrefPath = `${urlObj.pathname}${urlObj.search}`.toLowerCase();
+                if (textKeywords.some((keyword) => text.includes(keyword)) || hrefKeywords.some((keyword) => hrefPath.includes(keyword))) {
                     selected.add(link.href);
                 }
             }
@@ -1055,6 +1162,11 @@ export class UnifiedDiscoveryService {
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
             await this.acceptGoogleConsentIfPresent(page);
             const html = await page.content();
+            const lower = html.toLowerCase();
+            if (lower.includes('unusual traffic') || lower.includes('traffico insolito') || lower.includes('/sorry/')) {
+                Logger.warn('[ScrapeGoogleDIY] Blocked by CAPTCHA/traffic gate', { query });
+                return [];
+            }
             const results = await GoogleSerpAnalyzer.parseSerp(html);
             return results.map((r: { url: string }) => ({ link: r.url }));
         } catch (e) {
@@ -1066,38 +1178,65 @@ export class UnifiedDiscoveryService {
     }
 
     private async scrapeDDGDIY(query: string): Promise<Array<{ link: string }>> {
-        let page;
         try {
-            page = await this.browserFactory.newPage();
-            const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-            const html = await page.content();
+            const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+            const resp = await axios.get(url, {
+                timeout: 12000,
+                headers: {
+                    'User-Agent':
+                        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+                    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                },
+                maxRedirects: 4,
+                validateStatus: (s) => s >= 200 && s < 400,
+            });
+            const html = typeof resp.data === 'string' ? resp.data : '';
+            const lower = html.toLowerCase();
+            if (
+                lower.includes('bots use duckduckgo too') ||
+                lower.includes('anomaly') ||
+                lower.includes('unusual traffic') ||
+                lower.includes('traffico insolito')
+            ) {
+                Logger.warn('[ScrapeDDGDIY] Blocked by anti-bot gate', { query });
+                return [];
+            }
             const results = DuckDuckGoSerpAnalyzer.parseSerp(html);
             return results.map((r: { url: string }) => ({ link: r.url }));
         } catch (e) {
             Logger.warn('[ScrapeDDGDIY] Failed', { error: e as Error, query });
             return [];
-        } finally {
-            if (page) await this.browserFactory.closePage(page);
         }
     }
 
     private async scrapeBingDIY(query: string): Promise<Array<{ link: string }>> {
-        let page;
         try {
-            page = await this.browserFactory.newPage();
             const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=it&cc=it`;
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-            const results = await page.evaluate(() => {
-                const items = Array.from(document.querySelectorAll<HTMLAnchorElement>('.b_algo h2 a'));
-                return items.slice(0, 10).map((a) => ({ link: a.href }));
+            const resp = await axios.get(url, {
+                timeout: 12000,
+                headers: {
+                    'User-Agent':
+                        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+                    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                },
+                maxRedirects: 4,
+                validateStatus: (s) => s >= 200 && s < 400,
             });
-            return results;
+            const html = typeof resp.data === 'string' ? resp.data : '';
+            const $ = cheerio.load(html);
+            const links: Array<{ link: string }> = [];
+            $('.b_algo h2 a').each((_, el) => {
+                const href = ($(el).attr('href') || '').trim();
+                if (href.startsWith('http')) {
+                    links.push({ link: href });
+                }
+            });
+            return links.slice(0, 10);
         } catch (e) {
             Logger.warn('[ScrapeBingDIY] Failed', { error: e as Error, query });
             return [];
-        } finally {
-            if (page) await this.browserFactory.closePage(page);
         }
     }
 

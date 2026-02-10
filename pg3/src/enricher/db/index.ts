@@ -49,11 +49,16 @@ export function initializeDatabase(): void {
             company_name TEXT NOT NULL,
             city TEXT,
             province TEXT,
+            zip_code TEXT,
+            region TEXT,
             address TEXT,
             phone TEXT,
             website TEXT,
             category TEXT,
             source TEXT DEFAULT 'CSV',
+            vat_code TEXT,
+            pg_url TEXT,
+            email TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
@@ -97,6 +102,24 @@ export function initializeDatabase(): void {
         CREATE INDEX IF NOT EXISTS idx_job_log_status ON job_log(status);
     `);
 
+    // Lightweight migrations for existing DBs (CREATE TABLE IF NOT EXISTS won't add new columns).
+    try {
+        const cols = db.prepare(`PRAGMA table_info(companies)`).all() as Array<{ name: string }>;
+        const names = new Set(cols.map((c) => c.name));
+        const addIfMissing = (name: string, ddl: string) => {
+            if (!names.has(name)) {
+                db.exec(ddl);
+            }
+        };
+        addIfMissing('zip_code', `ALTER TABLE companies ADD COLUMN zip_code TEXT`);
+        addIfMissing('region', `ALTER TABLE companies ADD COLUMN region TEXT`);
+        addIfMissing('vat_code', `ALTER TABLE companies ADD COLUMN vat_code TEXT`);
+        addIfMissing('pg_url', `ALTER TABLE companies ADD COLUMN pg_url TEXT`);
+        addIfMissing('email', `ALTER TABLE companies ADD COLUMN email TEXT`);
+    } catch (e) {
+        Logger.warn('DB migration check failed (continuing)', { error: e as Error });
+    }
+
     schemaInitialized = true;
     initializeStatements();
     Logger.info('✅ Database schema initialized');
@@ -108,10 +131,16 @@ export interface Company {
     company_name: string;
     city?: string;
     province?: string;
+    zip_code?: string;
+    region?: string;
     address?: string;
     phone?: string;
     website?: string;
     category?: string;
+    source?: string;
+    vat_code?: string;
+    pg_url?: string;
+    email?: string;
 }
 
 export interface EnrichmentResult {
@@ -142,8 +171,9 @@ function initializeStatements(): void {
     }
 
     insertCompanyStmt = db.prepare(`
-        INSERT OR REPLACE INTO companies (id, company_name, city, province, address, phone, website, category, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT OR REPLACE INTO companies
+        (id, company_name, city, province, zip_code, region, address, phone, website, category, source, vat_code, pg_url, email, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `);
 
     getCompanyByIdStmt = db.prepare('SELECT * FROM companies WHERE id = ?');
@@ -187,10 +217,16 @@ export function insertCompany(company: Company): void {
         company.company_name,
         company.city,
         company.province,
+        company.zip_code,
+        company.region,
         company.address,
         company.phone,
         company.website,
-        company.category
+        company.category,
+        company.source || 'CSV',
+        company.vat_code,
+        company.pg_url,
+        company.email
     );
 }
 
@@ -198,7 +234,22 @@ export function insertCompanies(companies: Company[]): void {
     ensureReady();
     const insertMany = db.transaction((items: Company[]) => {
         for (const c of items) {
-            insertCompanyStmt.run(c.id, c.company_name, c.city, c.province, c.address, c.phone, c.website, c.category);
+            insertCompanyStmt.run(
+                c.id,
+                c.company_name,
+                c.city,
+                c.province,
+                c.zip_code,
+                c.region,
+                c.address,
+                c.phone,
+                c.website,
+                c.category,
+                c.source || 'CSV',
+                c.vat_code,
+                c.pg_url,
+                c.email
+            );
         }
     });
     insertMany(companies);
