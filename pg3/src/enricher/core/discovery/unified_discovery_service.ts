@@ -971,24 +971,17 @@ export class UnifiedDiscoveryService {
         const navTargets = this.buildNavigationTargets(normalizedUrl);
         for (const target of navTargets) {
             try {
-                const resp = await axios.get(target, {
-                    timeout: 12000,
-                    headers: {
-                        'User-Agent':
-                            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-                        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    },
-                    maxRedirects: 5,
-                    validateStatus: (s) => s >= 200 && s < 400,
-                });
+                const resp = await ScraperClient.fetchHtml(target, { mode: 'auto', timeoutMs: 12000, maxRetries: 1, render: false });
+                if (resp.via === 'direct' && (resp.status < 200 || resp.status >= 400)) {
+                    continue;
+                }
 
                 const html = typeof resp.data === 'string' ? resp.data : '';
                 if (html.length < 200) {
                     continue;
                 }
 
-                const responseUrl = (resp.request?.res?.responseUrl as string | undefined) || target;
+                const responseUrl = resp.finalUrl || target;
                 const currentUrl = this.normalizeUrl(responseUrl) || this.normalizeUrl(target) || normalizedUrl;
                 if (ContentFilter.isDirectoryOrSocial(currentUrl)) {
                     continue;
