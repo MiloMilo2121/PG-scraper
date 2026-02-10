@@ -15,6 +15,8 @@ import { Logger } from '../../utils/logger';
 import { CaptchaSolver } from '../security/captcha_solver';
 import { config } from '../../config';
 import { PagineGialleHarvester } from '../directories/paginegialle';
+import { ScraperClient } from '../../utils/scraper_client';
+import * as cheerio from 'cheerio';
 
 export interface FinancialData {
     vat?: string;
@@ -121,8 +123,8 @@ export class FinancialService {
             }
         }
 
-        // 1D. Google search for VAT (only when proxy is available)
-        if (!validVat && process.env.DISABLE_PROXY !== 'true') {
+        // 1D. Google search for VAT (Scrape.do or proxy-backed; auto-skips when unavailable)
+        if (!validVat) {
             const googleVat = await this.googleSearchForVAT(company);
             if (googleVat) {
                 validVat = googleVat;
@@ -163,7 +165,7 @@ export class FinancialService {
         // PHASE 3: FALLBACK - ReportAziende (Name-based search)
         // =====================================================================
         if (!data.revenue || !data.employees) {
-            const raData = await this.scrapeReportAziende(company.company_name, company.city);
+            const raData = await this.scrapeReportAziende(company.company_name, company.city, validVat);
             if (raData) {
                 if (!data.revenue && raData.revenue) data.revenue = raData.revenue;
                 if (!data.employees && raData.employees) data.employees = raData.employees;
@@ -190,8 +192,8 @@ export class FinancialService {
             }
         }
 
-        // Fallback to Google only when proxy is available (otherwise it's mostly wasted work / blocks).
-        if (!data.pec && process.env.DISABLE_PROXY !== 'true') {
+        // Fallback to Google (via Scrape.do or proxies). Method auto-skips when unavailable.
+        if (!data.pec) {
             data.pec = await this.findPecDIY(company.company_name, company.city) || undefined;
         }
 
@@ -354,101 +356,163 @@ export class FinancialService {
     // NO P.IVA PATH: Google search by name for financials
     // =========================================================================
     private async googleSearchFinancialsByName(company: CompanyInput): Promise<{ revenue?: string; employees?: string }> {
-        if (process.env.DISABLE_PROXY === 'true') {
-            Logger.info('[Financial] 🛡️ Proxy disabled - skipping Google name-based financial search');
+        if (process.env.DISABLE_PROXY === 'true' && !ScraperClient.isScrapeDoEnabled()) {
+            Logger.info('[Financial] 🛡️ Proxy disabled and SCRAPE_DO_TOKEN missing - skipping Google name-based financial search');
             return {};
         }
-        let page;
+
+        const query = `"${company.company_name}" ${company.city || ''} fatturato dipendenti`;
+        const googleUrl = `https://www.google.it/search?q=${encodeURIComponent(query)}&hl=it&gl=it`;
+
         try {
-            page = await this.browserFactory.newPage();
-
-            const query = `"${company.company_name}" ${company.city || ''} fatturato dipendenti`;
-            await page.goto(`https://www.google.it/search?q=${encodeURIComponent(query)}`, {
-                waitUntil: 'domcontentloaded',
-                timeout: 15000
+            const html = await ScraperClient.fetchText(googleUrl, {
+                mode: 'auto',
+                render: true,
+                super: true,
+                timeoutMs: 20000,
+                maxRetries: 1,
             });
 
-            // Extract from SERP snippets first
-            const serpData = await page.evaluate(() => {
-                const text = document.body.innerText;
-                const result: { revenue?: string; employees?: string } = {};
+            const $ = cheerio.load(html);
+            const text = ($('body').text() || '').replace(/\s+/g, ' ');
+            const result: { revenue?: string; employees?: string } = {};
 
-                // Look for revenue in snippets
-                const revMatch = text.match(/fatturato\s*(?:di)?\s*(?:circa)?\s*€?\s*([\d.,]+\s*(?:mln|milioni|mila|euro)?)/i);
-                if (revMatch) result.revenue = `€ ${revMatch[1]}`;
+            const revMatch = text.match(/fatturato\s*(?:di)?\s*(?:circa)?\s*€?\s*([\d.,]+\s*(?:mln|milioni|mila|euro)?)/i);
+            if (revMatch) result.revenue = `€ ${revMatch[1]}`;
 
-                // Look for employees in snippets
-                const empMatch = text.match(/(\d+)\s*dipendenti/i);
-                if (empMatch) result.employees = empMatch[1];
+            const empMatch = text.match(/(\d+)\s*dipendenti/i);
+            if (empMatch) result.employees = empMatch[1];
 
+            if (result.revenue || result.employees) {
                 return result;
-            });
-
-            if (serpData.revenue || serpData.employees) {
-                return serpData;
             }
 
-            // Click through to first relevant result
-            const firstLink = await page.evaluate(() => {
-                const links = Array.from(document.querySelectorAll('#search a'));
-                for (const link of links) {
-                    const href = (link as HTMLAnchorElement).href;
-                    if (href.includes('reportaziende.it') ||
-                        href.includes('aziende.cc') ||
-                        href.includes('finanze-aziende.it')) {
-                        return href;
-                    }
+            // Click-through equivalent: fetch first relevant result link
+            const candidates: string[] = [];
+            $('a').each((_, el) => {
+                let href = ($(el).attr('href') || '').trim();
+                if (!href) return;
+                if (href.startsWith('/url?q=')) {
+                    href = href.split('/url?q=')[1].split('&')[0];
+                    try { href = decodeURIComponent(href); } catch { /* ignore */ }
                 }
-                return null;
+                if (!href.startsWith('http')) return;
+                if (href.includes('reportaziende.it') || href.includes('aziende.cc') || href.includes('finanze-aziende.it')) {
+                    candidates.push(href);
+                }
             });
 
-            if (firstLink) {
-                await page.goto(firstLink, { waitUntil: 'domcontentloaded', timeout: 15000 });
-                return await page.evaluate(() => {
+            if (candidates.length > 0) {
+                const target = candidates[0];
+                const html2 = await ScraperClient.fetchText(target, { mode: 'auto', render: true, super: true, timeoutMs: 20000, maxRetries: 1 });
+                const $2 = cheerio.load(html2);
+                const t2 = ($2('body').text() || '').replace(/\s+/g, ' ');
+
+                const rev2 = t2.match(/fatturato\s*[:\s]*€?\s*([\d.,]+\s*(?:mln|milioni|mila|k|m|€)?)/i);
+                if (rev2) result.revenue = `€ ${rev2[1]}`;
+                const emp2 = t2.match(/dipendenti\s*[:\s]*([\d\-]+)/i);
+                if (emp2) result.employees = emp2[1];
+            }
+
+            return result;
+        } catch (e) {
+            Logger.warn('[Financial] Google name-based financial search failed (Scrape.do/HTTP)', {
+                error: e as Error,
+                company_name: company.company_name,
+            });
+        }
+
+        // Fallback: Puppeteer (only if proxies are enabled).
+        if (process.env.DISABLE_PROXY !== 'true') {
+            let page;
+            try {
+                page = await this.browserFactory.newPage();
+
+                await page.goto(googleUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+
+                // Extract from SERP snippets first
+                const serpData = await page.evaluate(() => {
                     const text = document.body.innerText;
                     const result: { revenue?: string; employees?: string } = {};
 
-                    const revMatch = text.match(/fatturato\s*[:\s]*€?\s*([\d.,]+\s*(?:mln|milioni)?)/i);
+                    // Look for revenue in snippets
+                    const revMatch = text.match(/fatturato\s*(?:di)?\s*(?:circa)?\s*€?\s*([\d.,]+\s*(?:mln|milioni|mila|euro)?)/i);
                     if (revMatch) result.revenue = `€ ${revMatch[1]}`;
 
-                    const empMatch = text.match(/dipendenti\s*[:\s]*([\d\-]+)/i);
+                    // Look for employees in snippets
+                    const empMatch = text.match(/(\d+)\s*dipendenti/i);
                     if (empMatch) result.employees = empMatch[1];
 
                     return result;
                 });
+
+                if (serpData.revenue || serpData.employees) {
+                    return serpData;
+                }
+
+                // Click through to first relevant result
+                const firstLink = await page.evaluate(() => {
+                    const links = Array.from(document.querySelectorAll('#search a'));
+                    for (const link of links) {
+                        const href = (link as HTMLAnchorElement).href;
+                        if (href.includes('reportaziende.it') ||
+                            href.includes('aziende.cc') ||
+                            href.includes('finanze-aziende.it')) {
+                            return href;
+                        }
+                    }
+                    return null;
+                });
+
+                if (firstLink) {
+                    await page.goto(firstLink, { waitUntil: 'domcontentloaded', timeout: 15000 });
+                    return await page.evaluate(() => {
+                        const text = document.body.innerText;
+                        const result: { revenue?: string; employees?: string } = {};
+
+                        const revMatch = text.match(/fatturato\s*[:\s]*€?\s*([\d.,]+\s*(?:mln|milioni)?)/i);
+                        if (revMatch) result.revenue = `€ ${revMatch[1]}`;
+
+                        const empMatch = text.match(/dipendenti\s*[:\s]*([\d\-]+)/i);
+                        if (empMatch) result.employees = empMatch[1];
+
+                        return result;
+                    });
+                }
+
+                return {};
+
+            } catch (e) {
+                Logger.warn('[Financial] Google name-based financial search failed (Puppeteer)', {
+                    error: e as Error,
+                    company_name: company.company_name,
+                });
+                return {};
+            } finally {
+                if (page) await this.browserFactory.closePage(page);
             }
-
-            return {};
-
-        } catch (e) {
-            Logger.warn('[Financial] Google name-based financial search failed', {
-                error: e as Error,
-                company_name: company.company_name,
-            });
-            return {};
-        } finally {
-            if (page) await this.browserFactory.closePage(page);
         }
+
+        return {};
     }
 
     // =========================================================================
     // HELPER: Google search for VAT
     // =========================================================================
     private async googleSearchForVAT(company: CompanyInput): Promise<string | undefined> {
-        let page;
-        try {
-            page = await this.browserFactory.newPage();
-            const query = `"${company.company_name}" ${company.city || ''} "Partita IVA" OR "P.IVA"`;
-            await page.goto(`https://www.google.it/search?q=${encodeURIComponent(query)}`, {
-                waitUntil: 'domcontentloaded',
-                timeout: 15000
-            });
+        if (process.env.DISABLE_PROXY === 'true' && !ScraperClient.isScrapeDoEnabled()) {
+            return undefined;
+        }
 
-            const vat = await page.evaluate(() => {
-                const text = document.body.innerText;
-                const match = text.match(/(?:P\.?\s*I\.?\s*V\.?\s*A\.?|Partita\s*Iva)[:\s]*(?:IT)?[\s]?(\d{11})/i);
-                return match ? match[1] : null;
-            });
+        const query = `"${company.company_name}" ${company.city || ''} "Partita IVA" OR "P.IVA"`;
+        const googleUrl = `https://www.google.it/search?q=${encodeURIComponent(query)}&hl=it&gl=it`;
+
+        try {
+            const html = await ScraperClient.fetchText(googleUrl, { mode: 'auto', render: true, super: true, timeoutMs: 20000, maxRetries: 1 });
+            const $ = cheerio.load(html);
+            const text = ($('body').text() || '').replace(/\s+/g, ' ');
+            const match = text.match(/(?:P\.?\s*I\.?\s*V\.?\s*A\.?|Partita\s*Iva)[:\s]*(?:IT)?[\s]?(\d{11})/i);
+            const vat = match?.[1] || null;
 
             if (vat) {
                 // Validate with VIES
@@ -461,14 +525,37 @@ export class FinancialService {
 
             return undefined;
         } catch (e) {
-            Logger.warn('[Financial] Google VAT search failed', {
-                error: e as Error,
-                company_name: company.company_name,
-            });
-            return undefined;
-        } finally {
-            if (page) await this.browserFactory.closePage(page);
+            Logger.warn('[Financial] Google VAT search failed (Scrape.do/HTTP)', { error: e as Error, company_name: company.company_name });
         }
+
+        // Fallback: Puppeteer (only if proxies are enabled).
+        if (process.env.DISABLE_PROXY !== 'true') {
+            let page;
+            try {
+                page = await this.browserFactory.newPage();
+                await page.goto(googleUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+
+                const vat = await page.evaluate(() => {
+                    const text = document.body.innerText;
+                    const match = text.match(/(?:P\.?\s*I\.?\s*V\.?\s*A\.?|Partita\s*Iva)[:\s]*(?:IT)?[\s]?(\d{11})/i);
+                    return match ? match[1] : null;
+                });
+
+                if (vat) {
+                    const check = await this.vies.validateVat(vat);
+                    if (check.isValid) {
+                        this.viesCache.set(vat, true);
+                        return vat;
+                    }
+                }
+            } catch (e) {
+                Logger.warn('[Financial] Google VAT search failed (Puppeteer)', { error: e as Error, company_name: company.company_name });
+            } finally {
+                if (page) await this.browserFactory.closePage(page);
+            }
+        }
+
+        return undefined;
     }
 
     // =========================================================================
@@ -503,42 +590,99 @@ export class FinancialService {
     // =========================================================================
     // HELPER: ReportAziende (name-based)
     // =========================================================================
-    private async scrapeReportAziende(name: string, city?: string): Promise<{ revenue?: string; employees?: string } | null> {
-        let page;
-        try {
-            page = await this.browserFactory.newPage();
-            const q = city ? `${name} ${city}` : name;
-            await page.goto(`https://www.reportaziende.it/cerca?q=${encodeURIComponent(q)}`, {
-                waitUntil: 'domcontentloaded',
-                timeout: 15000
-            });
+    private async scrapeReportAziende(
+        name: string,
+        city?: string,
+        vat?: string
+    ): Promise<{ revenue?: string; employees?: string } | null> {
+        const vatDigits = (vat || '').replace(/\D/g, '');
+        const q = vatDigits && /^\d{11}$/.test(vatDigits) ? vatDigits : (city ? `${name} ${city}` : name);
+        const searchUrl = `https://www.reportaziende.it/cerca?q=${encodeURIComponent(q)}`;
 
-            // Click first result
-            const first = await page.$('.risultato-titolo a, .company-title a');
-            if (first) {
-                await Promise.all([
-                    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => null),
-                    first.click()
-                ]);
+        try {
+            const firstTry = await ScraperClient.fetchHtml(searchUrl, { mode: 'auto', render: false, maxRetries: 1 });
+            let companyUrl = this.extractFirstReportAziendeResultUrl(firstTry.data);
+
+            // Some pages are JS-heavy or protected; try a rendered request via Scrape.do if available.
+            if (!companyUrl && ScraperClient.isScrapeDoEnabled()) {
+                const rendered = await ScraperClient.fetchHtml(searchUrl, {
+                    mode: 'scrape_do',
+                    render: true,
+                    super: true,
+                    maxRetries: 1,
+                });
+                companyUrl = this.extractFirstReportAziendeResultUrl(rendered.data);
             }
 
-            return await page.evaluate(() => {
-                const text = document.body.innerText;
-                const r: any = {};
+            if (!companyUrl) return null;
 
-                const revMatch = text.match(/fatturato\s*(?:\(\d{4}\))?\s*[:\.]?\s*€?\s*([\d.,]+(?:\s*(?:mila|mln|milioni|k|m|€))?)/i);
-                if (revMatch) r.revenue = '€ ' + revMatch[1];
+            const detail = await ScraperClient.fetchHtml(companyUrl, { mode: 'auto', render: false, maxRetries: 1 });
+            const $ = cheerio.load(detail.data);
+            const text = ($('body').text() || '').replace(/\s+/g, ' ').trim();
 
-                const empMatch = text.match(/dipendenti\s*(?:\(\d{4}\))?\s*[:\.]?\s*(\d+(?:-\d+)?)/i);
-                if (empMatch) r.employees = empMatch[1];
+            const r: any = {};
+            const revMatch = text.match(
+                /fatturato\s*(?:\(\d{4}\))?\s*[:\.]?\s*€?\s*([\d.,]+(?:\s*(?:mila|mln|milioni|k|m|€))?)/i
+            );
+            if (revMatch) r.revenue = '€ ' + revMatch[1];
 
-                return (r.revenue || r.employees) ? r : null;
-            });
+            const empMatch = text.match(/dipendenti\s*(?:\(\d{4}\))?\s*[:\.]?\s*(\d+(?:-\d+)?)/i);
+            if (empMatch) r.employees = empMatch[1];
+
+            return (r.revenue || r.employees) ? r : null;
         } catch (e) {
-            Logger.warn('[Financial] ReportAziende scrape failed', { error: e as Error, company_name: name, city });
+            Logger.warn('[Financial] ReportAziende scrape failed', { error: e as Error, company_name: name, city, vat });
             return null;
-        } finally {
-            if (page) await this.browserFactory.closePage(page);
+        }
+    }
+
+    private extractFirstReportAziendeResultUrl(html: string): string | null {
+        try {
+            const $ = cheerio.load(html);
+            const base = 'https://www.reportaziende.it';
+
+            const candidates: string[] = [];
+            const pushHref = (href?: string | null) => {
+                const raw = (href || '').trim();
+                if (!raw) return;
+                if (raw.startsWith('javascript:') || raw.startsWith('#')) return;
+                const absolute = raw.startsWith('http') ? raw : new URL(raw, base).toString();
+                try {
+                    const u = new URL(absolute);
+                    const host = u.hostname.replace(/^www\./, '').toLowerCase();
+                    if (host !== 'reportaziende.it') return;
+                    const path = u.pathname.toLowerCase();
+                    if (path === '/' || path.startsWith('/cerca') || path.includes('privacy') || path.includes('cookie')) return;
+                    candidates.push(u.toString());
+                } catch {
+                    return;
+                }
+            };
+
+            // Preferred selectors (legacy)
+            pushHref($('.risultato-titolo a').first().attr('href'));
+            pushHref($('.company-title a').first().attr('href'));
+
+            // Pattern-based fallback
+            const patternSelectors = [
+                'a[href*="/azienda"]',
+                'a[href*="/impresa"]',
+                'a[href*="/scheda"]',
+                'a[href*="/dettaglio"]',
+            ];
+            for (const sel of patternSelectors) {
+                if (candidates.length > 0) break;
+                $(sel).slice(0, 8).each((_, el) => pushHref($(el).attr('href')));
+            }
+
+            // Last resort: first internal link that looks like a company page.
+            if (candidates.length === 0) {
+                $('a[href]').slice(0, 80).each((_, el) => pushHref($(el).attr('href')));
+            }
+
+            return candidates[0] || null;
+        } catch {
+            return null;
         }
     }
 
@@ -580,26 +724,57 @@ export class FinancialService {
     // HELPER: PEC discovery
     // =========================================================================
     private async findPecDIY(name: string, city?: string): Promise<string | null> {
-        let page;
-        try {
-            page = await this.browserFactory.newPage();
-            await page.goto(`https://www.google.it/search?q=${encodeURIComponent(name + ' PEC ' + (city || ''))}`, {
-                waitUntil: 'domcontentloaded',
-                timeout: 10000
-            });
-
-            const pec = await page.evaluate(() => {
-                const text = document.body.innerText;
-                const match = text.match(/([a-zA-Z0-9._%+-]+@(?:pec|legalmail|mypec|arubapec|postecert)\.[a-zA-Z0-9.-]+)/i);
-                return match ? match[0].toLowerCase() : null;
-            });
-
-            return pec;
-        } catch (e) {
-            Logger.warn('[Financial] PEC search failed', { error: e as Error, company_name: name, city });
+        // If proxies are disabled and Scrape.do isn't configured, Google is almost always blocked.
+        if (process.env.DISABLE_PROXY === 'true' && !ScraperClient.isScrapeDoEnabled()) {
             return null;
-        } finally {
-            if (page) await this.browserFactory.closePage(page);
         }
+
+        const query = `${name} PEC ${city || ''}`.trim();
+        const googleUrl = `https://www.google.it/search?q=${encodeURIComponent(query)}&hl=it&gl=it`;
+
+        try {
+            const html = await ScraperClient.fetchText(googleUrl, {
+                mode: 'auto',
+                render: true,
+                super: true,
+                timeoutMs: 20000,
+                maxRetries: 1,
+            });
+
+            const $ = cheerio.load(html);
+            const text = ($('body').text() || '').replace(/\s+/g, ' ');
+            const match = text.match(/([a-zA-Z0-9._%+-]+@(?:pec|legalmail|mypec|arubapec|postecert)\.[a-zA-Z0-9.-]+)/i);
+            return match ? match[1].toLowerCase() : null;
+        } catch (e) {
+            Logger.warn('[Financial] PEC search failed (Scrape.do/HTTP)', { error: e as Error, company_name: name, city });
+        } finally {
+            // no browser resources
+        }
+
+        // Fallback: Puppeteer-based Google search when proxies are enabled.
+        if (process.env.DISABLE_PROXY !== 'true') {
+            let page;
+            try {
+                page = await this.browserFactory.newPage();
+                await page.goto(googleUrl, {
+                    waitUntil: 'domcontentloaded',
+                    timeout: 10000
+                });
+
+                const pec = await page.evaluate(() => {
+                    const text = document.body.innerText;
+                    const match = text.match(/([a-zA-Z0-9._%+-]+@(?:pec|legalmail|mypec|arubapec|postecert)\.[a-zA-Z0-9.-]+)/i);
+                    return match ? match[0].toLowerCase() : null;
+                });
+
+                return pec;
+            } catch (e) {
+                Logger.warn('[Financial] PEC search failed (Puppeteer)', { error: e as Error, company_name: name, city });
+            } finally {
+                if (page) await this.browserFactory.closePage(page);
+            }
+        }
+
+        return null;
     }
 }

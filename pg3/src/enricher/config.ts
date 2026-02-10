@@ -13,6 +13,16 @@ const EnvSchema = z.object({
   REDIS_PORT: z.string().optional(),
   REDIS_PASSWORD: z.string().optional(),
 
+  // Scrape.do (optional gateway for anti-bot / SERP / registries)
+  SCRAPE_DO_TOKEN: z.string().trim().min(1).optional(),
+  SCRAPE_DO_API_URL: z.string().trim().min(1).optional(),
+  SCRAPE_DO_PROXY_HOST: z.string().trim().min(1).optional(),
+  SCRAPE_DO_GEO_CODE: z.string().trim().min(1).optional(),
+  SCRAPE_DO_SUPER: z.string().optional(),
+  SCRAPE_DO_RENDER_DEFAULT: z.string().optional(),
+  SCRAPE_DO_TIMEOUT_MS: z.string().optional(),
+  SCRAPE_DO_ENFORCE: z.string().optional(),
+
   LLM_MODEL: z.string().default('gpt-4o'),
   AI_MODEL_FAST: z.string().default('gpt-4o-mini'),
   AI_MODEL_SMART: z.string().default('gpt-4o'),
@@ -201,6 +211,16 @@ function loadConfig() {
     proxy: {
       failureCooldownMs: parseInteger(env.PROXY_FAILURE_COOLDOWN_MS, 5 * 60 * 1000, 'PROXY_FAILURE_COOLDOWN_MS', { min: 1000 }),
     },
+    scrapeDo: {
+      token: env.SCRAPE_DO_TOKEN,
+      apiUrl: env.SCRAPE_DO_API_URL || 'https://api.scrape.do',
+      proxyHost: env.SCRAPE_DO_PROXY_HOST || 'proxy.scrape.do:8080',
+      geoCode: (env.SCRAPE_DO_GEO_CODE || 'it').toLowerCase(),
+      super: (env.SCRAPE_DO_SUPER || '').toLowerCase() === 'true',
+      renderDefault: (env.SCRAPE_DO_RENDER_DEFAULT || '').toLowerCase() === 'true',
+      timeoutMs: parseInteger(env.SCRAPE_DO_TIMEOUT_MS, 20000, 'SCRAPE_DO_TIMEOUT_MS', { min: 1000, max: 120000 }),
+      enforce: (env.SCRAPE_DO_ENFORCE || '').toLowerCase() === 'true',
+    },
     captcha: {
       maxAttempts: parseInteger(env.CAPTCHA_MAX_ATTEMPTS, 30, 'CAPTCHA_MAX_ATTEMPTS', { min: 1, max: 300 }),
     },
@@ -218,6 +238,10 @@ function loadConfig() {
 
   if (config.browser.mode === 'remote' && !config.browser.remoteEndpoint) {
     throw new Error('REMOTE_BROWSER_ENDPOINT is required when BROWSER_MODE=remote');
+  }
+
+  if (config.scrapeDo.enforce && !config.scrapeDo.token) {
+    throw new Error('SCRAPE_DO_TOKEN is required when SCRAPE_DO_ENFORCE=true');
   }
 
   return config;
