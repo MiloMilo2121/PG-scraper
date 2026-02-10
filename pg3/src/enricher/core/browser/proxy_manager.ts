@@ -49,9 +49,14 @@ export class ProxyManager {
     private readonly failureCooldownMs: number;
 
     private constructor() {
-        this.residentialProxy = PROXY_RESIDENTIAL_URL;
-        this.datacenterProxy = PROXY_DATACENTER_URL;
+        const disabled = process.env.DISABLE_PROXY === 'true';
+        this.residentialProxy = disabled ? undefined : PROXY_RESIDENTIAL_URL;
+        this.datacenterProxy = disabled ? undefined : PROXY_DATACENTER_URL;
         this.failureCooldownMs = config.proxy.failureCooldownMs;
+
+        if (disabled) {
+            Logger.info('🛡️ DISABLE_PROXY=true - proxy routing disabled');
+        }
 
         if (this.residentialProxy) {
             Logger.info('🏠 Residential proxy configured');
@@ -75,6 +80,9 @@ export class ProxyManager {
      * 🎯 Get appropriate proxy tier for a URL
      */
     public getTierForUrl(url: string): ProxyTier {
+        if (process.env.DISABLE_PROXY === 'true') {
+            return ProxyTier.DIRECT;
+        }
         try {
             const hostname = new URL(url).hostname.toLowerCase();
 
