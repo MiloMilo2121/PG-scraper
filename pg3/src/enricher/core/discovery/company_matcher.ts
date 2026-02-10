@@ -268,8 +268,27 @@ export class CompanyMatcher {
   }
 
   private static extractVatNumbers(text: string): string[] {
-    const matches = text.match(/\b\d{11}\b/g) || [];
-    return [...new Set(matches)];
+    const results = new Set<string>();
+
+    // Pattern 1: Standalone 11-digit numbers
+    const standalone = text.match(/\b\d{11}\b/g) || [];
+    standalone.forEach(m => results.add(m));
+
+    // Pattern 2: P.IVA / Partita IVA followed by IT prefix + 11 digits
+    const labeled = text.match(/(?:P\.?\s*I\.?\s*V\.?\s*A\.?|Partita\s*Iva|C\.?\s*F\.?\s*(?:\/|\s*e\s*)\s*P\.?\s*I\.?\s*V\.?\s*A\.?)[:\s]*(?:IT)?[\s]?(\d{11})/gi) || [];
+    for (const match of labeled) {
+      const digits = match.match(/(\d{11})/);
+      if (digits) results.add(digits[1]);
+    }
+
+    // Pattern 3: IT prefix followed by 11 digits (common in structured data)
+    const itPrefixed = text.match(/\bIT\s?(\d{11})\b/g) || [];
+    for (const match of itPrefixed) {
+      const digits = match.match(/(\d{11})/);
+      if (digits) results.add(digits[1]);
+    }
+
+    return [...results];
   }
 
   private static extractPhones(text: string): string[] {

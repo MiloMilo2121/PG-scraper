@@ -116,7 +116,7 @@ export class FinancialService {
                 // If PG email looks like a PEC, keep it.
                 if (!data.pec && pg?.email) {
                     const maybe = pg.email.toLowerCase();
-                    if (maybe.includes('@pec.') || maybe.includes('legalmail') || maybe.includes('arubapec') || maybe.includes('postecert')) {
+                    if (maybe.includes('@pec.') || maybe.includes('legalmail') || maybe.includes('arubapec') || maybe.includes('postecert') || maybe.includes('registerpec') || maybe.includes('sicurezzapostale') || maybe.includes('pecspeciale') || maybe.includes('cert.') || maybe.includes('cgn.')) {
                         data.pec = maybe;
                     }
                 }
@@ -203,32 +203,60 @@ export class FinancialService {
 
     // =========================================================================
     // P.IVA PATH: Direct UfficioCamerale with CaptchaSolver
+    // Now uses direct URL construction + Scrape.do fallback when proxy disabled
     // =========================================================================
     private async scrapeUfficioCameraleDirect(vat: string): Promise<{ revenue?: string; employees?: string }> {
-        if (process.env.DISABLE_PROXY === 'true') {
-            Logger.info('[Financial] 🛡️ Proxy disabled - skipping Google-based registry lookup');
+        // Try direct HTTP-based registry scraping first (works with Scrape.do even without proxy)
+        const directUrls = [
+            `https://www.ufficiocamerale.it/p-iva/IT${vat}`,
+            `https://www.ufficiocamerale.it/p-iva/${vat}`,
+            `https://www.informazione-aziende.it/Azienda_Partita-IVA-${vat}`,
+        ];
+
+        for (const directUrl of directUrls) {
+            try {
+                const resp = await ScraperClient.fetchHtml(directUrl, { mode: 'auto', render: false, maxRetries: 1, timeoutMs: 15000 });
+                const body = typeof resp.data === 'string' ? resp.data : '';
+                if (body.length < 500) continue;
+
+                const extracted = this.extractFinancialFromHtml(body);
+                if (extracted.revenue || extracted.employees) {
+                    Logger.info(`[Financial] Direct registry hit: ${directUrl}`);
+                    return extracted;
+                }
+            } catch {
+                // Try next URL
+            }
+        }
+
+        // Fallback: Google-based search (requires proxy or Scrape.do)
+        if (process.env.DISABLE_PROXY === 'true' && !ScraperClient.isScrapeDoEnabled()) {
+            Logger.info('[Financial] Proxy disabled and no Scrape.do - direct URLs exhausted for registry lookup');
             return {};
         }
+
         let page;
         try {
             page = await this.browserFactory.newPage();
 
-            // Step 1: Google search for the specific VAT on UfficioCamerale
-            const googleQuery = `piva ${vat} site:ufficiocamerale.it OR site:registroimprese.it OR site:informazione-aziende.it`;
+            const googleQuery = `"${vat}" site:ufficiocamerale.it OR site:registroimprese.it OR site:informazione-aziende.it`;
             await page.goto(`https://www.google.it/search?q=${encodeURIComponent(googleQuery)}`, {
                 waitUntil: 'domcontentloaded',
                 timeout: 15000
             });
 
-            // Find first result link
             const firstLink = await page.evaluate(() => {
-                const links = Array.from(document.querySelectorAll('#search a'));
-                for (const link of links) {
-                    const href = (link as HTMLAnchorElement).href;
-                    if (href.includes('ufficiocamerale.it') ||
-                        href.includes('registroimprese.it') ||
-                        href.includes('informazione-aziende.it')) {
-                        return href;
+                // Try multiple selector patterns for Google results
+                const selectors = ['#search a', '.g a', 'a[href*="ufficiocamerale"]', 'a[href*="registroimprese"]', 'a[href*="informazione-aziende"]'];
+                for (const sel of selectors) {
+                    const links = Array.from(document.querySelectorAll(sel));
+                    for (const link of links) {
+                        const href = (link as HTMLAnchorElement).href;
+                        if (href.includes('ufficiocamerale.it') ||
+                            href.includes('registroimprese.it') ||
+                            href.includes('informazione-aziende.it')) {
+                            return href;
+                        }
                     }
                 }
                 return null;
@@ -239,39 +267,35 @@ export class FinancialService {
                 return {};
             }
 
-            // Step 2: Navigate to registry page
             await page.goto(firstLink, { waitUntil: 'domcontentloaded', timeout: 20000 });
 
-            // Step 3: Check for CAPTCHA and solve if needed
             const hasCaptcha = await page.evaluate(() => {
                 const text = document.body.innerText.toLowerCase();
                 return text.includes('captcha') || text.includes('verifica') || text.includes('robot');
             });
 
             if (hasCaptcha) {
-                Logger.info(`[Financial] 🔐 CAPTCHA detected! Calling neutralizeGatekeeper...`);
+                Logger.info(`[Financial] CAPTCHA detected! Calling neutralizeGatekeeper...`);
                 const solved = await CaptchaSolver.neutralizeGatekeeper(page);
                 if (!solved) {
-                    Logger.warn(`[Financial] ❌ CAPTCHA solving failed`);
+                    Logger.warn(`[Financial] CAPTCHA solving failed`);
                     return {};
                 }
-                // Prefer deterministic wait after CAPTCHA; fallback to short delay.
                 await Promise.race([
                     page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => null),
                     new Promise((resolve) => setTimeout(resolve, 3000)),
                 ]);
             }
 
-            // Step 4: Extract financial data
             return await page.evaluate(() => {
                 const text = document.body.innerText;
                 const result: { revenue?: string; employees?: string } = {};
 
-                // Revenue patterns
                 const revenuePatterns = [
-                    /fatturato\s*(?:\d{4})?\s*[:\s]*€?\s*([\d.,]+\s*(?:mln|milioni|mila|k|M|€)?)/i,
-                    /ricavi\s*[:\s]*€?\s*([\d.,]+\s*(?:mln|milioni|mila|k|M|€)?)/i,
-                    /volume\s*d['']affari\s*[:\s]*€?\s*([\d.,]+\s*(?:mln|milioni|mila|k|M|€)?)/i
+                    /fatturato\s*(?:\(?\d{4}\)?)?\s*[:\s]*€?\s*([\d.,]+\s*(?:mln|milioni|mila|k|M|€)?)/i,
+                    /ricavi\s*(?:\(?\d{4}\)?)?\s*[:\s]*€?\s*([\d.,]+\s*(?:mln|milioni|mila|k|M|€)?)/i,
+                    /volume\s*d['']affari\s*[:\s]*€?\s*([\d.,]+\s*(?:mln|milioni|mila|k|M|€)?)/i,
+                    /valore\s*della\s*produzione\s*[:\s]*€?\s*([\d.,]+\s*(?:mln|milioni|mila|k|M|€)?)/i,
                 ];
 
                 for (const pattern of revenuePatterns) {
@@ -282,11 +306,11 @@ export class FinancialService {
                     }
                 }
 
-                // Employees patterns
                 const employeePatterns = [
-                    /(?:dipendenti|numero\s*dipendenti)\s*[:\s]*([\d\-\.]+)/i,
-                    /organico\s*[:\s]*([\d\-\.]+)/i,
-                    /addetti\s*[:\s]*([\d\-\.]+)/i
+                    /(?:dipendenti|numero\s*dipendenti)\s*(?:\(?\d{4}\)?)?\s*[:\s]*([\d\-\.]+)/i,
+                    /organico\s*(?:\(?\d{4}\)?)?\s*[:\s]*([\d\-\.]+)/i,
+                    /addetti\s*(?:\(?\d{4}\)?)?\s*[:\s]*([\d\-\.]+)/i,
+                    /collaboratori\s*[:\s]*([\d\-\.]+)/i,
                 ];
 
                 for (const pattern of employeePatterns) {
@@ -308,22 +332,73 @@ export class FinancialService {
         }
     }
 
+    private extractFinancialFromHtml(html: string): { revenue?: string; employees?: string } {
+        const $ = cheerio.load(html);
+        const text = ($('body').text() || '').replace(/\s+/g, ' ').trim();
+        const result: { revenue?: string; employees?: string } = {};
+
+        const revenuePatterns = [
+            /fatturato\s*(?:\(?\d{4}\)?)?\s*[:\.\s]*€?\s*([\d.,]+\s*(?:mln|milioni|mila|k|M|€)?)/i,
+            /ricavi\s*(?:\(?\d{4}\)?)?\s*[:\.\s]*€?\s*([\d.,]+\s*(?:mln|milioni|mila|k|M|€)?)/i,
+            /volume\s*d['']affari\s*[:\s]*€?\s*([\d.,]+\s*(?:mln|milioni|mila|k|M|€)?)/i,
+            /valore\s*della\s*produzione\s*[:\s]*€?\s*([\d.,]+\s*(?:mln|milioni|mila|k|M|€)?)/i,
+        ];
+        for (const pattern of revenuePatterns) {
+            const match = text.match(pattern);
+            if (match) { result.revenue = `€ ${match[1]}`; break; }
+        }
+
+        const employeePatterns = [
+            /(?:dipendenti|numero\s*dipendenti)\s*(?:\(?\d{4}\)?)?\s*[:\.\s]*([\d\-\.]+)/i,
+            /organico\s*(?:\(?\d{4}\)?)?\s*[:\.\s]*([\d\-\.]+)/i,
+            /addetti\s*(?:\(?\d{4}\)?)?\s*[:\.\s]*([\d\-\.]+)/i,
+        ];
+        for (const pattern of employeePatterns) {
+            const match = text.match(pattern);
+            if (match) { result.employees = match[1]; break; }
+        }
+
+        return result;
+    }
+
     // =========================================================================
-    // P.IVA PATH: Secondary registries
+    // P.IVA PATH: Secondary registries (HTTP-first, browser fallback)
     // =========================================================================
     private async scrapeSecondaryRegistries(vat: string): Promise<{ revenue?: string; employees?: string }> {
+        // Try direct HTTP scraping first (faster, works without proxy via Scrape.do)
+        const directUrls = [
+            `https://www.informazione-aziende.it/Azienda_Partita-IVA-${vat}`,
+            `https://www.informazione-aziende.it/Ricerca_Aziende?q=${vat}`,
+            `https://www.reportaziende.it/${vat}`,
+        ];
+
+        for (const url of directUrls) {
+            try {
+                const resp = await ScraperClient.fetchHtml(url, { mode: 'auto', render: false, maxRetries: 1, timeoutMs: 12000 });
+                const body = typeof resp.data === 'string' ? resp.data : '';
+                if (body.length < 300) continue;
+                const extracted = this.extractFinancialFromHtml(body);
+                if (extracted.revenue || extracted.employees) {
+                    Logger.info(`[Financial] Secondary registry hit: ${url}`);
+                    return extracted;
+                }
+            } catch {
+                continue;
+            }
+        }
+
+        // Browser fallback (only if proxy enabled)
+        if (process.env.DISABLE_PROXY === 'true') return {};
+
         let page;
         try {
             page = await this.browserFactory.newPage();
-
-            // Try informazione-aziende.it directly
-            await page.goto(`https://www.informazione-aziende.it/search?q=${vat}`, {
+            await page.goto(`https://www.informazione-aziende.it/Ricerca_Aziende?q=${vat}`, {
                 waitUntil: 'domcontentloaded',
                 timeout: 15000
             });
 
-            // Click first result if exists
-            const firstResult = await page.$('.search-result a, .company-link');
+            const firstResult = await page.$('a[href*="/Azienda_"], a[href*="/impresa"], .search-result a, .company-link');
             if (firstResult) {
                 await Promise.all([
                     page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => null),
@@ -335,10 +410,10 @@ export class FinancialService {
                 const text = document.body.innerText;
                 const result: { revenue?: string; employees?: string } = {};
 
-                const revMatch = text.match(/fatturato\s*[:\s]*€?\s*([\d.,]+\s*(?:mln|milioni|mila|k|M)?)/i);
+                const revMatch = text.match(/fatturato\s*(?:\(?\d{4}\)?)?\s*[:\s]*€?\s*([\d.,]+\s*(?:mln|milioni|mila|k|M)?)/i);
                 if (revMatch) result.revenue = `€ ${revMatch[1]}`;
 
-                const empMatch = text.match(/dipendenti\s*[:\s]*([\d\-]+)/i);
+                const empMatch = text.match(/(?:dipendenti|addetti|organico)\s*(?:\(?\d{4}\)?)?\s*[:\s]*([\d\-]+)/i);
                 if (empMatch) result.employees = empMatch[1];
 
                 return result;
@@ -559,25 +634,64 @@ export class FinancialService {
     }
 
     // =========================================================================
-    // HELPER: Website VAT extraction
+    // HELPER: Website VAT extraction - checks homepage + subpages (privacy, contatti, footer links)
     // =========================================================================
     private async scrapeWebsiteForVatAndPec(url: string): Promise<{ vat?: string; pec?: string } | null> {
         let page;
         try {
             page = await this.browserFactory.newPage();
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-            const signals = await page.evaluate(() => {
-                const text = document.body.innerText;
-                const vatMatch = text.match(/(?:P\.?\s*I\.?\s*V\.?\s*A\.?|Partita\s*Iva)[:\s]*(?:IT)?[\s]?(\d{11})/i);
-                const pecMatch = text.match(/([a-zA-Z0-9._%+-]+@(?:pec|legalmail|mypec|arubapec|postecert)\.[a-zA-Z0-9.-]+)/i);
-                return {
-                    vat: vatMatch ? vatMatch[1] : null,
-                    pec: pecMatch ? pecMatch[1] : null,
-                };
-            });
+
+            // Extract from homepage first
+            let signals = await this.extractVatPecFromPage(page);
+            if (signals.vat && signals.pec) {
+                return { vat: signals.vat, pec: signals.pec };
+            }
+
+            // If not found on homepage, check footer links and subpages
+            const subpageUrls = await page.evaluate((baseUrl: string) => {
+                const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a'));
+                const targets: string[] = [];
+                const seen = new Set<string>();
+                let baseHost: string;
+                try { baseHost = new URL(baseUrl).hostname.replace(/^www\./, '').toLowerCase(); } catch { return []; }
+
+                const keywords = ['privacy', 'contatt', 'contact', 'note-legali', 'legal', 'chi-siamo', 'chisiamo', 'about', 'impressum', 'cookie'];
+                for (const link of links) {
+                    const href = link.href;
+                    if (!href || !href.startsWith('http')) continue;
+                    try {
+                        const host = new URL(href).hostname.replace(/^www\./, '').toLowerCase();
+                        if (host !== baseHost) continue;
+                    } catch { continue; }
+
+                    const hrefLower = href.toLowerCase();
+                    const textLower = (link.textContent || '').toLowerCase();
+                    if (keywords.some(kw => hrefLower.includes(kw) || textLower.includes(kw))) {
+                        if (!seen.has(href)) {
+                            seen.add(href);
+                            targets.push(href);
+                        }
+                    }
+                }
+                return targets.slice(0, 4);
+            }, url);
+
+            for (const subUrl of subpageUrls) {
+                try {
+                    await page.goto(subUrl, { waitUntil: 'domcontentloaded', timeout: 10000 });
+                    const subSignals = await this.extractVatPecFromPage(page);
+                    if (!signals.vat && subSignals.vat) signals.vat = subSignals.vat;
+                    if (!signals.pec && subSignals.pec) signals.pec = subSignals.pec;
+                    if (signals.vat && signals.pec) break;
+                } catch {
+                    continue;
+                }
+            }
+
             return {
-                vat: signals?.vat || undefined,
-                pec: signals?.pec ? String(signals.pec).toLowerCase() : undefined,
+                vat: signals.vat || undefined,
+                pec: signals.pec || undefined,
             };
         } catch (e) {
             Logger.warn('[Financial] Website VAT/PEC scrape failed', { error: e as Error, url });
@@ -585,6 +699,56 @@ export class FinancialService {
         } finally {
             if (page) await this.browserFactory.closePage(page);
         }
+    }
+
+    private async extractVatPecFromPage(page: any): Promise<{ vat: string | null; pec: string | null }> {
+        return page.evaluate(() => {
+            const text = document.body?.innerText || '';
+            const html = document.body?.innerHTML || '';
+
+            // VAT patterns - multiple Italian formats
+            const vatPatterns = [
+                /(?:P\.?\s*I\.?\s*V\.?\s*A\.?|Partita\s*Iva|partita\s*iva)[:\s]*(?:IT)?[\s]?(\d{11})/i,
+                /(?:C\.?\s*F\.?\s*(?:\/|\s*e\s*)\s*P\.?\s*I\.?\s*V\.?\s*A\.?)[:\s]*(?:IT)?[\s]?(\d{11})/i,
+                /(?:Cod\.?\s*Fisc\.?\s*(?:\/|\s*e\s*)\s*P\.?\s*IVA)[:\s]*(?:IT)?[\s]?(\d{11})/i,
+                /IT\s?(\d{11})\b/,
+            ];
+
+            let vat: string | null = null;
+            for (const pattern of vatPatterns) {
+                const match = text.match(pattern);
+                if (match?.[1]) { vat = match[1]; break; }
+            }
+
+            // Also try footer/bottom area specifically for VAT (common Italian pattern)
+            if (!vat) {
+                // Check last 2000 chars of text (usually footer)
+                const footerText = text.slice(-2000);
+                for (const pattern of vatPatterns) {
+                    const match = footerText.match(pattern);
+                    if (match?.[1]) { vat = match[1]; break; }
+                }
+            }
+
+            // Also try HTML for hidden/structured VAT data
+            if (!vat) {
+                const htmlVatMatch = html.match(/(?:vatID|taxID|partita.?iva)["'\s:]*(?:IT)?["'\s:]*(\d{11})/i);
+                if (htmlVatMatch?.[1]) vat = htmlVatMatch[1];
+            }
+
+            // PEC patterns - comprehensive Italian PEC provider list
+            const pecPattern = /([a-zA-Z0-9._%+\-]+@(?:pec\.[a-zA-Z0-9.\-]+|[a-zA-Z0-9.\-]*(?:legalmail|arubapec|postecert|mypec|registerpec|sicurezzapostale|pecspeciale|cert\.legalmail|cgn\.legalmail|pec\.it|pec\.buffetti)\.[a-zA-Z]{2,}))/i;
+            const pecMatch = text.match(pecPattern);
+            let pec: string | null = pecMatch ? pecMatch[1].toLowerCase() : null;
+
+            // Also check for PEC in HTML (meta tags, structured data)
+            if (!pec) {
+                const htmlPecMatch = html.match(/(?:pec|email.?certificata)["'\s:]*([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]*pec[a-zA-Z0-9.\-]*\.[a-zA-Z]{2,})/i);
+                if (htmlPecMatch?.[1]) pec = htmlPecMatch[1].toLowerCase();
+            }
+
+            return { vat, pec };
+        });
     }
 
     // =========================================================================
@@ -743,7 +907,7 @@ export class FinancialService {
 
             const $ = cheerio.load(html);
             const text = ($('body').text() || '').replace(/\s+/g, ' ');
-            const match = text.match(/([a-zA-Z0-9._%+-]+@(?:pec|legalmail|mypec|arubapec|postecert)\.[a-zA-Z0-9.-]+)/i);
+            const match = text.match(/([a-zA-Z0-9._%+-]+@(?:pec\.[a-zA-Z0-9.-]+|[a-zA-Z0-9.-]*(?:legalmail|arubapec|postecert|mypec|registerpec|sicurezzapostale|pecspeciale|pec\.it|pec\.buffetti)\.[a-zA-Z0-9.-]+))/i);
             return match ? match[1].toLowerCase() : null;
         } catch (e) {
             Logger.warn('[Financial] PEC search failed (Scrape.do/HTTP)', { error: e as Error, company_name: name, city });
@@ -763,7 +927,7 @@ export class FinancialService {
 
                 const pec = await page.evaluate(() => {
                     const text = document.body.innerText;
-                    const match = text.match(/([a-zA-Z0-9._%+-]+@(?:pec|legalmail|mypec|arubapec|postecert)\.[a-zA-Z0-9.-]+)/i);
+                    const match = text.match(/([a-zA-Z0-9._%+-]+@(?:pec\.[a-zA-Z0-9.-]+|[a-zA-Z0-9.-]*(?:legalmail|arubapec|postecert|mypec|registerpec|sicurezzapostale|pecspeciale|pec\.it|pec\.buffetti)\.[a-zA-Z0-9.-]+))/i);
                     return match ? match[0].toLowerCase() : null;
                 });
 
