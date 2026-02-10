@@ -130,8 +130,9 @@ export class ProxyManager {
             const url = new URL(proxyUrl);
             return {
                 server: `${url.protocol}//${url.host}`,
-                username: url.username || undefined,
-                password: url.password || undefined,
+                // Decode URL-encoded username/password (e.g., %3D -> =)
+                username: url.username ? decodeURIComponent(url.username) : undefined,
+                password: url.password ? decodeURIComponent(url.password) : undefined,
             };
         } catch {
             // Try simple format: host:port:user:pass

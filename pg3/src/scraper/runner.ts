@@ -32,6 +32,8 @@ const TARGET_CLUSTERS: Record<string, string[]> = {
 const args = process.argv.slice(2);
 const specificCategory = args.find(a => a.startsWith('--category='))?.split('=')[1];
 const specificCity = args.find(a => a.startsWith('--city='))?.split('=')[1];
+const limitArg = args.find(a => a.startsWith('--limit='))?.split('=')[1];
+const COMPANY_LIMIT = limitArg ? parseInt(limitArg, 10) : Infinity;
 
 // Helpers
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -59,6 +61,9 @@ async function main() {
     const keywords = specificCategory ? [specificCategory] : ["meccatronica", "automazione industriale"]; // Default
 
     Logger.info(`🎯 Scope: ${citiesToScan.join(', ')} | Keywords: ${keywords.join(', ')}`);
+    if (COMPANY_LIMIT !== Infinity) {
+        Logger.info(`🛑 Limit set: Will stop at ${COMPANY_LIMIT} companies`);
+    }
 
     const browserFactory = BrowserFactory.getInstance();
     const page = await browserFactory.newPage();
@@ -102,7 +107,7 @@ async function main() {
 
                 // Parse Total Count
                 const countText = await page.evaluate(() => {
-                    const el = document.querySelector('.search-ind__res');
+                    const el = document.querySelector('.listing-res__numresults span') || document.querySelector('.search-ind__res');
                     return el ? el.textContent : '0';
                 });
                 const totalResults = parseInt(countText?.replace(/\./g, '') || '0', 10);
@@ -125,7 +130,13 @@ async function main() {
                     Logger.info(`      📍 Scanning Location: ${loc}`);
 
                     // --- SOURCE A: PAGINE GIALLE ---
-                    await scrapePG(page, keyword, loc, deduplicator, cityCompanies);
+                    totalGlobalFound = await scrapePG(page, keyword, loc, deduplicator, cityCompanies, totalGlobalFound, COMPANY_LIMIT);
+
+                    // Check limit after PG
+                    if (totalGlobalFound >= COMPANY_LIMIT) {
+                        Logger.info(`🛑 LIMIT REACHED after PG: ${totalGlobalFound} companies. Stopping.`);
+                        break;
+                    }
 
                     // --- SOURCE B: GOOGLE MAPS (Deep Fill) ---
                     // Only run maps if PG yield was low OR if we are in main city to ensure quality
@@ -133,6 +144,8 @@ async function main() {
                     const mapsResults = await GoogleMapsProvider.fetchDeepResults(page, loc, keyword);
 
                     for (const mRes of mapsResults) {
+                        if (totalGlobalFound >= COMPANY_LIMIT) break; // LIMIT CHECK
+
                         const existing = deduplicator.checkDuplicate(mRes);
                         if (existing) {
                             // Smart Merge
@@ -143,6 +156,12 @@ async function main() {
                             cityCompanies.push(mRes);
                             totalGlobalFound++;
                         }
+                    }
+
+                    // Early exit if limit reached
+                    if (totalGlobalFound >= COMPANY_LIMIT) {
+                        Logger.info(`🛑 LIMIT REACHED: ${totalGlobalFound} companies. Stopping.`);
+                        break;
                     }
                 }
             }
@@ -161,12 +180,22 @@ async function main() {
     }
 }
 
-async function scrapePG(page: Page, keyword: string, location: string, deduplicator: Deduplicator, list: CompanyInput[]) {
+async function scrapePG(
+    page: Page,
+    keyword: string,
+    location: string,
+    deduplicator: Deduplicator,
+    list: CompanyInput[],
+    currentCount: number,
+    limit: number
+): Promise<number> {
+    let count = currentCount;
+
     try {
         let pageNum = 1;
         let hasNext = true;
 
-        while (hasNext && pageNum <= MAX_PAGES_PG) {
+        while (hasNext && pageNum <= MAX_PAGES_PG && count < limit) {
             const url = `https://www.paginegialle.it/ricerca/${keyword}/${location}/p-${pageNum}`;
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
@@ -195,9 +224,12 @@ async function scrapePG(page: Page, keyword: string, location: string, deduplica
 
             for (const item of items) {
                 if (!item) continue;
+                if (count >= limit) break; // 🛑 LIMIT CHECK
+
                 if (!deduplicator.checkDuplicate(item)) {
                     deduplicator.add(item);
                     list.push(item);
+                    count++;
                 }
             }
 
@@ -209,6 +241,8 @@ async function scrapePG(page: Page, keyword: string, location: string, deduplica
     } catch (e) {
         Logger.error(`PG Scrape Error ${location}`, (e as Error).message);
     }
+
+    return count;
 }
 
 main();

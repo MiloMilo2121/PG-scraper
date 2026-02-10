@@ -15,6 +15,8 @@ import { config } from '../../config';
 import { BrowserEvasion } from './evasion';
 import { CookieConsent } from './cookie_consent';
 import { Logger } from '../../utils/logger';
+// Task 16: Proxy Integration
+import { ProxyManager } from '../../../enricher/core/browser/proxy_manager';
 
 // Add plugin
 puppeteer.use(StealthPlugin());
@@ -125,6 +127,14 @@ export class BrowserFactory {
 
             try {
                 let browser;
+
+                // 🌐 PROXY INTEGRATION: Get proxy args for hard targets
+                const proxyManager = ProxyManager.getInstance();
+                const proxyArgs = proxyManager.getLaunchArgsForUrl('https://paginegialle.it');
+                if (proxyArgs.length > 0) {
+                    Logger.info(`[BrowserFactory] 🌐 Using proxy: ${proxyArgs[0]}`);
+                }
+
                 if (config.browser.mode === 'remote') {
                     Logger.info(`[BrowserFactory] ☁️ Connecting to Remote Swarm at ${config.browser.remoteEndpoint}...`);
                     browser = await puppeteer.connect({
@@ -135,15 +145,12 @@ export class BrowserFactory {
                 } else {
                     browser = await puppeteer.launch({
                         headless: true,
-
-
-
-
                         timeout: 60000,
                         protocolTimeout: 60000,
                         userDataDir: this.userDataDir,
                         executablePath: executablePath,
                         args: [
+                            ...proxyArgs,  // 🌐 PROXY FIRST
                             ...getSandboxArgs(),
                             '--disable-infobars',
                             '--disable-dev-shm-usage',
@@ -250,6 +257,11 @@ export class BrowserFactory {
 
         // Task: Anti-Fingerprinting
         await BrowserEvasion.apply(page);
+
+        // Task 16: Proxy Authentication (for authenticated proxies)
+        const proxyManager = ProxyManager.getInstance();
+        await proxyManager.authenticateProxy(page, 'https://paginegialle.it');
+
         // Task: Cookie Consent
         await CookieConsent.handle(page);
 

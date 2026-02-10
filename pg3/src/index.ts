@@ -1,11 +1,12 @@
 import { Logger } from './enricher/utils/logger';
 
-const VALID_COMMANDS = new Set(['worker', 'scheduler']);
+const VALID_COMMANDS = new Set(['worker', 'scheduler', 'server']);
 
 function printUsage(): void {
   Logger.info('Usage:');
   Logger.info('  node dist/src/index.js worker');
   Logger.info('  node dist/src/index.js scheduler <path/to/file.csv>');
+  Logger.info('  node dist/src/index.js server');
 }
 
 async function main(): Promise<void> {
@@ -21,6 +22,13 @@ async function main(): Promise<void> {
     Logger.info('🚀 ANTIGRAVITY starting in WORKER mode');
     const { runWorker } = await import('./enricher/worker');
     await runWorker();
+    return;
+  }
+
+  if (command === 'server') {
+    Logger.info('🚀 ANTIGRAVITY starting in SERVER mode');
+    const { startServer } = await import('./server');
+    await startServer();
     return;
   }
 

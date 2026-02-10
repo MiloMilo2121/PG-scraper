@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ANTIGRAVITY | Data Intelligence</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="background-orb orb-1"></div>
+    <div class="background-orb orb-2"></div>
+
+    <div class="glass-container">
+        <header>
+            <div class="logo">ANTIGRAVITY <span class="version">OMEGA</span></div>
+            <div class="status-indicator">
+                <span class="dot"></span> System Ready
+            </div>
+        </header>
+
+        <main>
+            <div class="hero-text">
+                <h1>Target Acquisition</h1>
+                <p>Enterprise-grade B2B intelligence platform.</p>
+            </div>
+
+            <!-- FEATURES SECTION - Replaces Category Matrix -->
+            <div class="features-section">
+                <div class="features-grid">
+                    <div class="feature-card">
+                        <div class="feature-icon">🎯</div>
+                        <h3>Dual-Source Intel</h3>
+                        <p>PagineGialle + Google Maps fusion for maximum coverage</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🧠</div>
+                        <h3>Smart Deduplication</h3>
+                        <p>VAT, Phone & Name fingerprinting eliminates duplicates</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🌐</div>
+                        <h3>Cluster Expansion</h3>
+                        <p>Auto-activates satellite cities when results > 200</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">⚡</div>
+                        <h3>Stealth Mode</h3>
+                        <p>Anti-fingerprint browser with evasion plugins</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-row">
+                <div class="input-group">
+                    <label for="niche">Niches / Keywords (comma separated)</label>
+                    <input type="text" id="niche" placeholder="e.g. Fabbro, Elettricista, Idraulico" autocomplete="off">
+                    <div class="input-focus-line"></div>
+                </div>
+
+                <div class="input-group">
+                    <label for="province">Target Provinces (comma separated)</label>
+                    <input type="text" id="province" placeholder="e.g. Milano, Monza, Lodi" autocomplete="off">
+                    <div class="input-focus-line"></div>
+                </div>
+            </div>
+
+            <div class="query-preview" id="queryPreviewContainer" style="display: none;">
+                <h3>🎯 Attack Strategy (Auto-Generated)</h3>
+                <div class="tags-container" id="queryTags">
+                    <!-- Tags injected here -->
+                </div>
+            </div>
+
+            <div class="actions">
+                <button id="launchBtn" class="neon-button">
+                    <span class="btn-text">LAUNCH PROSPECTING</span>
+                    <div class="btn-glitch"></div>
+                </button>
+            </div>
+        </main>
+
+        <footer>
+            <div class="stats">
+                <span>Active Nodes: <strong id="nodeCount">0</strong></span>
+                <span class="separator">|</span>
+                <span>Queue Load: <strong id="queueLoad">0%</strong></span>
+            </div>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>

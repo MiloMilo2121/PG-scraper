@@ -6,7 +6,7 @@ dotenv.config();
 const BrowserModeSchema = z.enum(['local', 'remote']);
 
 const EnvSchema = z.object({
-  OPENAI_API_KEY: z.string().min(1, 'OPENAI_API_KEY is required'),
+  OPENAI_API_KEY: z.string().optional().default(''),
 
   REDIS_URL: z.string().optional(),
   REDIS_HOST: z.string().optional(),

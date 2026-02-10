@@ -143,8 +143,13 @@ export class BrowserFactory {
             // PROXY INTEGRATION
             const proxyManager = ProxyManager.getInstance();
             // Default to High Security proxy (Residential) for the browser instance
-            // We assume this browser will be primarily used for Google/UfficioCamerale in Phase 1/2
-            const proxyArgs = proxyManager.getLaunchArgsForUrl('https://www.google.com');
+            let proxyArgs: string[] = [];
+
+            if (process.env.DISABLE_PROXY === 'true') {
+                Logger.warn(`[BrowserFactory:${this.instanceId}] 🛑 PROXY DISABLED via env var`);
+            } else {
+                proxyArgs = proxyManager.getLaunchArgsForUrl('https://www.google.com');
+            }
 
             if (proxyArgs.length > 0) {
                 Logger.info(`[BrowserFactory:${this.instanceId}] 🛡️ Launching with Proxy: ${proxyArgs[0]}`);

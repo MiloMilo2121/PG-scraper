@@ -4,7 +4,7 @@
   "description": "PG3 enrichment pipeline",
   "main": "dist/src/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && cp -r src/LANDING dist/src/",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "npm run typecheck",
     "test:unit": "OPENAI_API_KEY=test-key vitest run tests/unit --reporter=dot",
@@ -14,7 +14,8 @@
     "dev:scheduler": "ts-node src/index.ts scheduler",
     "start": "node dist/src/index.js worker",
     "start:worker": "node dist/src/enricher/worker.js",
-    "start:scheduler": "node dist/src/index.js scheduler"
+    "start:scheduler": "node dist/src/index.js scheduler",
+    "start:server": "node dist/src/index.js server"
   },
   "dependencies": {
     "@types/cheerio": "^0.22.35",

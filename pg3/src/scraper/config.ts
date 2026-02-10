@@ -33,5 +33,10 @@ export const config = {
         uri: process.env.NEO4J_URI || 'bolt://localhost:7687',
         user: process.env.NEO4J_USER || 'neo4j',
         password: process.env.NEO4J_PASSWORD || 'password',
+    },
+    proxy: {
+        residentialUrl: process.env.PROXY_RESIDENTIAL_URL || '',
+        datacenterUrl: process.env.PROXY_DATACENTER_URL || '',
+        failureCooldownMs: parseInt(process.env.PROXY_FAILURE_COOLDOWN_MS || '300000', 10),
     }
 };
