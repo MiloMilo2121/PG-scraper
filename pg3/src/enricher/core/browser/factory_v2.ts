@@ -314,21 +314,31 @@ export class BrowserFactory {
     }
 
     public async closePage(page: Page): Promise<void> {
+        // Ensure we never block the pipeline on a hanging page close.
+        const CLOSE_TIMEOUT_MS = 5000;
+
+        // Remove from the pool immediately to prevent newPage() deadlocks.
+        this.activePages.delete(page);
+
+        if (page.isClosed()) {
+            return;
+        }
+
         try {
-            if (!page.isClosed()) await page.close();
+            await Promise.race([
+                page.close(),
+                new Promise<void>((_, reject) =>
+                    setTimeout(() => reject(new Error('Page close timeout')), CLOSE_TIMEOUT_MS)
+                ),
+            ]);
         } catch (e) {
             Logger.warn('Failed to close page cleanly', { error: e as Error });
         }
-        this.activePages.delete(page);
     }
 
     public async close(): Promise<void> {
-        for (const page of this.activePages) {
-            try {
-                if (!page.isClosed()) await page.close();
-            } catch (error) {
-                Logger.warn('Failed to close active page during shutdown', { error: error as Error });
-            }
+        for (const page of [...this.activePages]) {
+            await this.closePage(page);
         }
         this.activePages.clear();
 

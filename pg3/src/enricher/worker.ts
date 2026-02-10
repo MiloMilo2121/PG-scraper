@@ -48,6 +48,7 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
     const { company_name, city, company_id } = job.data;
     let { website } = job.data;
     const startTime = Date.now();
+    const minValidWebsiteConfidence = config.discovery.thresholds.minValid;
 
     Logger.info(`🔄 Processing: ${company_name}`, {
         company_id,
@@ -75,21 +76,42 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             };
         }
 
-        // STEP 1: WEBSITE DISCOVERY (If missing)
+        // STEP 1: WEBSITE DISCOVERY / VALIDATION
+        const discoveryInput = {
+            company_name,
+            city,
+            address: job.data.address,
+            phone: job.data.phone,
+            category: job.data.category,
+            province: job.data.province,
+            website: website || undefined,
+        };
+
+        // 1A) If a website is provided, we still verify it before trusting/storing it.
+        if (website && website.trim() !== '' && website !== 'null') {
+            Logger.info(`[Worker] 🔎 Pre-validating provided website for "${company_name}": ${website}`);
+            const verification = await discoveryService.verifyUrl(website, discoveryInput);
+            const confidence = verification?.confidence ?? 0;
+            if (confidence >= minValidWebsiteConfidence) {
+                Logger.info(`[Worker] ✅ Provided website verified (${confidence.toFixed(2)}): ${company_name} -> ${website}`);
+            } else {
+                Logger.warn(`[Worker] ⚠️ Provided website rejected (${confidence.toFixed(2)} < ${minValidWebsiteConfidence}): ${company_name} -> ${website}`);
+                website = undefined;
+            }
+        }
+
+        // 1B) If missing (or rejected), launch discovery waves.
         if (!website || website.trim() === '' || website === 'null') {
             Logger.info(`[Worker] 🔍 Website missing for "${company_name}". Launching Discovery Waves...`);
-            const discoveryResult = await discoveryService.discover({
-                company_name,
-                city,
-                address: job.data.address,
-                phone: job.data.phone,
-                category: job.data.category,
-                province: job.data.province
-            });
+            const discoveryResult = await discoveryService.discover(discoveryInput);
 
-            if (discoveryResult.url) {
+            if (discoveryResult.url && discoveryResult.status === 'FOUND_VALID') {
                 website = discoveryResult.url;
-                Logger.info(`[Worker] ✅ Discovery success: ${company_name} -> ${website}`);
+                Logger.info(`[Worker] ✅ Discovery VALID: ${company_name} -> ${website} (${discoveryResult.confidence.toFixed(2)})`);
+            } else if (discoveryResult.url) {
+                Logger.warn(
+                    `[Worker] ⚠️ Discovery candidate rejected for ${company_name}: ${discoveryResult.url} (Status: ${discoveryResult.status}, Confidence: ${discoveryResult.confidence.toFixed(2)})`
+                );
             } else {
                 Logger.warn(`[Worker] ⚠️ Discovery failed for ${company_name} (Status: ${discoveryResult.status})`);
             }

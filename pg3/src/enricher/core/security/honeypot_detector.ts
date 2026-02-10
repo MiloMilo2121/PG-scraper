@@ -20,9 +20,13 @@ export class HoneyPotDetector {
      * Real businesses usually have MX records. Parked domains often don't.
      */
     public async checkDNS(url: string): Promise<{ safe: boolean; reason?: string }> {
+        const DNS_TIMEOUT_MS = 5000;
         try {
             const domain = new URL(url).hostname;
-            const mx = await dns.resolveMx(domain).catch(() => []);
+            const mx = await Promise.race([
+                dns.resolveMx(domain).catch(() => []),
+                new Promise<any[]>((resolve) => setTimeout(() => resolve([]), DNS_TIMEOUT_MS)),
+            ]);
 
             // Heuristic: No MX records = Suspicious for a B2B company
             // (Exception: Some valid small scraping targets might stick to basic webmail, so we warn but don't hard block unless other signals align)

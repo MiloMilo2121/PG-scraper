@@ -27,14 +27,17 @@ export interface FinancialData {
 
 export class FinancialService {
     private browserFactory: BrowserFactory;
-    private openai: OpenAI;
+    private openai: OpenAI | null;
     private vies: ViesService;
     private viesCache: Map<string, boolean> = new Map();
 
     constructor(apiKey?: string) {
         this.browserFactory = BrowserFactory.getInstance();
-        const key = apiKey || config.llm.apiKey;
-        this.openai = new OpenAI({ apiKey: key, dangerouslyAllowBrowser: true });
+        const key = (apiKey || config.llm.apiKey || '').trim();
+        this.openai = key ? new OpenAI({ apiKey: key, dangerouslyAllowBrowser: true }) : null;
+        if (!this.openai) {
+            Logger.info('[Financial] OPENAI_API_KEY missing - employee estimation disabled');
+        }
         this.vies = new ViesService();
     }
 
@@ -127,7 +130,7 @@ export class FinancialService {
         // =====================================================================
         // PHASE 4: EMPLOYEE ESTIMATION (AI fallback)
         // =====================================================================
-        if (!data.employees && websiteUrl) {
+        if (!data.employees && websiteUrl && this.openai) {
             data.employees = await this.estimateEmployees(company, websiteUrl);
             if (data.employees) data.isEstimatedEmployees = true;
         }
@@ -473,6 +476,7 @@ export class FinancialService {
     // HELPER: Employee estimation (AI)
     // =========================================================================
     private async estimateEmployees(company: CompanyInput, url: string): Promise<string | undefined> {
+        if (!this.openai) return undefined;
         let page;
         try {
             page = await this.browserFactory.newPage();

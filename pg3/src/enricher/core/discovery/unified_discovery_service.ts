@@ -154,6 +154,14 @@ export class UnifiedDiscoveryService {
         this.nuclearStrategy = new NuclearStrategy();
     }
 
+    /**
+     * 🔎 Verify a single candidate URL without running the full discovery waves.
+     * Returns the same evidence payload produced by deep verification.
+     */
+    public async verifyUrl(url: string, company: CompanyInput): Promise<any | null> {
+        return this.deepVerify(url, company);
+    }
+
     // =========================================================================
     // 🌊 MAIN DISCOVERY ENTRY POINT
     // =========================================================================

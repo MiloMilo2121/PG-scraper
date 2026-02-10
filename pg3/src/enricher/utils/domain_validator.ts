@@ -19,7 +19,7 @@ export class DomainValidator {
     /**
      * Task 36: Check if domain resolves via DNS
      */
-    static async checkDNS(domain: string): Promise<boolean> {
+    static async checkDNS(domain: string, timeoutMs: number = 5000): Promise<boolean> {
         return new Promise((resolve) => {
             const hostname = this.extractHostname(domain);
             if (!hostname) {
@@ -27,7 +27,17 @@ export class DomainValidator {
                 return;
             }
 
+            let settled = false;
+            const timer = setTimeout(() => {
+                if (settled) return;
+                settled = true;
+                resolve(false);
+            }, timeoutMs);
+
             dns.resolve(hostname, (err) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
                 resolve(!err);
             });
         });
