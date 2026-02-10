@@ -27,7 +27,33 @@ const TARGET_CLUSTERS: Record<string, string[]> = {
     "Padova": ["Padova", "Albignasego", "Selvazzano Dentro", "Vigonza", "Cittadella", "Abano Terme"],
     "Mantova": ["Mantova", "Castiglione delle Stiviere", "Suzzara", "Viadana"],
     // Treviso is often low volume on PG for niche queries; scan nearby municipalities to satisfy small fixed limits.
-    "Treviso": ["Treviso", "Villorba", "Silea", "Paese", "Preganziol", "Quinto di Treviso", "Oderzo", "Conegliano", "Vittorio Veneto", "Montebelluna", "Castelfranco Veneto"]
+    "Treviso": [
+        "Treviso",
+        "Villorba",
+        "Silea",
+        "Paese",
+        "Preganziol",
+        "Quinto di Treviso",
+        "Ponzano Veneto",
+        "Mogliano Veneto",
+        "Roncade",
+        "Carbonera",
+        "Casier",
+        "Spresiano",
+        "Arcade",
+        "San Biagio di Callalta",
+        "Ponte di Piave",
+        "Oderzo",
+        "Conegliano",
+        "Susegana",
+        "Pieve di Soligo",
+        "Vittorio Veneto",
+        "Nervesa della Battaglia",
+        "Giavera del Montello",
+        "Montebelluna",
+        "Valdobbiadene",
+        "Castelfranco Veneto"
+    ]
 };
 
 // --- DEFAULT ARGS ---
