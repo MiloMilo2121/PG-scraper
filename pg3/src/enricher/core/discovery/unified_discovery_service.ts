@@ -827,6 +827,13 @@ export class UnifiedDiscoveryService {
             }
 
             if (!navigated) {
+                // Browser navigation can fail on some sites due to chromium quirks; fallback to HTTP-only verification.
+                const httpFallback = await this.httpVerify(normalizedUrl, company);
+                if (httpFallback) {
+                    this.setCachedVerification(cacheKey, httpFallback);
+                    return httpFallback;
+                }
+
                 Logger.warn('[DeepVerify] Navigation failed', {
                     error: lastNavError as Error,
                     url: normalizedUrl,
@@ -929,6 +936,17 @@ export class UnifiedDiscoveryService {
             return result;
 
         } catch (e) {
+            // Last-resort: HTTP fallback (no browser). Helps with flaky chromium sessions.
+            try {
+                const httpFallback = await this.httpVerify(normalizedUrl, company);
+                if (httpFallback) {
+                    this.setCachedVerification(cacheKey, httpFallback);
+                    return httpFallback;
+                }
+            } catch {
+                // ignore
+            }
+
             Logger.warn('[DeepVerify] Verification failed', { error: e as Error, url: normalizedUrl, company_name: company.company_name });
             return null;
         } finally {
@@ -937,6 +955,79 @@ export class UnifiedDiscoveryService {
                 await this.browserFactory.closePage(page);
             }
         }
+    }
+
+    private async httpVerify(normalizedUrl: string, company: CompanyInput): Promise<any | null> {
+        if (!normalizedUrl) return null;
+
+        const navTargets = this.buildNavigationTargets(normalizedUrl);
+        for (const target of navTargets) {
+            try {
+                const resp = await axios.get(target, {
+                    timeout: 12000,
+                    headers: {
+                        'User-Agent':
+                            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+                        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    },
+                    maxRedirects: 5,
+                    validateStatus: (s) => s >= 200 && s < 400,
+                });
+
+                const html = typeof resp.data === 'string' ? resp.data : '';
+                if (html.length < 200) {
+                    continue;
+                }
+
+                const responseUrl = (resp.request?.res?.responseUrl as string | undefined) || target;
+                const currentUrl = this.normalizeUrl(responseUrl) || this.normalizeUrl(target) || normalizedUrl;
+                if (ContentFilter.isDirectoryOrSocial(currentUrl)) {
+                    continue;
+                }
+
+                const $ = cheerio.load(html);
+                const title = ($('title').first().text() || '').trim();
+                if (ContentFilter.isDirectoryLikeTitle(title)) {
+                    return { confidence: 0, reason: 'Directory-like title', final_url: currentUrl };
+                }
+
+                const safety = HoneyPotDetector.getInstance().analyzeContent(html);
+                if (!safety.safe) {
+                    return { confidence: 0, reason: safety.reason, final_url: currentUrl };
+                }
+
+                const text = ($('body').text() || '').replace(/\s+/g, ' ').trim().slice(0, 20000);
+                const filter = ContentFilter.isValidContent(text);
+                if (!filter.valid) {
+                    return { confidence: 0, reason: filter.reason, final_url: currentUrl };
+                }
+
+                let evaluation = CompanyMatcher.evaluate(company, currentUrl, text, title);
+                const appearsItalian = ContentFilter.isItalianLanguage(text);
+                if (!appearsItalian && evaluation.confidence < 0.9) {
+                    evaluation = {
+                        ...evaluation,
+                        confidence: Math.max(0, evaluation.confidence - 0.08),
+                        reason: `${evaluation.reason}, foreign language`,
+                    };
+                }
+
+                return {
+                    confidence: evaluation.confidence,
+                    reason: evaluation.reason,
+                    level: evaluation.confidence >= 0.85 ? 'RULE_STRONG' : 'RULE_HEURISTIC',
+                    scraped_piva: evaluation.scrapedVat,
+                    matched_phone: evaluation.matchedPhone,
+                    signals: evaluation.signals,
+                    final_url: currentUrl,
+                };
+            } catch {
+                continue;
+            }
+        }
+
+        return null;
     }
 
     private async deepVerifyWithAI(url: string, company: CompanyInput): Promise<any | null> {
