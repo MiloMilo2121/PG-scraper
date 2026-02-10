@@ -25,7 +25,9 @@ const TARGET_CLUSTERS: Record<string, string[]> = {
     "Brescia": ["Brescia", "Desenzano del Garda", "Montichiari", "Lumezzane", "Palazzolo sull'Oglio", "Rovato", "Ghedi"],
     "Vicenza": ["Vicenza", "Bassano del Grappa", "Schio", "Thiene", "Arzignano", "Montecchio Maggiore"],
     "Padova": ["Padova", "Albignasego", "Selvazzano Dentro", "Vigonza", "Cittadella", "Abano Terme"],
-    "Mantova": ["Mantova", "Castiglione delle Stiviere", "Suzzara", "Viadana"]
+    "Mantova": ["Mantova", "Castiglione delle Stiviere", "Suzzara", "Viadana"],
+    // Treviso is often low volume on PG for niche queries; scan nearby municipalities to satisfy small fixed limits.
+    "Treviso": ["Treviso", "Villorba", "Silea", "Paese", "Preganziol", "Quinto di Treviso", "Oderzo", "Conegliano", "Vittorio Veneto", "Montebelluna", "Castelfranco Veneto"]
 };
 
 // --- DEFAULT ARGS ---
@@ -100,7 +102,7 @@ async function main() {
 
                 // 2. THE BARRIER CHECK (PagineGialle Total Results)
                 let useCluster = false;
-                const pgUrl = `https://www.paginegialle.it/ricerca/${keyword}/${city}`;
+                const pgUrl = `https://www.paginegialle.it/ricerca/${encodeURIComponent(keyword)}/${encodeURIComponent(city)}`;
 
                 await page.goto(pgUrl, { waitUntil: 'domcontentloaded' });
                 await CookieConsent.handle(page); // 🍪 Smash cookies
@@ -121,9 +123,13 @@ async function main() {
                 }
 
                 // Define Locations based on Cluster Decision
-                const locations = useCluster
-                    ? (TARGET_CLUSTERS[city] || [city])
-                    : [city];
+                const cluster = TARGET_CLUSTERS[city];
+                const needMoreThanCity =
+                    COMPANY_LIMIT !== Infinity &&
+                    Number.isFinite(COMPANY_LIMIT) &&
+                    COMPANY_LIMIT > totalResults &&
+                    !!cluster;
+                const locations = (useCluster || needMoreThanCity) && cluster ? cluster : [city];
 
                 // 3. EXECUTE SEARCH
                 for (const loc of locations) {
@@ -196,7 +202,7 @@ async function scrapePG(
         let hasNext = true;
 
         while (hasNext && pageNum <= MAX_PAGES_PG && count < limit) {
-            const url = `https://www.paginegialle.it/ricerca/${keyword}/${location}/p-${pageNum}`;
+            const url = `https://www.paginegialle.it/ricerca/${encodeURIComponent(keyword)}/${encodeURIComponent(location)}/p-${pageNum}`;
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
             // Extract
