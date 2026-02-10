@@ -30,6 +30,7 @@ import { CompanyMatcher } from './company_matcher';
 import { DomainValidator } from '../../utils/domain_validator';
 import { NuclearStrategy } from './nuclear_strategy';
 import { PagineGialleHarvester } from '../directories/paginegialle';
+import { ScraperClient } from '../../utils/scraper_client';
 
 // ============================================================================
 // INTERFACES
@@ -309,22 +310,29 @@ export class UnifiedDiscoveryService {
     // =========================================================================
     private async executeWave1Swarm(company: CompanyInput, threshold: number, maxCandidates: number): Promise<DiscoveryResult | null> {
         const proxyDisabled = process.env.DISABLE_PROXY === 'true';
+        const scrapeDoEnabled = ScraperClient.isScrapeDoEnabled();
+        const canUseGoogle = !proxyDisabled || scrapeDoEnabled;
         const promises: Array<Promise<Candidate[] | null>> = [
             this.hyperGuesserAttack(company),
             this.pagineGiallePhoneAttack(company),
         ];
 
-        if (proxyDisabled) {
-            Logger.info('[Wave1] 🛡️ Proxy Disabled: Skipping Google, using Bing + DuckDuckGo');
-            // Add Bing & DDG to Wave 1
-            promises.push(this.searchBing(company));
-            promises.push(this.searchDDG(company));
-        } else {
-            // Standard Google Swarm
+        if (canUseGoogle) {
+            if (proxyDisabled && scrapeDoEnabled) {
+                Logger.info('[Wave1] 🛡️ Proxy disabled, Scrape.do enabled: using Google via gateway + Bing');
+            }
+            // Standard Google Swarm (Puppeteer) or Scrape.do fallback (HTTP) when proxy is disabled.
             promises.push(this.googleSearchByName(company));
             promises.push(this.googleSearchByAddress(company));
             promises.push(this.googleSearchByPhone(company));
             promises.push(this.searchBing(company)); // fallback candidates always useful
+            // DDG is useful regardless; it might be blocked direct, but Scrape.do can often pass.
+            promises.push(this.searchDDG(company));
+        } else {
+            Logger.info('[Wave1] 🛡️ Proxy disabled and Scrape.do missing: skipping Google, using Bing + DuckDuckGo');
+            // Add Bing & DDG to Wave 1
+            promises.push(this.searchBing(company));
+            promises.push(this.searchDDG(company));
         }
 
         // Launch all methods in parallel
@@ -1246,10 +1254,29 @@ export class UnifiedDiscoveryService {
     // =========================================================================
 
     private async scrapeGoogleDIY(query: string): Promise<Array<{ link: string }>> {
+        const url = `https://www.google.it/search?q=${encodeURIComponent(query)}&hl=it&gl=it`;
+        const proxyDisabled = process.env.DISABLE_PROXY === 'true';
+        const scrapeDoEnabled = ScraperClient.isScrapeDoEnabled();
+
+        if (proxyDisabled && scrapeDoEnabled) {
+            try {
+                const html = await ScraperClient.fetchText(url, { mode: 'auto', render: true, super: true, timeoutMs: 20000, maxRetries: 1 });
+                const lower = html.toLowerCase();
+                if (lower.includes('unusual traffic') || lower.includes('traffico insolito') || lower.includes('/sorry/')) {
+                    Logger.warn('[ScrapeGoogleDIY] Blocked by CAPTCHA/traffic gate', { query });
+                    return [];
+                }
+                const results = await GoogleSerpAnalyzer.parseSerp(html);
+                return results.map((r: { url: string }) => ({ link: r.url }));
+            } catch (e) {
+                Logger.warn('[ScrapeGoogleDIY] Failed (scrape.do/http)', { error: e as Error, query });
+                return [];
+            }
+        }
+
         let page;
         try {
             page = await this.browserFactory.newPage();
-            const url = `https://www.google.it/search?q=${encodeURIComponent(query)}&hl=it&gl=it`;
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
             await this.acceptGoogleConsentIfPresent(page);
             const html = await page.content();
@@ -1271,20 +1298,11 @@ export class UnifiedDiscoveryService {
     private async scrapeDDGDIY(query: string): Promise<Array<{ link: string }>> {
         try {
             const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-            const resp = await axios.get(url, {
-                timeout: 12000,
-                headers: {
-                    'User-Agent':
-                        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                    'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-                    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                },
-                maxRedirects: 4,
-                validateStatus: (s) => s >= 200 && s < 400,
-            });
+            const resp = await ScraperClient.fetchHtml(url, { mode: 'auto', timeoutMs: 12000, maxRetries: 1 });
             const html = typeof resp.data === 'string' ? resp.data : '';
             const lower = html.toLowerCase();
             if (
+                (resp.via === 'direct' && resp.status >= 400) ||
                 lower.includes('bots use duckduckgo too') ||
                 lower.includes('anomaly') ||
                 lower.includes('unusual traffic') ||
@@ -1304,18 +1322,11 @@ export class UnifiedDiscoveryService {
     private async scrapeBingDIY(query: string): Promise<Array<{ link: string }>> {
         try {
             const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=it&cc=it`;
-            const resp = await axios.get(url, {
-                timeout: 12000,
-                headers: {
-                    'User-Agent':
-                        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                    'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-                    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                },
-                maxRedirects: 4,
-                validateStatus: (s) => s >= 200 && s < 400,
-            });
+            const resp = await ScraperClient.fetchHtml(url, { mode: 'auto', timeoutMs: 12000, maxRetries: 1 });
             const html = typeof resp.data === 'string' ? resp.data : '';
+            if (resp.via === 'direct' && resp.status >= 400) {
+                throw new Error(`HTTP ${resp.status}`);
+            }
             const $ = cheerio.load(html);
             const links: Array<{ link: string }> = [];
             $('.b_algo h2 a').each((_, el) => {
