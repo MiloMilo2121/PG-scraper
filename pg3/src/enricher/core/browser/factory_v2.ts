@@ -17,11 +17,12 @@ import { BrowserEvasion } from './evasion';
 import { CookieConsent } from './cookie_consent';
 
 // Add plugin
-puppeteer.use(StealthPlugin());
+// puppeteer.use(StealthPlugin()); // Disabled to fix ERR_INVALID_AUTH_CREDENTIALS
 
 function getSandboxArgs(): string[] {
     const inDocker = process.env.RUNNING_IN_DOCKER === 'true' || fs.existsSync('/.dockerenv');
-    return inDocker ? ['--no-sandbox', '--disable-setuid-sandbox'] : [];
+    const isRoot = process.getuid && process.getuid() === 0;
+    return (inDocker || isRoot) ? ['--no-sandbox', '--disable-setuid-sandbox'] : [];
 }
 
 export class BrowserFactory {
@@ -193,7 +194,8 @@ export class BrowserFactory {
                             '--enable-features=NetworkService,NetworkServiceInProcess',
                             '--window-size=1920,1080',
                             '--single-process',
-                            '--no-zygote'
+                            '--no-zygote',
+                            '--ignore-certificate-errors'
                         ]
                     }) as unknown as Browser;
                 }

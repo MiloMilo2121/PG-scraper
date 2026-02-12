@@ -3,7 +3,7 @@ import axios, { AxiosResponse } from 'axios';
 import { config } from '../config';
 import { Logger } from './logger';
 
-export type ScraperClientMode = 'auto' | 'direct' | 'scrape_do';
+export type ScraperClientMode = 'auto' | 'direct' | 'scrape_do' | 'jina_reader' | 'jina_search';
 
 export interface ScraperClientOptions {
   mode?: ScraperClientMode;
@@ -16,7 +16,7 @@ export interface ScraperClientOptions {
 }
 
 export interface ScraperClientResponse {
-  via: 'direct' | 'scrape_do';
+  via: 'direct' | 'scrape_do' | 'jina_reader' | 'jina_search';
   status: number;
   finalUrl: string;
   headers: Record<string, string | string[] | undefined>;
@@ -86,6 +86,10 @@ async function withRetry<T>(fn: () => Promise<T>, retries: number): Promise<T> {
 export class ScraperClient {
   public static isScrapeDoEnabled(): boolean {
     return !!(config.scrapeDo?.token && config.scrapeDo.token.trim().length > 0);
+  }
+
+  public static isJinaEnabled(): boolean {
+    return !!(config.jina?.enabled && config.jina.apiKey && config.jina.apiKey.trim().length > 0);
   }
 
   private static defaultHeaders(): Record<string, string> {
@@ -206,5 +210,128 @@ export class ScraperClient {
     const res = await this.fetchHtml(targetUrl, options);
     return res.data;
   }
-}
 
+  // =========================================================================
+  // 🧠 JINA AI INTEGRATION
+  // =========================================================================
+
+  /**
+   * 📖 Jina Reader: Converts any URL to clean Markdown.
+   * Uses r.jina.ai — no browser, no proxy needed.
+   * Returns trimmed content up to maxContentLength.
+   */
+  public static async fetchJinaReader(targetUrl: string, options: ScraperClientOptions = {}): Promise<ScraperClientResponse> {
+    if (!this.isJinaEnabled()) {
+      throw new Error('JINA_API_KEY missing or JINA_ENABLED is not true');
+    }
+
+    const timeoutMs = options.timeoutMs ?? config.jina.timeoutMs;
+    const maxLen = config.jina.maxContentLength;
+    const jinaUrl = `https://r.jina.ai/${targetUrl}`;
+
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${config.jina.apiKey}`,
+      'X-Return-Format': 'markdown',
+      'Accept': 'text/plain',
+    };
+
+    Logger.info('[JinaReader] Fetching', { host: safeHost(targetUrl) });
+
+    const resp = await withRetry(async () => {
+      const r = await axios.get(jinaUrl, {
+        timeout: timeoutMs,
+        headers,
+        validateStatus: () => true,
+        responseType: 'text',
+        decompress: true,
+      });
+      return r;
+    }, options.maxRetries ?? 1);
+
+    let body = typeof resp.data === 'string' ? resp.data : String(resp.data);
+    // Trim to save tokens downstream
+    if (body.length > maxLen) {
+      body = body.slice(0, maxLen);
+    }
+
+    return {
+      via: 'jina_reader',
+      status: resp.status,
+      finalUrl: targetUrl,
+      headers: resp.headers as any,
+      data: body,
+    };
+  }
+
+  /**
+   * 🔍 Jina Search: Executes a search query and returns results as Markdown.
+   * Uses s.jina.ai — replaces Google/Bing/DDG scraping entirely.
+   * Returns structured search results without any browser.
+   */
+  public static async fetchJinaSearch(query: string, options: ScraperClientOptions = {}): Promise<ScraperClientResponse> {
+    if (!this.isJinaEnabled()) {
+      throw new Error('JINA_API_KEY missing or JINA_ENABLED is not true');
+    }
+
+    const timeoutMs = options.timeoutMs ?? config.jina.timeoutMs;
+    const encodedQuery = encodeURIComponent(query);
+    const jinaUrl = `https://s.jina.ai/${encodedQuery}`;
+
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${config.jina.apiKey}`,
+      'Accept': 'application/json',
+    };
+
+    Logger.info('[JinaSearch] Searching', { query: query.slice(0, 80) });
+
+    const resp = await withRetry(async () => {
+      const r = await axios.get(jinaUrl, {
+        timeout: timeoutMs,
+        headers,
+        validateStatus: () => true,
+        responseType: 'text',
+        decompress: true,
+      });
+      return r;
+    }, options.maxRetries ?? 1);
+
+    const body = typeof resp.data === 'string' ? resp.data : String(resp.data);
+
+    return {
+      via: 'jina_search',
+      status: resp.status,
+      finalUrl: jinaUrl,
+      headers: resp.headers as any,
+      data: body,
+    };
+  }
+
+  /**
+   * 🧠 Extract URLs from Jina Search results (JSON response).
+   * Returns an array of {title, url, description}.
+   */
+  public static parseJinaSearchResults(rawData: string): Array<{ title: string; url: string; description: string }> {
+    try {
+      const parsed = JSON.parse(rawData);
+      const results: Array<{ title: string; url: string; description: string }> = [];
+
+      // Jina returns { data: [ { title, url, description, content }, ... ] }
+      const items = parsed?.data || parsed?.results || (Array.isArray(parsed) ? parsed : []);
+      for (const item of items) {
+        if (item.url && typeof item.url === 'string') {
+          results.push({
+            title: item.title || '',
+            url: item.url,
+            description: item.description || item.content || '',
+          });
+        }
+      }
+      return results;
+    } catch {
+      // Fallback: try extracting URLs from markdown text
+      const urlRegex = /https?:\/\/[^\s)"'<>]+/g;
+      const matches = rawData.match(urlRegex) || [];
+      return matches.map((url) => ({ title: '', url, description: '' }));
+    }
+  }
+}

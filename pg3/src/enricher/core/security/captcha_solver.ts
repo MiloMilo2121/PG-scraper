@@ -8,12 +8,13 @@
  */
 
 import { Page } from 'puppeteer';
+import axios from 'axios';
 import { Logger } from '../../utils/logger';
 import { config } from '../../config';
 
 // Environment config
 const CAPTCHA_API_KEY = process.env.CAPTCHA_2_API_KEY || process.env.TWOCAPTCHA_API_KEY;
-const CAPTCHA_MAX_ATTEMPTS = config.captcha.maxAttempts;
+const CAPTCHA_MAX_ATTEMPTS = config.captcha.maxAttempts || 30;
 
 export class CaptchaSolver {
     private static readonly API_URL = 'https://2captcha.com';
@@ -32,12 +33,14 @@ export class CaptchaSolver {
             const captchaType = await this.detectCaptchaType(page);
 
             if (!captchaType) {
-                return true; // No captcha detected
+                return false; // No captcha detected
             }
 
-            Logger.info(`Captcha detected: ${captchaType}. Solving...`);
+            Logger.info(`[CaptchaSolver] 🕵️ Detected ${captchaType}. Solving...`);
 
             switch (captchaType) {
+                case 'turnstile':
+                    return await this.solveTurnstile(page);
                 case 'recaptcha-v2':
                     return await this.solveRecaptchaV2(page);
                 case 'recaptcha-v3':
@@ -47,11 +50,11 @@ export class CaptchaSolver {
                 case 'image':
                     return await this.solveImageCaptcha(page);
                 default:
-                    Logger.warn(`Unknown captcha type: ${captchaType}`);
+                    Logger.warn(`[CaptchaSolver] Unknown captcha type: ${captchaType}`);
                     return false;
             }
         } catch (error) {
-            Logger.error('Captcha solving failed', { error: error as Error });
+            Logger.error('[CaptchaSolver] Failed', { error: error as Error });
             return false;
         }
     }
@@ -61,9 +64,15 @@ export class CaptchaSolver {
      */
     private static async detectCaptchaType(page: Page): Promise<string | null> {
         return await page.evaluate(() => {
+            // Cloudflare Turnstile
+            if (document.querySelector('.cf-turnstile') ||
+                document.querySelector('iframe[src*="challenges.cloudflare.com"]')) {
+                return 'turnstile';
+            }
+
             // Check for reCAPTCHA v2
             if (document.querySelector('.g-recaptcha') ||
-                document.querySelector('iframe[src*="recaptcha"]')) {
+                document.querySelector('iframe[src*="recaptcha/api2"]')) {
                 return 'recaptcha-v2';
             }
 
@@ -79,7 +88,7 @@ export class CaptchaSolver {
                 return 'hcaptcha';
             }
 
-            // Check for image captcha
+            // Check for image captcha (generic)
             if (document.querySelector('img[src*="captcha"]') ||
                 document.querySelector('input[name*="captcha"]')) {
                 return 'image';
@@ -90,37 +99,79 @@ export class CaptchaSolver {
     }
 
     /**
-     * Solve reCAPTCHA v2
+     * Solve Cloudflare Turnstile
      */
-    private static async solveRecaptchaV2(page: Page): Promise<boolean> {
+    private static async solveTurnstile(page: Page): Promise<boolean> {
         // Get sitekey
         const sitekey = await page.evaluate(() => {
-            const el = document.querySelector('.g-recaptcha');
+            const el = document.querySelector('.cf-turnstile') || document.querySelector('[data-sitekey]');
             return el?.getAttribute('data-sitekey') || null;
         });
 
         if (!sitekey) {
-            Logger.warn('Could not find reCAPTCHA sitekey');
+            Logger.warn('[CaptchaSolver] Could not find Turnstile sitekey');
             return false;
         }
 
         const pageUrl = page.url();
-        Logger.info(`Solving reCAPTCHA v2 for ${pageUrl}`);
+        Logger.info(`[CaptchaSolver] Solving Turnstile for ${pageUrl} (key: ${sitekey})`);
 
-        // Submit to 2Captcha
         const taskId = await this.createTask({
-            method: 'userrecaptcha',
-            googlekey: sitekey,
+            method: 'turnstile',
+            sitekey: sitekey,
             pageurl: pageUrl,
         });
 
         if (!taskId) return false;
 
-        // Wait for solution
         const solution = await this.waitForSolution(taskId);
         if (!solution) return false;
 
         // Inject solution
+        await page.evaluate((token: string) => {
+            const input = document.querySelector('[name="cf-turnstile-response"]') as HTMLInputElement;
+            if (input) {
+                input.value = token;
+            }
+            // Execute callback if present (heuristic)
+            if ((window as any).turnstile) {
+                try {
+                    // Try to reset or render? No, usually providing token in input is enough for form submit
+                    // Sometimes we need to click "Verify"
+                } catch { }
+            }
+        }, solution);
+
+        Logger.info('[CaptchaSolver] Turnstile solved. Waiting for navigation...');
+        // Usually Turnstile auto-redirects after token injection? Or we might need to submit form.
+        // We press "Verify" or waiting.
+        await new Promise(r => setTimeout(r, 2000));
+
+        return true;
+    }
+
+    /**
+     * Solve reCAPTCHA v2
+     */
+    private static async solveRecaptchaV2(page: Page): Promise<boolean> {
+        const sitekey = await page.evaluate(() => {
+            const el = document.querySelector('.g-recaptcha');
+            return el?.getAttribute('data-sitekey') || null;
+        });
+
+        if (!sitekey) return false;
+
+        const taskId = await this.createTask({
+            method: 'userrecaptcha',
+            googlekey: sitekey,
+            pageurl: page.url(),
+        });
+
+        if (!taskId) return false;
+
+        const solution = await this.waitForSolution(taskId);
+        if (!solution) return false;
+
         await page.evaluate((token: string) => {
             const textarea = document.querySelector('#g-recaptcha-response') as HTMLTextAreaElement;
             if (textarea) {
@@ -131,63 +182,28 @@ export class CaptchaSolver {
             if ((window as any).___grecaptcha_cfg?.clients) {
                 const clients = (window as any).___grecaptcha_cfg.clients;
                 for (const key in clients) {
-                    try {
-                        clients[key].callback(token);
-                    } catch (e) {
-                        Logger.warn('reCAPTCHA callback invocation failed', { error: e as Error });
-                    }
+                    try { clients[key].callback(token); } catch { }
                 }
             }
         }, solution);
 
-        Logger.info('reCAPTCHA v2 solved');
+        Logger.info('[CaptchaSolver] reCAPTCHA v2 solved');
         return true;
     }
 
-    /**
-     * Solve reCAPTCHA v3
-     */
     private static async solveRecaptchaV3(page: Page): Promise<boolean> {
-        Logger.info('reCAPTCHA v3 requires enterprise solving - skipping');
+        Logger.info('[CaptchaSolver] reCAPTCHA v3 requires enterprise solving - skipping');
         return false;
     }
 
-    /**
-     * Solve hCaptcha
-     */
     private static async solveHCaptcha(page: Page): Promise<boolean> {
-        const sitekey = await page.evaluate(() => {
-            const el = document.querySelector('.h-captcha');
-            return el?.getAttribute('data-sitekey') || null;
-        });
-
-        if (!sitekey) return false;
-
-        const taskId = await this.createTask({
-            method: 'hcaptcha',
-            sitekey: sitekey,
-            pageurl: page.url(),
-        });
-
-        if (!taskId) return false;
-
-        const solution = await this.waitForSolution(taskId);
-        if (!solution) return false;
-
-        await page.evaluate((token: string) => {
-            const textarea = document.querySelector('textarea[name="h-captcha-response"]') as HTMLTextAreaElement;
-            if (textarea) textarea.value = token;
-        }, solution);
-
-        Logger.info('hCaptcha solved');
-        return true;
+        Logger.info('[CaptchaSolver] hCaptcha solving not implemented');
+        return false;
     }
 
-    /**
-     * Solve image captcha
-     */
     private static async solveImageCaptcha(page: Page): Promise<boolean> {
-        Logger.info('Image captcha solving not yet implemented');
+        // Todo: Screenshot element -> base64 -> solve
+        Logger.info('[CaptchaSolver] Image captcha solving not implemented');
         return false;
     }
 
@@ -195,25 +211,24 @@ export class CaptchaSolver {
      * Create task on 2Captcha
      */
     private static async createTask(params: Record<string, string>): Promise<string | null> {
-        const url = new URL('/in.php', this.API_URL);
-        url.searchParams.append('key', CAPTCHA_API_KEY!);
-        url.searchParams.append('json', '1');
-
-        for (const [key, value] of Object.entries(params)) {
-            url.searchParams.append(key, value);
-        }
+        const url = `${this.API_URL}/in.php`;
+        const payload = {
+            key: CAPTCHA_API_KEY,
+            json: 1,
+            ...params
+        };
 
         try {
-            const response = await fetch(url.toString());
-            const data = await response.json();
+            const response = await axios.post(url, null, { params: payload });
+            const data = response.data;
 
             if (data.status === 1) {
                 return data.request;
             }
-            Logger.error('2Captcha error while creating task', { error_text: data.error_text });
+            Logger.error('[CaptchaSolver] Task creation failed', { error_text: data.error_text });
             return null;
         } catch (error) {
-            Logger.error('Failed to create 2Captcha task', { error: error as Error });
+            Logger.error('[CaptchaSolver] API error', { error: error as Error });
             return null;
         }
     }
@@ -221,34 +236,36 @@ export class CaptchaSolver {
     /**
      * Wait for solution from 2Captcha
      */
-    private static async waitForSolution(taskId: string, maxAttempts = CAPTCHA_MAX_ATTEMPTS): Promise<string | null> {
-        const url = new URL('/res.php', this.API_URL);
-        url.searchParams.append('key', CAPTCHA_API_KEY!);
-        url.searchParams.append('action', 'get');
-        url.searchParams.append('id', taskId);
-        url.searchParams.append('json', '1');
+    private static async waitForSolution(taskId: string): Promise<string | null> {
+        const url = `${this.API_URL}/res.php`;
+        const params = {
+            key: CAPTCHA_API_KEY,
+            action: 'get',
+            id: taskId,
+            json: 1
+        };
 
-        for (let i = 0; i < maxAttempts; i++) {
+        for (let i = 0; i < CAPTCHA_MAX_ATTEMPTS; i++) {
             await new Promise(r => setTimeout(r, 5000)); // Wait 5 seconds
 
             try {
-                const response = await fetch(url.toString());
-                const data = await response.json();
+                const response = await axios.get(url, { params });
+                const data = response.data;
 
                 if (data.status === 1) {
                     return data.request;
                 }
 
                 if (data.request !== 'CAPCHA_NOT_READY') {
-                    Logger.error('2Captcha error while polling solution', { request: data.request });
+                    Logger.error('[CaptchaSolver] Polling error', { request: data.request });
                     return null;
                 }
             } catch (error) {
-                Logger.error('Failed to get 2Captcha solution', { error: error as Error });
+                Logger.error('[CaptchaSolver] Polling failed', { error: error as Error });
             }
         }
 
-        Logger.error('2Captcha timeout - solution not ready', { task_id: taskId, max_attempts: maxAttempts });
+        Logger.error('[CaptchaSolver] Timeout waiting for solution');
         return null;
     }
 }

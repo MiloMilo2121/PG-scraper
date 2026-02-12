@@ -17,4 +17,12 @@ describe('ContentFilter', () => {
     expect(ContentFilter.isDirectoryLikeTitle('Elenco aziende idraulici Milano')).toBe(true);
     expect(ContentFilter.isDirectoryLikeTitle('Rossi Impianti - Home')).toBe(false);
   });
+
+  it('does NOT block valid titles containing single key words', () => {
+    // These used to be blocked by single-word filters ("aziende", "orari", "trova")
+    // Now they should be allowed.
+    expect(ContentFilter.isDirectoryLikeTitle('Le nostre Aziende Partner')).toBe(false);
+    expect(ContentFilter.isDirectoryLikeTitle('Orari di Apertura')).toBe(false);
+    expect(ContentFilter.isDirectoryLikeTitle('Trova la tua strada')).toBe(false);
+  });
 });

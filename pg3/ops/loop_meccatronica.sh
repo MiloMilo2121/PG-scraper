@@ -1,7 +1,7 @@
 #!/bin/bash
 # 🚀 MECCATRONICA ENRICHMENT LOOP 🚀
 
-cd "$(dirname "$0")" || exit 1
+cd "$(dirname "$0")/.." || exit 1
 
 # Trova l'ultimo file CSV generato nella cartella campaigns del modulo di generazione
 # (Supponendo che vengano generati in output/campaigns/ o nella directory corrente)

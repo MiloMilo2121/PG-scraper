@@ -21,6 +21,7 @@ import { RateLimiter, MemoryRateLimiter } from '../rate_limiter';
 import { ContentFilter } from './content_filter';
 import { HyperGuesser } from './hyper_guesser_v2';
 import { GoogleSerpAnalyzer } from './serp_analyzer';
+import { GoogleSearchProvider, DDGSearchProvider } from './search_provider';
 import { DuckDuckGoSerpAnalyzer } from './ddg_analyzer';
 import { LLMValidator } from '../ai/llm_validator';
 import { AntigravityClient } from '../../observability/antigravity_client';
@@ -335,6 +336,11 @@ export class UnifiedDiscoveryService {
             promises.push(this.searchDDG(company));
         }
 
+        // 🧠 JINA SEARCH: If enabled, add as high-priority search provider (no browser needed)
+        if (ScraperClient.isJinaEnabled()) {
+            promises.push(this.searchJina(company));
+        }
+
         // Launch all methods in parallel
         const results = await Promise.all(promises);
 
@@ -399,6 +405,34 @@ export class UnifiedDiscoveryService {
         } catch (e) {
             this.rateLimiter.reportFailure('paginegialle');
             Logger.warn('[Wave] PagineGialle phone harvest failed', { error: e as Error, company_name: company.company_name });
+            return null;
+        }
+    }
+
+    // =========================================================================
+    // 🧠 JINA SEARCH PROVIDER (No browser, no proxy)
+    // =========================================================================
+    private async searchJina(company: CompanyInput): Promise<Candidate[] | null> {
+        try {
+            const query = `${company.company_name} ${company.city || ''} sito ufficiale contatti`;
+            const response = await ScraperClient.fetchJinaSearch(query);
+
+            if (response.status !== 200) {
+                const body = typeof response.data === 'string' ? response.data.slice(0, 500) : JSON.stringify(response.data).slice(0, 500);
+                Logger.warn('[JinaSearch] Non-200 response', { status: response.status, body });
+                return null;
+            }
+
+            const results = ScraperClient.parseJinaSearchResults(response.data);
+            Logger.info(`[JinaSearch] Found ${results.length} results for "${company.company_name}"`);
+
+            return results.slice(0, 10).map(r => ({
+                url: r.url,
+                source: 'jina_search',
+                confidence: 0.78, // High confidence — Jina returns clean, relevant results
+            }));
+        } catch (e) {
+            Logger.warn('[JinaSearch] Search failed', { error: e as Error, company_name: company.company_name });
             return null;
         }
     }
@@ -816,6 +850,16 @@ export class UnifiedDiscoveryService {
 
         let page;
         try {
+            // 🧠 JINA-FIRST: If Jina is enabled, try browser-free verification first
+            if (ScraperClient.isJinaEnabled()) {
+                const jinaResult = await this.jinaVerify(normalizedUrl, company);
+                if (jinaResult) {
+                    this.setCachedVerification(cacheKey, jinaResult);
+                    return jinaResult;
+                }
+                // Jina failed — fall through to browser if available
+            }
+
             page = await this.browserFactory.newPage();
 
             // Block unnecessary resources
@@ -909,8 +953,18 @@ export class UnifiedDiscoveryService {
             if (!appearsItalian && evaluation.confidence < 0.9) {
                 evaluation = {
                     ...evaluation,
-                    confidence: Math.max(0, evaluation.confidence - 0.08),
+                    confidence: Math.max(0, evaluation.confidence - 0.03),
                     reason: `${evaluation.reason}, foreign language`,
+                };
+            }
+
+            // TITLE BOOST: If the page <title> contains the company name, boost confidence
+            const titleNameCoverage = CompanyMatcher.nameCoverage(company.company_name, extraction.title.toLowerCase());
+            if (titleNameCoverage >= 0.6 && evaluation.confidence < 0.85) {
+                evaluation = {
+                    ...evaluation,
+                    confidence: Math.min(0.99, evaluation.confidence + 0.10),
+                    reason: `${evaluation.reason}, title match boost`,
                 };
             }
 
@@ -965,6 +1019,84 @@ export class UnifiedDiscoveryService {
         }
     }
 
+    // =========================================================================
+    // 🧠 JINA READER VERIFICATION (No browser needed)
+    // =========================================================================
+    private async jinaVerify(normalizedUrl: string, company: CompanyInput): Promise<any | null> {
+        try {
+            const response = await ScraperClient.fetchJinaReader(normalizedUrl, { timeoutMs: 15000, maxRetries: 1 });
+
+            if (response.status !== 200 || !response.data || response.data.length < 100) {
+                Logger.warn('[JinaVerify] Insufficient content', { url: normalizedUrl, status: response.status, length: response.data?.length || 0 });
+                return null;
+            }
+
+            const text = response.data;
+
+            // Check for directory/social redirects in the markdown content
+            if (ContentFilter.isDirectoryOrSocial(normalizedUrl)) {
+                return { confidence: 0, reason: 'Directory/social URL', final_url: normalizedUrl };
+            }
+
+            const filter = ContentFilter.isValidContent(text);
+            if (!filter.valid) {
+                return { confidence: 0, reason: filter.reason, final_url: normalizedUrl };
+            }
+
+            // Extract a pseudo-title from the first line of markdown
+            const firstLine = text.split('\n').find(l => l.trim().length > 0) || '';
+            const title = firstLine.replace(/^#+\s*/, '').trim();
+
+            if (ContentFilter.isDirectoryLikeTitle(title)) {
+                return { confidence: 0, reason: 'Directory-like title', final_url: normalizedUrl };
+            }
+
+            let evaluation = CompanyMatcher.evaluate(company, normalizedUrl, text, title);
+
+            const appearsItalian = ContentFilter.isItalianLanguage(text);
+            if (!appearsItalian && evaluation.confidence < 0.9) {
+                evaluation = {
+                    ...evaluation,
+                    confidence: Math.max(0, evaluation.confidence - 0.03),
+                    reason: `${evaluation.reason}, foreign language`,
+                };
+            }
+
+            // LLM boost if confidence is borderline
+            if (evaluation.confidence < THRESHOLDS.WAVE3_JUDGE && process.env.OPENAI_API_KEY) {
+                try {
+                    const llm = await LLMValidator.validateCompany(company, text);
+                    if (llm.isValid && llm.confidence > evaluation.confidence) {
+                        evaluation = {
+                            confidence: llm.confidence,
+                            reason: `${evaluation.reason}; ${llm.reason}`,
+                            signals: evaluation.signals,
+                            scrapedVat: evaluation.scrapedVat,
+                            matchedPhone: evaluation.matchedPhone,
+                        };
+                    }
+                } catch (llmError) {
+                    Logger.warn('[JinaVerify] LLM fallback failed', { error: llmError as Error });
+                }
+            }
+
+            Logger.info(`[JinaVerify] ✅ Verified ${normalizedUrl} -> confidence: ${evaluation.confidence.toFixed(2)}`);
+
+            return {
+                confidence: evaluation.confidence,
+                reason: evaluation.reason,
+                level: evaluation.confidence >= 0.85 ? 'RULE_STRONG' : 'RULE_HEURISTIC',
+                scraped_piva: evaluation.scrapedVat,
+                matched_phone: evaluation.matchedPhone,
+                signals: evaluation.signals,
+                final_url: normalizedUrl,
+            };
+        } catch (e) {
+            Logger.warn('[JinaVerify] Failed, falling back to browser', { error: e as Error, url: normalizedUrl });
+            return null;
+        }
+    }
+
     private async httpVerify(normalizedUrl: string, company: CompanyInput): Promise<any | null> {
         if (!normalizedUrl) return null;
 
@@ -1009,7 +1141,7 @@ export class UnifiedDiscoveryService {
                 if (!appearsItalian && evaluation.confidence < 0.9) {
                     evaluation = {
                         ...evaluation,
-                        confidence: Math.max(0, evaluation.confidence - 0.08),
+                        confidence: Math.max(0, evaluation.confidence - 0.03),
                         reason: `${evaluation.reason}, foreign language`,
                     };
                 }
@@ -1251,9 +1383,10 @@ export class UnifiedDiscoveryService {
         const proxyDisabled = process.env.DISABLE_PROXY === 'true';
         const scrapeDoEnabled = ScraperClient.isScrapeDoEnabled();
 
-        if (proxyDisabled && scrapeDoEnabled) {
+        if (scrapeDoEnabled) {
             try {
-                const html = await ScraperClient.fetchText(url, { mode: 'auto', render: true, super: true, timeoutMs: 20000, maxRetries: 1 });
+                // Use ScraperClient (Scrape.do API) - bypassing browser proxy issues
+                const html = await ScraperClient.fetchText(url, { mode: 'scrape_do', render: true, super: true, timeoutMs: 25000, maxRetries: 2 });
                 const lower = html.toLowerCase();
                 if (lower.includes('unusual traffic') || lower.includes('traffico insolito') || lower.includes('/sorry/')) {
                     Logger.warn('[ScrapeGoogleDIY] Blocked by CAPTCHA/traffic gate', { query });
@@ -1263,6 +1396,7 @@ export class UnifiedDiscoveryService {
                 return results.map((r: { url: string }) => ({ link: r.url }));
             } catch (e) {
                 Logger.warn('[ScrapeGoogleDIY] Failed (scrape.do/http)', { error: e as Error, query });
+                // Fallback to browser if API fails? No, browser is broken. Return empty.
                 return [];
             }
         }
@@ -1290,22 +1424,10 @@ export class UnifiedDiscoveryService {
 
     private async scrapeDDGDIY(query: string): Promise<Array<{ link: string }>> {
         try {
-            const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-            const resp = await ScraperClient.fetchHtml(url, { mode: 'auto', timeoutMs: 12000, maxRetries: 1 });
-            const html = typeof resp.data === 'string' ? resp.data : '';
-            const lower = html.toLowerCase();
-            if (
-                (resp.via === 'direct' && resp.status >= 400) ||
-                lower.includes('bots use duckduckgo too') ||
-                lower.includes('anomaly') ||
-                lower.includes('unusual traffic') ||
-                lower.includes('traffico insolito')
-            ) {
-                Logger.warn('[ScrapeDDGDIY] Blocked by anti-bot gate', { query });
-                return [];
-            }
-            const results = DuckDuckGoSerpAnalyzer.parseSerp(html);
-            return results.map((r: { url: string }) => ({ link: r.url }));
+            // Use the Tor-enabled provider
+            const provider = new DDGSearchProvider();
+            const results = await provider.search(query);
+            return results.map(r => ({ link: r.url }));
         } catch (e) {
             Logger.warn('[ScrapeDDGDIY] Failed', { error: e as Error, query });
             return [];

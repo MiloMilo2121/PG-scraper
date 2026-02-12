@@ -61,14 +61,16 @@ export class ContentFilter {
      */
     static isDirectoryLikeTitle(title: string): boolean {
         const t = title.toLowerCase();
+        // ASSUMPTION: Use multi-word phrases to avoid false positives on legitimate business pages.
+        // Single words like 'orari', 'trova', 'aziende' appear commonly on company pages.
         const badSignals = [
-            'elenco',
-            'trova',
-            'orari',
-            'directory',
-            'aziende',
+            'elenco aziende',
+            'elenco imprese',
+            'trova aziende',
+            'directory aziende',
+            'directory imprese',
             'imprese in',
-            'recensioni',
+            'recensioni di',
             'scheda azienda',
         ];
         return badSignals.some((signal) => t.includes(signal));

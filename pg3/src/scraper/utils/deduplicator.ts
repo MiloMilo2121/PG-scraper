@@ -101,6 +101,31 @@ export class Deduplicator {
         return existing;
     }
 
+    /**
+     * Returns ALL unique companies stored in the deduplication indices.
+     */
+    getAll(): CompanyInput[] {
+        const seen = new Set<string>();
+        const all: CompanyInput[] = [];
+
+        for (const company of this.fingerPrintIndex.values()) {
+            const fp = this.generateFingerprint(company.company_name, company.city);
+            if (!seen.has(fp)) {
+                seen.add(fp);
+                all.push(company);
+            }
+        }
+
+        return all;
+    }
+
+    /**
+     * Returns the current count of unique entries.
+     */
+    get count(): number {
+        return this.fingerPrintIndex.size;
+    }
+
     private normalizePhone(phone?: string): string {
         if (!phone) return '';
         return phone.replace(/[^0-9]/g, '');

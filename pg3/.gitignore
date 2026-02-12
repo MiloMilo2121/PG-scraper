@@ -19,3 +19,7 @@ debug_reportaziende.png
 .gemini/
 brain/
 temp_profiles/
+output_server/
+*.pid
+data/*.db-wal
+data/*.db-shm

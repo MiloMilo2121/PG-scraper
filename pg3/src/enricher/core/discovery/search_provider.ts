@@ -1,99 +1,89 @@
-
-import { Page } from 'puppeteer';
-import { BrowserFactory } from '../browser/factory_v2';
 import { Logger } from '../../utils/logger';
 import { GoogleSerpAnalyzer, SerpResult } from './serp_analyzer';
 import { DuckDuckGoSerpAnalyzer } from './ddg_analyzer';
+import { ScraperClient } from '../../utils/scraper_client';
+import { TorBrowser } from '../browser/tor_browser';
+import { Retry } from '../../../utils/decorators';
 
 export interface SearchProvider {
     search(query: string): Promise<SerpResult[]>;
 }
 
-async function acceptGoogleConsentIfPresent(page: Page): Promise<void> {
-    const clicked = await page.evaluate(() => {
-        const buttons = Array.from(
-            document.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"]')
-        ) as Array<HTMLElement | HTMLInputElement>;
-
-        const consentRegex = /(accetta tutto|accetta|accept all|i agree|agree)/i;
-        for (const button of buttons) {
-            const text = button.textContent?.trim() || (button as HTMLInputElement).value?.trim() || '';
-            if (text && consentRegex.test(text)) {
-                button.click();
-                return true;
-            }
-        }
-
-        return false;
-    });
-
-    if (!clicked) {
-        return;
-    }
-
-    await Promise.race([
-        page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 6000 }).catch(() => undefined),
-        new Promise<void>((resolve) => setTimeout(resolve, 1200)),
-    ]);
-}
-
 export class GoogleSearchProvider implements SearchProvider {
-    private browserFactory: BrowserFactory;
-
-    constructor() {
-        this.browserFactory = BrowserFactory.getInstance();
-    }
-
     async search(query: string): Promise<SerpResult[]> {
-        let page;
+        const url = `https://www.google.it/search?q=${encodeURIComponent(query)}&hl=it&gl=it`;
         try {
-            page = await this.browserFactory.newPage();
-            const url = `https://www.google.it/search?q=${encodeURIComponent(query)}&hl=it&gl=it`;
+            // Use ScraperClient (Scrape.do API) - bypassing browser proxy issues
+            const html = await ScraperClient.fetchText(url, {
+                mode: 'scrape_do',
+                render: true,
+                super: true,
+                timeoutMs: 25000,
+                maxRetries: 2
+            });
 
-            // Randomize timeout to look human
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+            const lower = html.toLowerCase();
+            if (lower.includes('unusual traffic') || lower.includes('traffico insolito') || lower.includes('/sorry/')) {
+                Logger.warn('[GoogleProvider] Blocked by CAPTCHA/traffic gate', { query });
+                return [];
+            }
 
-            await acceptGoogleConsentIfPresent(page);
-
-            const html = await page.content();
             const results = await GoogleSerpAnalyzer.parseSerp(html);
             return results;
         } catch (e: any) {
             Logger.warn(`[GoogleProvider] Search failed for "${query}": ${e.message}`);
             return [];
-        } finally {
-            if (page) await this.browserFactory.closePage(page);
         }
     }
 }
 
+
 export class DDGSearchProvider implements SearchProvider {
-    private browserFactory: BrowserFactory;
 
-    constructor() {
-        this.browserFactory = BrowserFactory.getInstance();
-    }
-
+    @Retry({ attempts: 3, delay: 2000, backoff: 'exponential' })
     async search(query: string): Promise<SerpResult[]> {
         let page;
         try {
-            page = await this.browserFactory.newPage();
-            // DDG HTML version is easier to scrape and lighter
+            const torBrowser = TorBrowser.getInstance();
+            page = await torBrowser.getPage();
+
             const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
 
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+            Logger.info(`[DDGProvider] Searching: ${url}`);
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-            const html = await page.content();
-            const results = DuckDuckGoSerpAnalyzer.parseSerp(html);
+            const title = await page.title();
+            const content = await page.content();
+
+            // Validating Content
+            if (this.isBlocked(content, title)) {
+                Logger.warn(`[DDGProvider] Block detected (Title: "${title}"). Rotating IP...`);
+                await torBrowser.rotateIP();
+
+                // Throw error to trigger Retry decorator
+                throw new Error('DDG_BLOCK');
+            }
+
+            const results = DuckDuckGoSerpAnalyzer.parseSerp(content);
+            Logger.info(`[DDGProvider] Success: ${results.length} results`);
             return results;
-        } catch (e: any) {
-            Logger.warn(`[DDGProvider] Search failed for "${query}": ${e.message}`);
-            return [];
+
+        } catch (e: unknown) {
+            Logger.warn(`[DDGProvider] Search Error: ${(e as Error).message}`);
+            throw e; // Re-throw to trigger retry
         } finally {
-            if (page) await this.browserFactory.closePage(page);
+            if (page) await page.close().catch(() => { });
         }
     }
+
+    private isBlocked(content: string, title: string): boolean {
+        return content.includes('bots use duckduckgo too') ||
+            title.includes('403') ||
+            content.includes('issue with the Tor Exit Node') ||
+            content.length < 1000;
+    }
 }
+
 
 /**
  * 📍 REVERSE ADDRESS SEARCH PROVIDER
@@ -101,12 +91,6 @@ export class DDGSearchProvider implements SearchProvider {
  * Query: "{address}" {city} sito web
  */
 export class ReverseAddressSearchProvider implements SearchProvider {
-    private browserFactory: BrowserFactory;
-
-    constructor() {
-        this.browserFactory = BrowserFactory.getInstance();
-    }
-
     /**
      * reverseAddressSearch - Find website by exact address match
      * @param address - Full street address (e.g., "Via Roma 123")
@@ -119,25 +103,8 @@ export class ReverseAddressSearchProvider implements SearchProvider {
     }
 
     async search(query: string): Promise<SerpResult[]> {
-        let page;
-        try {
-            page = await this.browserFactory.newPage();
-            const url = `https://www.google.it/search?q=${encodeURIComponent(query)}&hl=it&gl=it`;
-
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-
-            await acceptGoogleConsentIfPresent(page);
-
-            const html = await page.content();
-            const results = await GoogleSerpAnalyzer.parseSerp(html);
-
-            Logger.info(`[ReverseAddress] Found ${results.length} results for "${query}"`);
-            return results;
-        } catch (e: any) {
-            Logger.warn(`[ReverseAddress] Search failed: ${e.message}`);
-            return [];
-        } finally {
-            if (page) await this.browserFactory.closePage(page);
-        }
+        // Reuse logic from Google search via ScraperClient
+        const provider = new GoogleSearchProvider();
+        return provider.search(query);
     }
 }

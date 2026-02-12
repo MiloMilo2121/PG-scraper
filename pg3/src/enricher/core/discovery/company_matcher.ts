@@ -137,17 +137,25 @@ export class CompanyMatcher {
     if (addressCoverage >= 0.7) confidence += 0.14;
     else if (addressCoverage >= 0.45) confidence += 0.08;
 
-    if (domainCoverage >= 0.8) confidence += 0.12;
-    else if (domainCoverage >= 0.5) confidence += 0.08;
-    else if (domainCoverage >= 0.3) confidence += 0.04;
+    if (domainCoverage >= 0.8) confidence += 0.20;
+    else if (domainCoverage >= 0.5) confidence += 0.10;
+    else if (domainCoverage >= 0.3) confidence += 0.05;
 
     if (hasContactKeywords) confidence += 0.04;
 
-    if (normalizedText.length < 160) confidence -= 0.1;
+    // Only penalize short text if we don't have strong signals
+    if (normalizedText.length < 160 && nameCoverage < 0.6 && domainCoverage < 0.6) {
+      confidence -= 0.1;
+    }
 
-    if (!phoneMatch && nameCoverage < 0.4) {
+    // ASSUMPTION: Hard cap at 0.35 should only trigger when BOTH name AND domain fail.
+    // Previously this killed valid candidates where domain matched but name tokenization failed.
+    if (!phoneMatch && nameCoverage < 0.4 && domainCoverage < 0.5) {
       confidence = Math.min(confidence, 0.35);
     }
+
+    // SYNERGY BONUS: domain + name convergence is a very strong signal for Italian SMBs
+    if (domainCoverage >= 0.8 && nameCoverage >= 0.4) confidence += 0.06;
 
     if (phoneMatch && nameCoverage < 0.25 && domainCoverage < 0.25) {
       confidence = Math.min(confidence, 0.68);
@@ -187,16 +195,22 @@ export class CompanyMatcher {
 
   public static tokenizeCompanyName(companyName: string): string[] {
     const tokens = tokenize(companyName);
-    return tokens.filter((token) => token.length >= 3 && !LEGAL_SUFFIXES.has(token));
+    // ASSUMPTION: Allow 2-char tokens to support brand abbreviations (e.g., "AB" in "AB Meccanica")
+    return tokens.filter((token) => token.length >= 2 && !LEGAL_SUFFIXES.has(token));
   }
 
-  private static nameCoverage(companyName: string, normalizedText: string): number {
+  // ASSUMPTION: Made public so UnifiedDiscoveryService can use it for title-based matching boost
+  public static nameCoverage(companyName: string, normalizedText: string): number {
     const tokens = this.tokenizeCompanyName(companyName);
     if (tokens.length === 0) return 0;
 
     let matched = 0;
     for (const token of tokens) {
+      // Primary: word-boundary match (highest precision)
       if (normalizedText.includes(` ${token} `) || normalizedText.startsWith(`${token} `) || normalizedText.endsWith(` ${token}`)) {
+        matched++;
+        // Secondary: substring match for tokens >= 4 chars (catches compound words like "rossiimpianti")
+      } else if (token.length >= 4 && normalizedText.includes(token)) {
         matched++;
       }
     }
@@ -245,7 +259,8 @@ export class CompanyMatcher {
     if (tokens.length === 0) return 0;
 
     const compactName = tokens.join('');
-    if (compactName.length >= 5 && compactHost.includes(compactName)) {
+    // ASSUMPTION: Lowered from 5 to 3 to support short brand names (e.g., "ABC" -> abcmeccanica.it)
+    if (compactName.length >= 3 && compactHost.includes(compactName)) {
       return 1;
     }
 
@@ -268,8 +283,27 @@ export class CompanyMatcher {
   }
 
   private static extractVatNumbers(text: string): string[] {
-    const matches = text.match(/\b\d{11}\b/g) || [];
-    return [...new Set(matches)];
+    const results = new Set<string>();
+
+    // Pattern 1: Standalone 11-digit numbers
+    const standalone = text.match(/\b\d{11}\b/g) || [];
+    standalone.forEach(m => results.add(m));
+
+    // Pattern 2: P.IVA / Partita IVA followed by IT prefix + 11 digits
+    const labeled = text.match(/(?:P\.?\s*I\.?\s*V\.?\s*A\.?|Partita\s*Iva|C\.?\s*F\.?\s*(?:\/|\s*e\s*)\s*P\.?\s*I\.?\s*V\.?\s*A\.?)[:\s]*(?:IT)?[\s]?(\d{11})/gi) || [];
+    for (const match of labeled) {
+      const digits = match.match(/(\d{11})/);
+      if (digits) results.add(digits[1]);
+    }
+
+    // Pattern 3: IT prefix followed by 11 digits (common in structured data)
+    const itPrefixed = text.match(/\bIT\s?(\d{11})\b/g) || [];
+    for (const match of itPrefixed) {
+      const digits = match.match(/(\d{11})/);
+      if (digits) results.add(digits[1]);
+    }
+
+    return [...results];
   }
 
   private static extractPhones(text: string): string[] {

@@ -48,4 +48,72 @@ describe('CompanyMatcher', () => {
 
     expect(result.confidence).toBeLessThan(0.4);
   });
+
+  // =========================================================================
+  // NEW REGRESSION TESTS for 80%+ Discovery Rate Fixes
+  // =========================================================================
+
+  it('matches company name as substring in compound text', () => {
+    const company: CompanyInput = {
+      company_name: 'Rossi Impianti SRL',
+      city: 'Milano',
+    };
+
+    // The name tokens appear as part of larger words (e.g., "rossiimpianti" in URL text)
+    const text = 'benvenuti nel sito di rossiimpianti dove troverete i migliori servizi per la vostra casa a milano';
+    const coverage = CompanyMatcher.nameCoverage(company.company_name, text);
+
+    // With substring fallback, both "rossi" (5 chars) and "impianti" (8 chars) should match
+    expect(coverage).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('does not hard-cap confidence when domain strongly matches', () => {
+    const company: CompanyInput = {
+      company_name: 'Pavireflex SRL',
+      city: 'Brescia',
+    };
+
+    // Domain matches perfectly, but name doesn't appear with word boundaries in text
+    const text = 'soluzioni per pavimenti e rivestimenti dal 1990 a brescia contatti chi siamo';
+    const result = CompanyMatcher.evaluate(company, 'https://pavireflex.it', text, 'Home');
+
+    // Previously this would be capped at 0.35 because nameCoverage < 0.4
+    // Now domainCoverage >= 0.5 prevents the hard cap
+    expect(result.confidence).toBeGreaterThan(0.35);
+    expect(result.signals.domainCoverage).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('supports 2-char brand tokens', () => {
+    const tokens = CompanyMatcher.tokenizeCompanyName('AB Meccanica SRL');
+
+    // "AB" (2 chars) should be kept, "meccanica" (9 chars) should be kept
+    expect(tokens).toContain('ab');
+    expect(tokens).toContain('meccanica');
+  });
+
+  it('gives full domainCoverage for short brand names', () => {
+    const company: CompanyInput = {
+      company_name: 'MCM SRL',
+      city: 'Milano',
+    };
+
+    const result = CompanyMatcher.evaluate(company, 'https://mcm-srl.it', '', '');
+
+    // "mcm" is 3 chars -> should now match in domain (lowered from 5)
+    expect(result.signals.domainCoverage).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('applies synergy bonus when domain and name both match', () => {
+    const company: CompanyInput = {
+      company_name: 'Tecno Service SRL',
+      city: 'Napoli',
+    };
+
+    // Strong domain match + strong name match in text
+    const text = 'tecno service offre assistenza tecnica professionale a napoli e provincia. contatti e servizi.';
+    const result = CompanyMatcher.evaluate(company, 'https://tecnoservice.it', text, 'Tecno Service');
+
+    // domainCoverage >= 0.8, nameCoverage >= 0.4 -> synergy bonus should fire
+    expect(result.confidence).toBeGreaterThanOrEqual(0.6);
+  });
 });

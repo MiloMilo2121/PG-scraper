@@ -3,264 +3,228 @@ import { z } from 'zod';
 
 dotenv.config();
 
-const BrowserModeSchema = z.enum(['local', 'remote']);
+/**
+ * 🛠️ STRICT CONFIGURATION SCHEMA (Law 106)
+ * Validates environment variables at startup.
+ * Uses z.coerce to automatically handle string-to-number conversions.
+ */
+
+const BooleanString = z.string().transform((val) => val?.toLowerCase() === 'true');
+const CommaSeparatedString = z.string().transform((val) => val.split(',').map((s) => s.trim()).filter(Boolean));
 
 const EnvSchema = z.object({
-  OPENAI_API_KEY: z.string().optional().default(''),
+  // 🟢 CORE
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  SERVICE_NAME: z.string().default('antigravity-enricher'),
+  SQLITE_PATH: z.string().default('./data/antigravity.db'),
+  HEALTH_PORT: z.coerce.number().min(1).max(65535).default(3000),
 
-  REDIS_URL: z.string().optional(),
-  REDIS_HOST: z.string().optional(),
-  REDIS_PORT: z.string().optional(),
-  REDIS_PASSWORD: z.string().optional(),
-
-  // Scrape.do (optional gateway for anti-bot / SERP / registries)
-  SCRAPE_DO_TOKEN: z.string().trim().min(1).optional(),
-  SCRAPE_DO_API_URL: z.string().trim().min(1).optional(),
-  SCRAPE_DO_PROXY_HOST: z.string().trim().min(1).optional(),
-  SCRAPE_DO_GEO_CODE: z.string().trim().min(1).optional(),
-  SCRAPE_DO_SUPER: z.string().optional(),
-  SCRAPE_DO_RENDER_DEFAULT: z.string().optional(),
-  SCRAPE_DO_TIMEOUT_MS: z.string().optional(),
-  SCRAPE_DO_ENFORCE: z.string().optional(),
-
+  // 🤖 AI / LLM
+  OPENAI_API_KEY: z.string().optional(),
   LLM_MODEL: z.string().default('gpt-4o'),
   AI_MODEL_FAST: z.string().default('gpt-4o-mini'),
   AI_MODEL_SMART: z.string().default('gpt-4o'),
-  AI_MAX_TOKENS: z.string().optional(),
+  AI_MAX_TOKENS: z.coerce.number().min(100).max(10000).default(500),
 
-  HEADLESS: z.string().optional(),
-  MAX_CONCURRENCY: z.string().optional(),
-  BROWSER_MODE: BrowserModeSchema.optional(),
-  REMOTE_BROWSER_ENDPOINT: z.string().optional(),
-  GENETIC_EVOLUTION_INTERVAL: z.string().optional(),
+  // 🔴 REDIS
+  REDIS_URL: z.string().optional(),
+  REDIS_HOST: z.string().default('localhost'),
+  REDIS_PORT: z.coerce.number().default(6379),
+  REDIS_PASSWORD: z.string().optional(),
+
+  // 🕸️ SCRAPING & BROWSER
+  HEADLESS: BooleanString.default(true),
+  MAX_CONCURRENCY: z.coerce.number().min(1).max(50).default(5),
   CHROME_PATH: z.string().optional(),
+  BROWSER_MODE: z.enum(['local', 'remote']).default('local'),
+  REMOTE_BROWSER_ENDPOINT: z.string().optional(),
+  GENETIC_EVOLUTION_INTERVAL: z.coerce.number().min(1).default(50),
 
-  SCRAPING_TIMEOUT: z.string().optional(),
-  MAX_RETRIES: z.string().optional(),
-  PAGE_LOAD_TIMEOUT: z.string().optional(),
+  // ⏱️ TIMEOUTS
+  SCRAPING_TIMEOUT: z.coerce.number().min(1000).default(30000),
+  MAX_RETRIES: z.coerce.number().min(1).default(3),
+  PAGE_LOAD_TIMEOUT: z.coerce.number().min(1000).default(60000),
 
-  GOOGLE_STREET_VIEW_KEY: z.string().optional(),
+  // 🛡️ PROXY / SCRAPE.DO
+  SCRAPE_DO_TOKEN: z.string().optional(),
+  SCRAPE_DO_API_URL: z.string().default('https://api.scrape.do'),
+  SCRAPE_DO_PROXY_HOST: z.string().default('proxy.scrape.do:8080'),
+  SCRAPE_DO_GEO_CODE: z.string().default('it'),
+  SCRAPE_DO_SUPER: BooleanString.default(false),
+  SCRAPE_DO_RENDER_DEFAULT: BooleanString.default(false),
+  SCRAPE_DO_TIMEOUT_MS: z.coerce.number().default(20000),
+  SCRAPE_DO_ENFORCE: BooleanString.default(false),
+  PROXY_FAILURE_COOLDOWN_MS: z.coerce.number().min(1000).default(300000), // 5 min
 
+  // 📍 DISCOVERY THRESHOLDS
+  DISCOVERY_THRESHOLD_WAVE1: z.coerce.number().min(0).max(1).default(0.85),
+  DISCOVERY_THRESHOLD_WAVE2: z.coerce.number().min(0).max(1).default(0.75),
+  DISCOVERY_THRESHOLD_WAVE3: z.coerce.number().min(0).max(1).default(0.70),
+  DISCOVERY_THRESHOLD_MIN_VALID: z.coerce.number().min(0).max(1).default(0.60),
+
+  // ⚡ PERFORMANCE & QUEUE
+  CONCURRENCY_LIMIT: z.coerce.number().min(1).max(100).default(10),
+  RETRY_ATTEMPTS: z.coerce.number().min(1).max(10).default(3),
+  RETRY_DELAY_MS: z.coerce.number().min(100).default(1000),
+  QUEUE_BATCH_SIZE: z.coerce.number().min(1).max(1000).default(100),
+  REDIS_CONNECT_TIMEOUT_MS: z.coerce.number().min(500).default(5000),
+  REDIS_CONNECT_RETRIES: z.coerce.number().min(0).default(5),
+  SCHEDULER_LOCK_TTL_MS: z.coerce.number().min(30000).default(900000), // 15 min
+
+  // 🏃 RUNNER
+  RUNNER_CONCURRENCY_LIMIT: z.coerce.number().min(1).max(200).default(25),
+  RUNNER_MEMORY_WARN_MB: z.coerce.number().min(256).default(20000),
+  RUNNER_PROGRESS_LOG_EVERY: z.coerce.number().min(1).default(20),
+
+  // 🧠 KNOWLEDGE GRAPH & INTERNAL
   NEO4J_URI: z.string().default('bolt://localhost:7687'),
   NEO4J_USER: z.string().default('neo4j'),
   NEO4J_PASSWORD: z.string().default('password'),
+  GOOGLE_STREET_VIEW_KEY: z.string().optional(),
 
+  // 📱 NOTIFICATIONS
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
 
-  CONCURRENCY_LIMIT: z.string().optional(),
-  RETRY_ATTEMPTS: z.string().optional(),
-  RETRY_DELAY_MS: z.string().optional(),
-  QUEUE_BATCH_SIZE: z.string().optional(),
-  REDIS_CONNECT_TIMEOUT_MS: z.string().optional(),
-  REDIS_CONNECT_RETRIES: z.string().optional(),
-  SCHEDULER_LOCK_TTL_MS: z.string().optional(),
+  // 🧩 MISC
+  AI_CACHE_MAX_ENTRIES: z.coerce.number().min(10).default(500),
+  AI_CACHE_TTL_MS: z.coerce.number().min(1000).default(3600000), // 1 hour
+  DEDUPLICATOR_MAX_COMPANIES: z.coerce.number().min(1000).default(100000),
+  CAPTCHA_MAX_ATTEMPTS: z.coerce.number().min(1).default(30),
 
-  RUNNER_CONCURRENCY_LIMIT: z.string().optional(),
-  RUNNER_MEMORY_WARN_MB: z.string().optional(),
-  RUNNER_PROGRESS_LOG_EVERY: z.string().optional(),
-
-  DISCOVERY_THRESHOLD_WAVE1: z.string().optional(),
-  DISCOVERY_THRESHOLD_WAVE2: z.string().optional(),
-  DISCOVERY_THRESHOLD_WAVE3: z.string().optional(),
-  DISCOVERY_THRESHOLD_MIN_VALID: z.string().optional(),
-
-  AI_CACHE_MAX_ENTRIES: z.string().optional(),
-  AI_CACHE_TTL_MS: z.string().optional(),
-  DEDUPLICATOR_MAX_COMPANIES: z.string().optional(),
-  PROXY_FAILURE_COOLDOWN_MS: z.string().optional(),
-  CAPTCHA_MAX_ATTEMPTS: z.string().optional(),
-
-  HEALTH_PORT: z.string().optional(),
-  SQLITE_PATH: z.string().optional(),
-  SERVICE_NAME: z.string().optional(),
-  NODE_ENV: z.string().optional(),
+  // JINA
+  JINA_API_KEY: z.string().optional(),
+  JINA_ENABLED: BooleanString.default(false),
+  JINA_TIMEOUT_MS: z.coerce.number().min(5000).default(20000),
+  JINA_MAX_CONTENT_LENGTH: z.coerce.number().min(1000).default(8000),
 });
 
-type ParsedEnv = z.infer<typeof EnvSchema>;
+// Parse and validate process.env
+const _env = EnvSchema.safeParse(process.env);
 
-function parseInteger(
-  value: string | undefined,
-  fallback: number,
-  name: string,
-  opts?: { min?: number; max?: number }
-): number {
-  if (value === undefined || value === '') {
-    return fallback;
-  }
-
-  const n = Number.parseInt(value, 10);
-  if (!Number.isFinite(n)) {
-    throw new Error(`${name} must be an integer`);
-  }
-  if (opts?.min !== undefined && n < opts.min) {
-    throw new Error(`${name} must be >= ${opts.min}`);
-  }
-  if (opts?.max !== undefined && n > opts.max) {
-    throw new Error(`${name} must be <= ${opts.max}`);
-  }
-  return n;
+if (!_env.success) {
+  console.error("❌ INVALID CONFIGURATION:");
+  _env.error.issues.forEach((issue) => {
+    console.error(`   - ${issue.path.join('.')}: ${issue.message}`);
+  });
+  process.exit(1); // Law 106: Fail fast
 }
 
-function deriveRedis(env: ParsedEnv): { url: string; host: string; port: number; password?: string } {
-  if (env.REDIS_URL && env.REDIS_URL.trim() !== '') {
-    const parsed = new URL(env.REDIS_URL);
-    const host = parsed.hostname;
-    const port = Number.parseInt(parsed.port || '6379', 10);
-    const password = parsed.password || env.REDIS_PASSWORD;
+const env = _env.data;
+
+/**
+ * Helper to derive Redis connection details
+ */
+function deriveRedis() {
+  if (env.REDIS_URL) {
+    const url = new URL(env.REDIS_URL);
     return {
       url: env.REDIS_URL,
-      host,
-      port,
-      password: password || undefined,
+      host: url.hostname,
+      port: Number(url.port) || 6379,
+      password: url.password || env.REDIS_PASSWORD,
     };
   }
-
-  const host = env.REDIS_HOST || 'localhost';
-  const port = parseInteger(env.REDIS_PORT, 6379, 'REDIS_PORT', { min: 1, max: 65535 });
-  const auth = env.REDIS_PASSWORD ? `:${encodeURIComponent(env.REDIS_PASSWORD)}@` : '';
-
   return {
-    url: `redis://${auth}${host}:${port}`,
-    host,
-    port,
-    password: env.REDIS_PASSWORD || undefined,
+    url: `redis://${env.REDIS_PASSWORD ? `:${env.REDIS_PASSWORD}@` : ''}${env.REDIS_HOST}:${env.REDIS_PORT}`,
+    host: env.REDIS_HOST,
+    port: env.REDIS_PORT,
+    password: env.REDIS_PASSWORD,
   };
 }
 
-function loadConfig() {
-  const parsed = EnvSchema.safeParse(process.env);
-
-  if (!parsed.success) {
-    const issues = parsed.error.issues
-      .map((issue) => `- ${issue.path.join('.') || '(root)'}: ${issue.message}`)
-      .join('\n');
-
-    throw new Error(`Invalid environment configuration:\n${issues}`);
+export const config = {
+  ...env,
+  browser: {
+    headless: env.HEADLESS,
+    maxConcurrency: env.MAX_CONCURRENCY,
+    chromePath: env.CHROME_PATH,
+    mode: env.BROWSER_MODE,
+    remoteEndpoint: env.REMOTE_BROWSER_ENDPOINT,
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    geneticEvolutionInterval: env.GENETIC_EVOLUTION_INTERVAL,
+  },
+  scraping: {
+    timeout: env.SCRAPING_TIMEOUT,
+    maxRetries: env.MAX_RETRIES,
+    pageLoadTimeout: env.PAGE_LOAD_TIMEOUT,
+  },
+  redis: deriveRedis(),
+  llm: {
+    apiKey: env.OPENAI_API_KEY,
+    model: env.LLM_MODEL,
+    fastModel: env.AI_MODEL_FAST,
+    smartModel: env.AI_MODEL_SMART,
+    maxTokens: env.AI_MAX_TOKENS,
+  },
+  google: {
+    streetViewKey: env.GOOGLE_STREET_VIEW_KEY,
+  },
+  neo4j: {
+    uri: env.NEO4J_URI,
+    user: env.NEO4J_USER,
+    password: env.NEO4J_PASSWORD,
+  },
+  queue: {
+    concurrencyLimit: env.CONCURRENCY_LIMIT,
+    retryAttempts: env.RETRY_ATTEMPTS,
+    retryDelayMs: env.RETRY_DELAY_MS,
+    batchSize: env.QUEUE_BATCH_SIZE,
+    redisConnectTimeoutMs: env.REDIS_CONNECT_TIMEOUT_MS,
+    redisConnectRetries: env.REDIS_CONNECT_RETRIES,
+    schedulerLockTtlMs: env.SCHEDULER_LOCK_TTL_MS,
+  },
+  runner: {
+    concurrencyLimit: env.RUNNER_CONCURRENCY_LIMIT,
+    memoryWarnMb: env.RUNNER_MEMORY_WARN_MB,
+    progressLogEvery: env.RUNNER_PROGRESS_LOG_EVERY,
+  },
+  discovery: {
+    thresholds: {
+      wave1: env.DISCOVERY_THRESHOLD_WAVE1,
+      wave2: env.DISCOVERY_THRESHOLD_WAVE2,
+      wave3: env.DISCOVERY_THRESHOLD_WAVE3,
+      minValid: env.DISCOVERY_THRESHOLD_MIN_VALID,
+    },
+  },
+  ai: {
+    cacheMaxEntries: env.AI_CACHE_MAX_ENTRIES,
+    cacheTtlMs: env.AI_CACHE_TTL_MS,
+  },
+  deduplication: {
+    maxKnownCompanies: env.DEDUPLICATOR_MAX_COMPANIES,
+  },
+  proxy: {
+    failureCooldownMs: env.PROXY_FAILURE_COOLDOWN_MS,
+  },
+  scrapeDo: {
+    token: env.SCRAPE_DO_TOKEN,
+    apiUrl: env.SCRAPE_DO_API_URL,
+    proxyHost: env.SCRAPE_DO_PROXY_HOST,
+    geoCode: env.SCRAPE_DO_GEO_CODE,
+    super: env.SCRAPE_DO_SUPER,
+    renderDefault: env.SCRAPE_DO_RENDER_DEFAULT,
+    timeoutMs: env.SCRAPE_DO_TIMEOUT_MS,
+    enforce: env.SCRAPE_DO_ENFORCE,
+  },
+  captcha: {
+    maxAttempts: env.CAPTCHA_MAX_ATTEMPTS,
+  },
+  health: {
+    port: env.HEALTH_PORT,
+  },
+  sqlitePath: env.SQLITE_PATH,
+  serviceName: env.SERVICE_NAME,
+  telegram: {
+    botToken: env.TELEGRAM_BOT_TOKEN,
+    chatId: env.TELEGRAM_CHAT_ID,
+  },
+  jina: {
+    apiKey: env.JINA_API_KEY,
+    enabled: env.JINA_ENABLED,
+    timeoutMs: env.JINA_TIMEOUT_MS,
+    maxContentLength: env.JINA_MAX_CONTENT_LENGTH,
   }
+} as const;
 
-  const env = parsed.data;
-  const redis = deriveRedis(env);
-
-  const config = {
-    browser: {
-      headless: env.HEADLESS !== 'false',
-      maxConcurrency: parseInteger(env.MAX_CONCURRENCY, 5, 'MAX_CONCURRENCY', { min: 1, max: 100 }),
-      chromePath: env.CHROME_PATH || undefined,
-      mode: env.BROWSER_MODE || 'local',
-      remoteEndpoint: env.REMOTE_BROWSER_ENDPOINT || '',
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      geneticEvolutionInterval: parseInteger(
-        env.GENETIC_EVOLUTION_INTERVAL,
-        50,
-        'GENETIC_EVOLUTION_INTERVAL',
-        { min: 1 }
-      ),
-    },
-    scraping: {
-      timeout: parseInteger(env.SCRAPING_TIMEOUT, 30000, 'SCRAPING_TIMEOUT', { min: 1000 }),
-      maxRetries: parseInteger(env.MAX_RETRIES, 3, 'MAX_RETRIES', { min: 1 }),
-      pageLoadTimeout: parseInteger(env.PAGE_LOAD_TIMEOUT, 60000, 'PAGE_LOAD_TIMEOUT', { min: 1000 }),
-    },
-    redis,
-    llm: {
-      apiKey: env.OPENAI_API_KEY,
-      model: env.LLM_MODEL,
-      fastModel: env.AI_MODEL_FAST,
-      smartModel: env.AI_MODEL_SMART,
-      maxTokens: parseInteger(env.AI_MAX_TOKENS, 500, 'AI_MAX_TOKENS', { min: 100, max: 4000 }),
-    },
-    google: {
-      streetViewKey: env.GOOGLE_STREET_VIEW_KEY || '',
-    },
-    neo4j: {
-      uri: env.NEO4J_URI,
-      user: env.NEO4J_USER,
-      password: env.NEO4J_PASSWORD,
-    },
-    queue: {
-      concurrencyLimit: parseInteger(env.CONCURRENCY_LIMIT, 10, 'CONCURRENCY_LIMIT', { min: 1, max: 100 }),
-      retryAttempts: parseInteger(env.RETRY_ATTEMPTS, 3, 'RETRY_ATTEMPTS', { min: 1, max: 10 }),
-      retryDelayMs: parseInteger(env.RETRY_DELAY_MS, 1000, 'RETRY_DELAY_MS', { min: 100 }),
-      batchSize: parseInteger(env.QUEUE_BATCH_SIZE, 100, 'QUEUE_BATCH_SIZE', { min: 1, max: 1000 }),
-      redisConnectTimeoutMs: parseInteger(env.REDIS_CONNECT_TIMEOUT_MS, 5000, 'REDIS_CONNECT_TIMEOUT_MS', { min: 500 }),
-      redisConnectRetries: parseInteger(env.REDIS_CONNECT_RETRIES, 5, 'REDIS_CONNECT_RETRIES', { min: 0, max: 50 }),
-      schedulerLockTtlMs: parseInteger(env.SCHEDULER_LOCK_TTL_MS, 900000, 'SCHEDULER_LOCK_TTL_MS', { min: 30000 }),
-    },
-    runner: {
-      concurrencyLimit: parseInteger(env.RUNNER_CONCURRENCY_LIMIT, 25, 'RUNNER_CONCURRENCY_LIMIT', { min: 1, max: 200 }),
-      memoryWarnMb: parseInteger(env.RUNNER_MEMORY_WARN_MB, 20000, 'RUNNER_MEMORY_WARN_MB', { min: 256 }),
-      progressLogEvery: parseInteger(env.RUNNER_PROGRESS_LOG_EVERY, 20, 'RUNNER_PROGRESS_LOG_EVERY', { min: 1 }),
-    },
-    discovery: {
-      thresholds: {
-        wave1: parseFloatWithBounds(env.DISCOVERY_THRESHOLD_WAVE1, 0.85, 'DISCOVERY_THRESHOLD_WAVE1'),
-        wave2: parseFloatWithBounds(env.DISCOVERY_THRESHOLD_WAVE2, 0.75, 'DISCOVERY_THRESHOLD_WAVE2'),
-        wave3: parseFloatWithBounds(env.DISCOVERY_THRESHOLD_WAVE3, 0.7, 'DISCOVERY_THRESHOLD_WAVE3'),
-        minValid: parseFloatWithBounds(env.DISCOVERY_THRESHOLD_MIN_VALID, 0.6, 'DISCOVERY_THRESHOLD_MIN_VALID'),
-      },
-    },
-    ai: {
-      cacheMaxEntries: parseInteger(env.AI_CACHE_MAX_ENTRIES, 500, 'AI_CACHE_MAX_ENTRIES', { min: 10, max: 100000 }),
-      cacheTtlMs: parseInteger(env.AI_CACHE_TTL_MS, 60 * 60 * 1000, 'AI_CACHE_TTL_MS', { min: 1000 }),
-    },
-    deduplication: {
-      maxKnownCompanies: parseInteger(env.DEDUPLICATOR_MAX_COMPANIES, 100000, 'DEDUPLICATOR_MAX_COMPANIES', { min: 1000 }),
-    },
-    proxy: {
-      failureCooldownMs: parseInteger(env.PROXY_FAILURE_COOLDOWN_MS, 5 * 60 * 1000, 'PROXY_FAILURE_COOLDOWN_MS', { min: 1000 }),
-    },
-    scrapeDo: {
-      token: env.SCRAPE_DO_TOKEN,
-      apiUrl: env.SCRAPE_DO_API_URL || 'https://api.scrape.do',
-      proxyHost: env.SCRAPE_DO_PROXY_HOST || 'proxy.scrape.do:8080',
-      geoCode: (env.SCRAPE_DO_GEO_CODE || 'it').toLowerCase(),
-      super: (env.SCRAPE_DO_SUPER || '').toLowerCase() === 'true',
-      renderDefault: (env.SCRAPE_DO_RENDER_DEFAULT || '').toLowerCase() === 'true',
-      timeoutMs: parseInteger(env.SCRAPE_DO_TIMEOUT_MS, 20000, 'SCRAPE_DO_TIMEOUT_MS', { min: 1000, max: 120000 }),
-      enforce: (env.SCRAPE_DO_ENFORCE || '').toLowerCase() === 'true',
-    },
-    captcha: {
-      maxAttempts: parseInteger(env.CAPTCHA_MAX_ATTEMPTS, 30, 'CAPTCHA_MAX_ATTEMPTS', { min: 1, max: 300 }),
-    },
-    health: {
-      port: parseInteger(env.HEALTH_PORT, 3000, 'HEALTH_PORT', { min: 1, max: 65535 }),
-    },
-    sqlitePath: env.SQLITE_PATH || './data/antigravity.db',
-    serviceName: env.SERVICE_NAME || 'antigravity-enricher',
-    nodeEnv: env.NODE_ENV || 'development',
-    telegram: {
-      botToken: env.TELEGRAM_BOT_TOKEN || '',
-      chatId: env.TELEGRAM_CHAT_ID || '',
-    },
-  };
-
-  if (config.browser.mode === 'remote' && !config.browser.remoteEndpoint) {
-    throw new Error('REMOTE_BROWSER_ENDPOINT is required when BROWSER_MODE=remote');
-  }
-
-  if (config.scrapeDo.enforce && !config.scrapeDo.token) {
-    throw new Error('SCRAPE_DO_TOKEN is required when SCRAPE_DO_ENFORCE=true');
-  }
-
-  return config;
-}
-
-export const config = loadConfig();
 export type AppConfig = typeof config;
-
-function parseFloatWithBounds(value: string | undefined, fallback: number, name: string): number {
-  if (value === undefined || value === '') {
-    return fallback;
-  }
-
-  const n = Number.parseFloat(value);
-  if (!Number.isFinite(n)) {
-    throw new Error(`${name} must be a number`);
-  }
-  if (n < 0 || n > 1) {
-    throw new Error(`${name} must be between 0 and 1`);
-  }
-  return n;
-}

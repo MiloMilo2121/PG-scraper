@@ -140,7 +140,7 @@ export class ProxyManager {
                 server: `${url.protocol}//${url.host}`,
                 // Decode URL-encoded username/password (e.g., %3D -> =)
                 username: url.username ? decodeURIComponent(url.username) : undefined,
-                password: url.password ? decodeURIComponent(url.password) : undefined,
+                password: url.password ? decodeURIComponent(url.password) : '',
             };
         } catch {
             // Try simple format: host:port:user:pass
@@ -190,10 +190,10 @@ export class ProxyManager {
      */
     public async authenticateProxy(page: any, url: string): Promise<void> {
         const proxy = this.getProxyForUrl(url);
-        if (proxy.username && proxy.password) {
+        if (proxy.username) {
             await page.authenticate({
                 username: proxy.username,
-                password: proxy.password,
+                password: proxy.password || '',
             });
         }
     }

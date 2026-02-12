@@ -19,11 +19,12 @@ import { Logger } from '../../utils/logger';
 import { ProxyManager } from '../../../enricher/core/browser/proxy_manager';
 
 // Add plugin
-puppeteer.use(StealthPlugin());
+// puppeteer.use(StealthPlugin()); // Disabled to fix server crash (Zygote/Sandbox conflict)
 
 function getSandboxArgs(): string[] {
-    const inDocker = process.env.RUNNING_IN_DOCKER === 'true' || fs.existsSync('/.dockerenv');
-    return inDocker ? ['--no-sandbox', '--disable-setuid-sandbox'] : [];
+    // FORCE ARGS FOR DEBUGGING
+    console.log('[BrowserFactory] Forcing no-sandbox args');
+    return ['--no-sandbox', '--disable-setuid-sandbox'];
 }
 
 export class BrowserFactory {
@@ -143,33 +144,55 @@ export class BrowserFactory {
                     }) as unknown as Browser;
                     Logger.info('[BrowserFactory] ✅ Connected to Remote Swarm.');
                 } else {
-                    browser = await puppeteer.launch({
-                        headless: true,
-                        timeout: 60000,
-                        protocolTimeout: 60000,
-                        userDataDir: this.userDataDir,
-                        executablePath: executablePath,
-                        args: [
-                            ...proxyArgs,  // 🌐 PROXY FIRST
-                            ...getSandboxArgs(),
-                            '--disable-infobars',
-                            '--disable-dev-shm-usage',
-                            '--disable-gpu',
-                            '--disable-blink-features=AutomationControlled',
-                            '--limit-chrome-features-to-only-platform-essential',
-                            '--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints',
-                            '--disable-background-networking',
-                            '--disable-breakpad',
-                            '--disable-component-extensions-with-background-pages',
-                            '--disable-extensions',
-                            '--disable-ipc-flooding-protection',
-                            '--disable-renderer-backgrounding',
-                            '--enable-features=NetworkService,NetworkServiceInProcess',
-                            '--window-size=1920,1080',
-                            '--single-process',
-                            '--no-zygote'
-                        ]
-                    }) as unknown as Browser;
+                    const args = [
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--ignore-certificate-errors',
+                        '--ignore-certificate-errors-spki-list',
+                        // '--disable-dev-shm-usage', // Removing to match debug script
+                    ];
+
+                    // 🌐 PROXY SUPPORT
+                    const disableProxy = process.env.DISABLE_PROXY === 'true';
+
+                    if (config.proxy.residentialUrl && !disableProxy) {
+                        try {
+                            const url = new URL(config.proxy.residentialUrl);
+                            args.push(`--proxy-server=${url.protocol}//${url.host}`);
+                        } catch (e) {
+                            Logger.warn(`[BrowserFactory] Invalid proxy URL: ${config.proxy.residentialUrl}`);
+                        }
+                    } else if (disableProxy) {
+                        Logger.warn('[BrowserFactory] ⚠️ Proxy disabled via environment variable.');
+                    }
+
+                    // Add any specific proxy from ProxyManager if needed (though config.proxy usually covers it)
+                    if (proxyArgs.length > 0) {
+                        // checks if not already added
+                        if (!args.some(a => a.startsWith('--proxy-server'))) {
+                            args.push(proxyArgs[0]);
+                        }
+                    }
+
+                    try {
+                        Logger.info(`[BrowserFactory:${this.instanceId}] Spawning browser`);
+                        if (config.proxy.residentialUrl) {
+                            Logger.info(`[BrowserFactory:${this.instanceId}] 🛡️ Launching with Proxy: ${config.proxy.residentialUrl}`);
+                        }
+
+                        Logger.info(`[BrowserFactory] Final Args: ${JSON.stringify(args)}`);
+                        browser = await puppeteer.launch({
+                            headless: true,
+                            args: args,
+                            executablePath: process.env.CHROME_BIN || undefined,
+                            defaultViewport: null,
+                            ignoreHTTPSErrors: true,
+                            // userDataDir: this.userDataDir, // Disable custom profile to match debug script and avoid collisions
+                        } as any) as unknown as Browser;
+                    } catch (e) {
+                        Logger.error('[BrowserFactory] Launch failed', { error: e });
+                        throw e;
+                    }
                 }
 
                 this.browser = browser;
@@ -259,8 +282,10 @@ export class BrowserFactory {
         await BrowserEvasion.apply(page);
 
         // Task 16: Proxy Authentication (for authenticated proxies)
-        const proxyManager = ProxyManager.getInstance();
-        await proxyManager.authenticateProxy(page, 'https://paginegialle.it');
+        if (process.env.DISABLE_PROXY !== 'true') {
+            const proxyManager = ProxyManager.getInstance();
+            await proxyManager.authenticateProxy(page, 'https://paginegialle.it');
+        }
 
         // Task: Cookie Consent
         await CookieConsent.handle(page);
