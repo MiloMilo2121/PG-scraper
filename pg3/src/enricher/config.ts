@@ -156,6 +156,8 @@ export const config = {
     fastModel: env.AI_MODEL_FAST,
     smartModel: env.AI_MODEL_SMART,
     maxTokens: env.AI_MAX_TOKENS,
+    cacheTtlMs: env.AI_CACHE_TTL_MS,
+    cacheMaxEntries: env.AI_CACHE_MAX_ENTRIES,
   },
   google: {
     streetViewKey: env.GOOGLE_STREET_VIEW_KEY,

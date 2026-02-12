@@ -35,7 +35,7 @@ export class FinancialService {
     constructor(apiKey?: string) {
         this.browserFactory = BrowserFactory.getInstance();
         const key = (apiKey || config.llm.apiKey || '').trim();
-        this.openai = key ? new OpenAI({ apiKey: key, dangerouslyAllowBrowser: true }) : null;
+        this.openai = key ? new OpenAI({ apiKey: key }) : null;
         this.vies = new ViesService();
     }
 

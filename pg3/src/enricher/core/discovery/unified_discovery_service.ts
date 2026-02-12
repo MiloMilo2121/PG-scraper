@@ -148,6 +148,12 @@ export class UnifiedDiscoveryService {
     private nuclearStrategy: NuclearStrategy;
     private verificationCache = new Map<string, any>();
     private readonly verificationCacheTtlMs = 15 * 60 * 1000;
+    private readonly verificationCacheMaxSize = 2000;
+    // Track queries already executed to avoid cross-wave duplication
+    private executedQueries = new Set<string>();
+    // DNS result cache - avoid re-checking the same domain
+    private dnsCache = new Map<string, { result: boolean; expiry: number }>();
+    private readonly dnsCacheTtlMs = 5 * 60 * 1000;
 
     constructor(
         browserFactory?: BrowserFactory,
@@ -157,6 +163,11 @@ export class UnifiedDiscoveryService {
         this.rateLimiter = rateLimiter || new MemoryRateLimiter();
         this.fingerprinter = GeneticFingerprinter.getInstance();
         this.nuclearStrategy = new NuclearStrategy();
+    }
+
+    /** Reset per-company caches between discover() calls */
+    private resetPerCompanyCaches(): void {
+        this.executedQueries.clear();
     }
 
     /**
@@ -172,6 +183,7 @@ export class UnifiedDiscoveryService {
     // =========================================================================
     public async discover(company: CompanyInput, mode: DiscoveryMode = DiscoveryMode.DEEP_RUN2): Promise<DiscoveryResult> {
         Logger.info(`[Discovery] 🌊 Starting WAVE discovery for "${company.company_name}" (Mode: ${mode})`);
+        this.resetPerCompanyCaches();
         AntigravityClient.getInstance().trackCompanyUpdate(company, 'SEARCHING', { mode });
         const profile = MODE_PROFILES[mode] || MODE_PROFILES[DiscoveryMode.DEEP_RUN2];
         let bestInvalid: DiscoveryResult | null = null;
@@ -341,14 +353,18 @@ export class UnifiedDiscoveryService {
             promises.push(this.searchJina(company));
         }
 
-        // Launch all methods in parallel
-        const results = await Promise.all(promises);
+        // Launch all methods in parallel - use allSettled so one failure doesn't kill all results
+        const settled = await Promise.allSettled(promises);
 
-        // Collect all candidates
+        // Collect all candidates from fulfilled results
         const allCandidates: Candidate[] = [];
 
-        results.forEach(res => {
-            if (res) allCandidates.push(...res);
+        settled.forEach((result, idx) => {
+            if (result.status === 'fulfilled' && result.value) {
+                allCandidates.push(...result.value);
+            } else if (result.status === 'rejected') {
+                Logger.warn(`[Wave1] Provider ${idx} failed:`, { error: result.reason });
+            }
         });
 
         Logger.info(`[Wave1] 🐝 Collected ${allCandidates.length} candidates from Swarm`);
@@ -357,11 +373,12 @@ export class UnifiedDiscoveryService {
         return await this.validateAndSelectBest(allCandidates, company, 'WAVE1_SWARM', threshold, maxCandidates);
     }
 
-    // Wrappers for Bing/DDG to match signature
+    // Wrappers for Bing/DDG to match signature (track queries to avoid Wave 2 duplication)
     private async searchBing(company: CompanyInput): Promise<Candidate[] | null> {
         try {
             await this.rateLimiter.waitForSlot('bing');
             const query = `${company.company_name} ${company.city || ''} sito ufficiale contatti`;
+            this.executedQueries.add(query);
             const results = await this.scrapeBingDIY(query);
             this.rateLimiter.reportSuccess('bing');
             return results.slice(0, 8).map(r => ({ url: r.link, source: 'bing', confidence: 0.7 }));
@@ -376,6 +393,7 @@ export class UnifiedDiscoveryService {
         try {
             await this.rateLimiter.waitForSlot('duckduckgo');
             const query = `${company.company_name} ${company.city || ''} sito ufficiale contatti`;
+            this.executedQueries.add(query);
             const results = await this.scrapeDDGDIY(query);
             this.rateLimiter.reportSuccess('duckduckgo');
             return results.slice(0, 8).map(r => ({ url: r.link, source: 'duckduckgo', confidence: 0.7 }));
@@ -450,11 +468,13 @@ export class UnifiedDiscoveryService {
             const topGuesses = guesses.slice(0, 30);
             Logger.info(`[HyperGuesser] Generated ${topGuesses.length} domain candidates`);
 
-            const checks = await Promise.all(
+            const checks = await Promise.allSettled(
                 topGuesses.map(async (url) => {
-                    const dnsOk = await DomainValidator.checkDNS(url);
+                    const dnsOk = await this.cachedDnsCheck(url);
                     return dnsOk ? url : null;
                 })
+            ).then(results =>
+                results.map(r => r.status === 'fulfilled' ? r.value : null)
             );
 
             const live = checks.filter((url): url is string => !!url);
@@ -540,43 +560,59 @@ export class UnifiedDiscoveryService {
     private async executeWave2Net(company: CompanyInput, threshold: number, maxCandidates: number): Promise<DiscoveryResult | null> {
         const allCandidates: Candidate[] = [];
 
-        // Bing search
+        // Wave 2 uses DIFFERENT query patterns than Wave 1 to avoid duplication
+        // Wave 1 uses: "{name} {city} sito ufficiale contatti"
+        // Wave 2 uses: targeted queries with "chi siamo", P.IVA, category, etc.
+
+        // Bing: Company name + category (different from Wave 1 generic query)
         try {
             await this.rateLimiter.waitForSlot('bing');
-            const query = `${company.company_name} ${company.city || ''} sito ufficiale contatti`;
-            const bingResults = await this.scrapeBingDIY(query);
-            bingResults.slice(0, 8).forEach(r => {
-                allCandidates.push({ url: r.link, source: 'bing', confidence: 0.65 });
-            });
-            this.rateLimiter.reportSuccess('bing');
+            const query = `"${company.company_name}" ${company.city || ''} ${company.category || ''} sito web`;
+            if (!this.executedQueries.has(query)) {
+                this.executedQueries.add(query);
+                const bingResults = await this.scrapeBingDIY(query);
+                bingResults.slice(0, 8).forEach(r => {
+                    allCandidates.push({ url: r.link, source: 'bing_w2', confidence: 0.65 });
+                });
+                this.rateLimiter.reportSuccess('bing');
+            }
         } catch (e) {
             this.rateLimiter.reportFailure('bing');
             Logger.warn('[Wave2] Bing search failed', { error: e as Error, company_name: company.company_name });
         }
 
-        // DuckDuckGo search
+        // DuckDuckGo: Reverse VAT/phone search (different from Wave 1)
         try {
             await this.rateLimiter.waitForSlot('duckduckgo');
-            const query = `${company.company_name} ${company.city || ''} sito ufficiale contatti`;
-            const ddgResults = await this.scrapeDDGDIY(query);
-            ddgResults.slice(0, 8).forEach(r => {
-                allCandidates.push({ url: r.link, source: 'duckduckgo', confidence: 0.65 });
-            });
-            this.rateLimiter.reportSuccess('duckduckgo');
+            const vat = company.vat_code || company.piva || company.vat || '';
+            const query = vat
+                ? `"${vat}" ${company.company_name} sito`
+                : `"${company.company_name}" ${company.city || ''} "P.IVA" contatti`;
+            if (!this.executedQueries.has(query)) {
+                this.executedQueries.add(query);
+                const ddgResults = await this.scrapeDDGDIY(query);
+                ddgResults.slice(0, 8).forEach(r => {
+                    allCandidates.push({ url: r.link, source: 'duckduckgo_w2', confidence: 0.65 });
+                });
+                this.rateLimiter.reportSuccess('duckduckgo');
+            }
         } catch (e) {
             this.rateLimiter.reportFailure('duckduckgo');
             Logger.warn('[Wave2] DuckDuckGo search failed', { error: e as Error, company_name: company.company_name });
         }
 
-        // Additional targeted query for ambiguous brands
+        // Bing: Targeted "chi siamo" / "contatti" query
         try {
             await this.rateLimiter.waitForSlot('bing');
             const contactQuery = `"${company.company_name}" ${company.city || ''} "chi siamo" "contatti"`;
-            const targeted = await this.scrapeBingDIY(contactQuery);
-            targeted.slice(0, 6).forEach((r) => {
-                allCandidates.push({ url: r.link, source: 'bing_targeted', confidence: 0.68 });
-            });
-            this.rateLimiter.reportSuccess('bing');
+            if (!this.executedQueries.has(contactQuery)) {
+                this.executedQueries.add(contactQuery);
+                const targeted = await this.scrapeBingDIY(contactQuery);
+                targeted.slice(0, 6).forEach((r) => {
+                    allCandidates.push({ url: r.link, source: 'bing_targeted', confidence: 0.68 });
+                });
+                this.rateLimiter.reportSuccess('bing');
+            }
         } catch (e) {
             this.rateLimiter.reportFailure('bing');
             Logger.warn('[Wave2] Bing targeted search failed', { error: e as Error, company_name: company.company_name });
@@ -613,7 +649,7 @@ export class UnifiedDiscoveryService {
 
         for (const url of guesses.slice(sliceStart, sliceEnd)) {
             try {
-                const dnsOk = await DomainValidator.checkDNS(url);
+                const dnsOk = await this.cachedDnsCheck(url);
                 if (!dnsOk) continue;
 
                 const verification = await this.deepVerifyWithAI(url, company);
@@ -1347,7 +1383,32 @@ export class UnifiedDiscoveryService {
     }
 
     private setCachedVerification(key: string, result: any): void {
+        // Evict oldest entries if cache is full
+        if (this.verificationCache.size >= this.verificationCacheMaxSize) {
+            const oldest = this.verificationCache.keys().next().value;
+            if (oldest) this.verificationCache.delete(oldest);
+        }
         this.verificationCache.set(key, { result, cachedAt: Date.now() });
+    }
+
+    /** Cached DNS check - avoids repeating DNS lookups for the same domain */
+    private async cachedDnsCheck(url: string): Promise<boolean> {
+        try {
+            const hostname = new URL(url.startsWith('http') ? url : `https://${url}`).hostname;
+            const cached = this.dnsCache.get(hostname);
+            if (cached && cached.expiry > Date.now()) return cached.result;
+
+            const result = await DomainValidator.checkDNS(url);
+            this.dnsCache.set(hostname, { result, expiry: Date.now() + this.dnsCacheTtlMs });
+            // Evict oldest if too large
+            if (this.dnsCache.size > 5000) {
+                const oldest = this.dnsCache.keys().next().value;
+                if (oldest) this.dnsCache.delete(oldest);
+            }
+            return result;
+        } catch {
+            return false;
+        }
     }
 
     private async acceptGoogleConsentIfPresent(page: Page): Promise<void> {

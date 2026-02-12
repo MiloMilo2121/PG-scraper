@@ -54,28 +54,36 @@ async function main() {
     // 1. RUN 1: FAST (Process Everything)
     const allInput = await loadCompanies(INPUT_FILE); // From raw input
 
-    // 🦘 USER OVERRIDE: SKIPPING RUN 1 (FAST)
-    Logger.info('🦘 SKIPPING RUN 1 (FAST) -> JUMPING DIRECTLY TO RUN 2 (DEEP)');
-    // await executeRun(1, DiscoveryMode.FAST_RUN1, allInput);
+    // RUN 1: FAST pass - resolves easy cases quickly before deep analysis
+    const skipRun1 = process.env.SKIP_RUN1 === 'true';
+    if (skipRun1) {
+        Logger.info('🦘 SKIPPING RUN 1 (FAST) via SKIP_RUN1=true -> JUMPING TO RUN 2');
+    } else {
+        await executeRun(1, DiscoveryMode.FAST_RUN1, allInput);
+    }
 
-    // 2. RUN 2: DEEP (Process EVERYTHING using Deep Mode)
-    // We feed the full 'allInput' list directly into Run 2
-    await executeRun(2, DiscoveryMode.DEEP_RUN2, allInput);
+    // 2. RUN 2: DEEP (Process failures from Run 1, or all if Run 1 was skipped)
+    const run2Input = skipRun1 ? allInput : [
+        ...await Promise.all([
+            loadCompanies(path.join(OUTPUT_DIR, 'run1_found_invalid.csv')),
+            loadCompanies(path.join(OUTPUT_DIR, 'run1_not_found.csv'))
+        ]).then(r => r.flat())
+    ];
+    await executeRun(2, DiscoveryMode.DEEP_RUN2, run2Input);
 
     // 3. RUN 3: AGGRESSIVE (Process remaining issues from Run 2)
-    const run3Input = [
-        ...await loadCompanies(path.join(OUTPUT_DIR, 'run2_found_invalid.csv')),
-        ...await loadCompanies(path.join(OUTPUT_DIR, 'run2_not_found.csv'))
-    ];
-    await executeRun(3, DiscoveryMode.AGGRESSIVE_RUN3, run3Input);
+    const [run3Invalid, run3NotFound] = await Promise.all([
+        loadCompanies(path.join(OUTPUT_DIR, 'run2_found_invalid.csv')),
+        loadCompanies(path.join(OUTPUT_DIR, 'run2_not_found.csv'))
+    ]);
+    await executeRun(3, DiscoveryMode.AGGRESSIVE_RUN3, [...run3Invalid, ...run3NotFound]);
 
     // ☢️ RUN 4: NUCLEAR (Process stubborn cases with 20+ methods)
-    // ENABLED: High precision shelling initiated.
-    const run4Input = [
-        ...await loadCompanies(path.join(OUTPUT_DIR, 'run3_found_invalid.csv')),
-        ...await loadCompanies(path.join(OUTPUT_DIR, 'run3_not_found.csv'))
-    ];
-    await executeRun(4, DiscoveryMode.NUCLEAR_RUN4, run4Input);
+    const [run4Invalid, run4NotFound] = await Promise.all([
+        loadCompanies(path.join(OUTPUT_DIR, 'run3_found_invalid.csv')),
+        loadCompanies(path.join(OUTPUT_DIR, 'run3_not_found.csv'))
+    ]);
+    await executeRun(4, DiscoveryMode.NUCLEAR_RUN4, [...run4Invalid, ...run4NotFound]);
 
     // 4. FINAL MERGE
     await mergeResults();
@@ -127,6 +135,18 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
     const notFoundWriter = getWriter(notFoundPath);
     const writeQueue = pLimit(1);
 
+    // Batch buffers - flush every BATCH_SIZE records for fewer I/O ops
+    const BATCH_SIZE = 25;
+    const validBuffer: any[] = [];
+    const invalidBuffer: any[] = [];
+    const notFoundBuffer: any[] = [];
+
+    const flushBuffer = async (buffer: any[], writer: any) => {
+        if (buffer.length === 0) return;
+        const batch = buffer.splice(0, buffer.length);
+        await writeQueue(() => writer.writeRecords(batch));
+    };
+
     const limit = pLimit(RUNNER_CONCURRENCY_LIMIT);
     let processedCount = companies.length - pending.length;
 
@@ -138,6 +158,12 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
         }
     }, 10000);
 
+    // Periodic flush interval - ensure data is written even between batches
+    const flushInterval = setInterval(async () => {
+        await flushBuffer(validBuffer, validWriter);
+        await flushBuffer(invalidBuffer, invalidWriter);
+        await flushBuffer(notFoundBuffer, notFoundWriter);
+    }, 5000);
 
     const tasks = pending.map(company => limit(async () => {
         try {
@@ -145,7 +171,7 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
             const res = await SERVICE.discover(company, mode);
             let enriched = { ...company, ...enrichCompanyWithResult(company, res) };
 
-            // 🏆 SCORING
+            // SCORING
             const score = LeadScorer.score(enriched);
             enriched = { ...enriched, lead_score: score };
 
@@ -153,28 +179,26 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
 
             if (res.status === 'FOUND_VALID') {
                 Logger.info(`[${mode}] FOUND: ${company.company_name} -> ${res.url}`);
-                await writeQueue(() => validWriter.writeRecords([enriched]));
+                validBuffer.push(enriched);
+                if (validBuffer.length >= BATCH_SIZE) await flushBuffer(validBuffer, validWriter);
                 AntigravityClient.getInstance().trackCompanyUpdate(enriched, 'ENRICHED', {
                     final_url: res.url,
                     piva: res.details?.scraped_piva
                 });
             } else if (res.status === 'FOUND_INVALID') {
-                Logger.warn(`[${mode}] INVALID: ${company.company_name} -> ${res.url} (${res.details.reason})`);
-                await writeQueue(() => invalidWriter.writeRecords([enriched]));
+                Logger.warn(`[${mode}] INVALID: ${company.company_name} -> ${res.url} (${res.details?.reason || 'unknown'})`);
+                invalidBuffer.push(enriched);
+                if (invalidBuffer.length >= BATCH_SIZE) await flushBuffer(invalidBuffer, invalidWriter);
                 AntigravityClient.getInstance().trackCompanyUpdate(enriched, 'FAILED', { reason: 'Invalid Content' });
             } else {
-                await writeQueue(() => notFoundWriter.writeRecords([enriched]));
+                notFoundBuffer.push(enriched);
+                if (notFoundBuffer.length >= BATCH_SIZE) await flushBuffer(notFoundBuffer, notFoundWriter);
                 AntigravityClient.getInstance().trackCompanyUpdate(enriched, 'FAILED', { reason: 'Not Found' });
             }
         } catch (error) {
             Logger.error(`Error processing ${company.company_name}`, { error: error as Error });
         } finally {
             processedCount++;
-            // Memory cleanup: Close idle browser contexts periodically
-            if (processedCount % 50 === 0) {
-                Logger.info(`🔄 [${processedCount}/${companies.length}] Periodic cleanup...`);
-                // BrowserFactory will handle context cleanup internally
-            }
             if (processedCount % RUNNER_PROGRESS_LOG_EVERY === 0) {
                 Logger.info(`[Run ${runId}] ${processedCount}/${companies.length}`);
             }
@@ -183,9 +207,14 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
 
     try {
         await Promise.all(tasks);
+        // Final flush of remaining buffered records
+        await flushBuffer(validBuffer, validWriter);
+        await flushBuffer(invalidBuffer, invalidWriter);
+        await flushBuffer(notFoundBuffer, notFoundWriter);
         Logger.info(`🏁 RUN ${runId} COMPLETED`);
     } finally {
         clearInterval(memoryWatchdog);
+        clearInterval(flushInterval);
     }
 }
 
@@ -237,7 +266,7 @@ function buildCompanyKey(company: CompanyInput): string {
 
 async function loadCompanies(filePath: string): Promise<CompanyInput[]> {
     if (!fs.existsSync(filePath)) return [];
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
         const rows: CompanyInput[] = [];
         fs.createReadStream(filePath)
             .pipe(parse({ headers: true, strictColumnHandling: false, discardUnmappedColumns: true, ignoreEmpty: true }))
@@ -249,7 +278,11 @@ async function loadCompanies(filePath: string): Promise<CompanyInput[]> {
                 }
                 rows.push(parsed.data as CompanyInput);
             })
-            .on('end', () => resolve(rows));
+            .on('end', () => resolve(rows))
+            .on('error', (err) => {
+                Logger.error(`CSV parse error in ${filePath}`, { error: err });
+                reject(err);
+            });
     });
 }
 
@@ -269,16 +302,18 @@ async function mergeResults() {
     const valid3 = await loadCompanies(path.join(OUTPUT_DIR, 'run3_found_valid.csv'));
 
     const allValid = [...valid1, ...valid2, ...valid3];
-    // Deduplicate by name just in case
-    const unique = new Map();
-    allValid.forEach(c => unique.set(c.company_name, c)); // Last write wins (Run 3 overrides Run 1? No, Run 1 is higher quality usually, but we are appending valid ones from later runs)
-    // Actually, Run 1 valid are best. Run 2 valid are good. Run 3 valid are okay.
-    // They process distinct sets (Run 2 processes only Run 1 failures), so no overlap issues typically.
+    // Deduplicate by name: first-write-wins (Run 1 results are highest quality)
+    const unique = new Map<string, CompanyInput>();
+    allValid.forEach(c => {
+        if (!unique.has(c.company_name)) unique.set(c.company_name, c);
+    });
 
-    // Merge Run 4 if exists
+    // Merge Run 4 if exists (only for companies not already found)
     if (fs.existsSync(path.join(OUTPUT_DIR, 'run4_found_valid.csv'))) {
         const valid4 = await loadCompanies(path.join(OUTPUT_DIR, 'run4_found_valid.csv'));
-        valid4.forEach(c => unique.set(c.company_name, c));
+        valid4.forEach(c => {
+            if (!unique.has(c.company_name)) unique.set(c.company_name, c);
+        });
     }
 
     await writeCsv(path.join(OUTPUT_DIR, 'FINAL_VALID_WEBSITES.csv'), Array.from(unique.values()));

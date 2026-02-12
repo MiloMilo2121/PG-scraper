@@ -16,8 +16,10 @@ import { config } from '../../config';
 import { BrowserEvasion } from './evasion';
 import { CookieConsent } from './cookie_consent';
 
-// Add plugin
-// puppeteer.use(StealthPlugin()); // Disabled to fix ERR_INVALID_AUTH_CREDENTIALS
+// Re-enable stealth with safe evasions (exclude chrome.runtime which conflicts with proxy auth)
+const stealth = StealthPlugin();
+stealth.enabledEvasions.delete('chrome.runtime');
+puppeteer.use(stealth);
 
 function getSandboxArgs(): string[] {
     const inDocker = process.env.RUNNING_IN_DOCKER === 'true' || fs.existsSync('/.dockerenv');
@@ -31,6 +33,8 @@ export class BrowserFactory {
     private userDataDir: string;
     private launchPromise: Promise<Browser> | null = null;
     private activePages: Set<Page> = new Set();
+    private recycledPages: Page[] = []; // Page pool for recycling
+    private static readonly MAX_RECYCLED_PAGES = 4;
     private instanceId: string;
     private lastHealthCheck: number = Date.now();
     private currentProfilePath: string | null = null;
@@ -193,7 +197,6 @@ export class BrowserFactory {
                             '--disable-renderer-backgrounding',
                             '--enable-features=NetworkService,NetworkServiceInProcess',
                             '--window-size=1920,1080',
-                            '--single-process',
                             '--no-zygote',
                             '--ignore-certificate-errors'
                         ]
@@ -243,7 +246,18 @@ export class BrowserFactory {
             }
         }
 
-        const page = await this.browser!.newPage();
+        // Try to recycle a page from the pool (saves ~2s page setup overhead)
+        let page: Page | undefined;
+        while (this.recycledPages.length > 0) {
+            const candidate = this.recycledPages.pop()!;
+            if (!candidate.isClosed()) {
+                page = candidate;
+                break;
+            }
+        }
+        if (!page) {
+            page = await this.browser!.newPage();
+        }
         this.activePages.add(page);
         page.once('close', () => this.activePages.delete(page));
 
@@ -318,16 +332,31 @@ export class BrowserFactory {
     }
 
     public async closePage(page: Page): Promise<void> {
-        // Ensure we never block the pipeline on a hanging page close.
         const CLOSE_TIMEOUT_MS = 5000;
 
-        // Remove from the pool immediately to prevent newPage() deadlocks.
+        // Remove from active pool immediately to prevent newPage() deadlocks.
         this.activePages.delete(page);
 
-        if (page.isClosed()) {
-            return;
+        if (page.isClosed()) return;
+
+        // Try to recycle the page instead of destroying it
+        if (this.recycledPages.length < BrowserFactory.MAX_RECYCLED_PAGES) {
+            try {
+                // Navigate to blank page to clear state, with timeout
+                await Promise.race([
+                    page.goto('about:blank', { timeout: 3000 }).catch(() => {}),
+                    new Promise<void>(r => setTimeout(r, 3000)),
+                ]);
+                if (!page.isClosed()) {
+                    this.recycledPages.push(page);
+                    return;
+                }
+            } catch {
+                // Recycling failed, close normally
+            }
         }
 
+        // Can't recycle - close the page
         try {
             await Promise.race([
                 page.close(),
@@ -341,10 +370,16 @@ export class BrowserFactory {
     }
 
     public async close(): Promise<void> {
+        // Close active pages
         for (const page of [...this.activePages]) {
-            await this.closePage(page);
+            if (!page.isClosed()) await page.close().catch(() => {});
         }
         this.activePages.clear();
+        // Close recycled pages
+        for (const page of this.recycledPages) {
+            if (!page.isClosed()) await page.close().catch(() => {});
+        }
+        this.recycledPages = [];
 
         if (this.browser) {
             const browserToClose = this.browser;
