@@ -24,6 +24,7 @@ import { GoogleSerpAnalyzer } from './serp_analyzer';
 import { GoogleSearchProvider, DDGSearchProvider } from './search_provider';
 import { DuckDuckGoSerpAnalyzer } from './ddg_analyzer';
 import { LLMValidator } from '../ai/llm_validator';
+import { AgentRunner } from '../agent/agent_runner';
 import { AntigravityClient } from '../../observability/antigravity_client';
 import { HoneyPotDetector } from '../security/honeypot_detector';
 import { config } from '../../config';
@@ -982,6 +983,27 @@ export class UnifiedDiscoveryService {
                     }
                 } catch (llmError) {
                     Logger.warn('[DeepVerify] LLM fallback failed', { error: llmError as Error, company_name: company.company_name });
+                }
+            }
+
+            // 🤖 AGENTIC FALLBACK (Phase 3)
+            // If confidence is mediocre (0.4 - 0.85) and no VAT/Phone matched, the site might be correct but complex.
+            // Unleash the Agent to find the P.IVA.
+            if (evaluation.confidence >= 0.4 && evaluation.confidence < 0.85 && !evaluation.scrapedVat && !evaluation.matchedPhone) {
+                Logger.info(`[DeepVerify] Low confidence (${evaluation.confidence.toFixed(2)}) for ${currentUrl}. Unleashing Agent...`);
+                try {
+                    const goal = `Find the VAT number (P.IVA) for "${company.company_name}" in "${company.city || 'Italy'}". Return ONLY the VAT code.`;
+                    const agentResult = await AgentRunner.run(page, goal);
+
+                    // Basic validation of agent result (it should look like a VAT number)
+                    if (agentResult && (agentResult.includes('IT') || agentResult.match(/\d{11}/))) {
+                        Logger.info(`[DeepVerify] 🤖 Agent salvaged session! Found: ${agentResult}`);
+                        evaluation.scrapedVat = agentResult;
+                        evaluation.confidence = 0.95;
+                        evaluation.reason += "; Agent verified P.IVA";
+                    }
+                } catch (agentError) {
+                    Logger.warn('[DeepVerify] Agent fallback failed', { error: agentError as Error });
                 }
             }
 

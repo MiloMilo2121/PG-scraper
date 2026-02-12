@@ -36,22 +36,17 @@ function safeHost(url: string): string {
   }
 }
 
-function looksBlocked(status: number, body: string): boolean {
-  if ([401, 403, 407, 429, 451, 503].includes(status)) return true;
-  const lower = body.toLowerCase();
-  const patterns = [
-    'accesso bloccato',
-    'access denied',
-    'request blocked',
-    'unusual traffic',
-    'traffico insolito',
-    'captcha',
-    'are you a robot',
-    'verifica che tu sia un essere umano',
-    'ddos-guard',
-    'cloudflare',
-  ];
-  return patterns.some((p) => lower.includes(p));
+import { BlockClassifier, BlockType } from '../core/security/block_classifier';
+
+function looksBlocked(status: number, body: string, url: string = ''): boolean {
+  const sig = BlockClassifier.classify(status, body, url, 'scraper_client');
+  if (sig.type !== BlockType.NONE) {
+    BlockClassifier.recordBlock(sig);
+    return true;
+  }
+  // Legacy fallback: keep original status-code checks for edge cases
+  if ([401, 407, 451, 503].includes(status)) return true;
+  return false;
 }
 
 function isHardTarget(url: string): boolean {
@@ -194,7 +189,7 @@ export class ScraperClient {
     }
 
     const direct = await withRetry(() => this.directGet(targetUrl, options), retries);
-    if (!looksBlocked(direct.status, direct.data)) {
+    if (!looksBlocked(direct.status, direct.data, targetUrl)) {
       return direct;
     }
 

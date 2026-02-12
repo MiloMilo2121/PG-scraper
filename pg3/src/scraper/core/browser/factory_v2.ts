@@ -18,8 +18,12 @@ import { Logger } from '../../utils/logger';
 // Task 16: Proxy Integration
 import { ProxyManager } from '../../../enricher/core/browser/proxy_manager';
 
-// Add plugin
-// puppeteer.use(StealthPlugin()); // Disabled to fix server crash (Zygote/Sandbox conflict)
+// 🛡️ Stealth Plugin: Re-enabled with safety valve (Law 308: Fingerprint Spoofing)
+// Original disable was for Zygote/Sandbox conflict.
+// Use DISABLE_STEALTH=true if proxy-auth issues recur.
+if (process.env.DISABLE_STEALTH !== 'true') {
+    puppeteer.use(StealthPlugin());
+}
 
 function getSandboxArgs(): string[] {
     // FORCE ARGS FOR DEBUGGING

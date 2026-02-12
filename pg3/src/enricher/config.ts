@@ -156,6 +156,14 @@ export const config = {
     fastModel: env.AI_MODEL_FAST,
     smartModel: env.AI_MODEL_SMART,
     maxTokens: env.AI_MAX_TOKENS,
+    /** Per-model pricing in $/1M tokens (2026 OpenAI rates). Law 006: No magic numbers. */
+    pricing: {
+      'gpt-4o-mini': { inputPer1M: 0.15, outputPer1M: 0.60 },
+      'gpt-4o': { inputPer1M: 2.50, outputPer1M: 10.00 },
+      'gpt-4': { inputPer1M: 30.00, outputPer1M: 60.00 },
+      'gpt-3.5-turbo': { inputPer1M: 0.50, outputPer1M: 1.50 },
+      'o3-mini': { inputPer1M: 1.10, outputPer1M: 4.40 }, // Reasoning model (Tier 1 intelligence, Tier low cost)
+    } as Record<string, { inputPer1M: number; outputPer1M: number }>,
   },
   google: {
     streetViewKey: env.GOOGLE_STREET_VIEW_KEY,

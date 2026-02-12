@@ -16,8 +16,12 @@ import { config } from '../../config';
 import { BrowserEvasion } from './evasion';
 import { CookieConsent } from './cookie_consent';
 
-// Add plugin
-// puppeteer.use(StealthPlugin()); // Disabled to fix ERR_INVALID_AUTH_CREDENTIALS
+// 🛡️ Stealth Plugin: Re-enabled with safety valve (Law 308: Fingerprint Spoofing)
+// Original disable was for ERR_INVALID_AUTH_CREDENTIALS (proxy-auth conflict).
+// Use DISABLE_STEALTH=true if proxy-auth issues recur.
+if (process.env.DISABLE_STEALTH !== 'true') {
+    puppeteer.use(StealthPlugin());
+}
 
 function getSandboxArgs(): string[] {
     const inDocker = process.env.RUNNING_IN_DOCKER === 'true' || fs.existsSync('/.dockerenv');
