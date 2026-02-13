@@ -22,6 +22,13 @@ export class TorBrowser {
     private readonly ROTATION_COOLDOWN_MS = 10000;
     private lastRotationTime = 0;
 
+    // 🔌 Circuit-breaker for Tor ControlPort availability
+    private controlPortAvailable: boolean | null = null; // null = not checked yet
+    private controlPortCheckTime = 0;
+    private readonly CONTROL_PORT_RECHECK_MS = 60000; // Re-check every 60s
+    private consecutiveFailures = 0;
+    private readonly MAX_FAILURES_BEFORE_DISABLE = 2;
+
     private constructor() { }
 
     public static getInstance(): TorBrowser {
@@ -29,6 +36,49 @@ export class TorBrowser {
             TorBrowser.instance = new TorBrowser();
         }
         return TorBrowser.instance;
+    }
+
+    /**
+     * 🔌 Check if Tor ControlPort (9051) is reachable.
+     * Result is cached for CONTROL_PORT_RECHECK_MS to avoid repeated probes.
+     */
+    public async isControlPortAvailable(): Promise<boolean> {
+        const now = Date.now();
+        if (this.controlPortAvailable !== null && (now - this.controlPortCheckTime) < this.CONTROL_PORT_RECHECK_MS) {
+            return this.controlPortAvailable;
+        }
+
+        try {
+            await this.probeControlPort();
+            this.controlPortAvailable = true;
+            this.consecutiveFailures = 0;
+            Logger.info('[TorBrowser] ✅ ControlPort 9051 is reachable');
+        } catch {
+            this.controlPortAvailable = false;
+            Logger.warn('[TorBrowser] ❌ ControlPort 9051 is NOT reachable. Tor rotation disabled until next check.');
+        }
+        this.controlPortCheckTime = now;
+        return this.controlPortAvailable;
+    }
+
+    /**
+     * Quick TCP probe to ControlPort - connect and immediately close.
+     */
+    private probeControlPort(): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const socket = net.createConnection({ port: 9051, host: '127.0.0.1' }, () => {
+                socket.end();
+                resolve();
+            });
+            socket.on('error', (err) => {
+                socket.destroy();
+                reject(err);
+            });
+            setTimeout(() => {
+                socket.destroy();
+                reject(new Error('Probe timeout'));
+            }, 2000);
+        });
     }
 
     /**
@@ -93,8 +143,14 @@ export class TorBrowser {
     /**
      * 🔄 ROTATE IP
      * Thread-safe rotation using Mutex.
+     * Fails fast if ControlPort is known to be unreachable (circuit-breaker).
      */
     public async rotateIP(): Promise<void> {
+        // Circuit-breaker: skip rotation entirely if ControlPort is known down
+        if (this.controlPortAvailable === false && (Date.now() - this.controlPortCheckTime) < this.CONTROL_PORT_RECHECK_MS) {
+            throw new TorError('Tor ControlPort 9051 is unreachable (circuit-breaker active)', false);
+        }
+
         // Double-check cooldown before acquiring lock to save time
         const timeSinceLast = Date.now() - this.lastRotationTime;
         if (timeSinceLast < this.ROTATION_COOLDOWN_MS) {
@@ -114,13 +170,34 @@ export class TorBrowser {
             try {
                 await this.sendNewNymSignal();
                 this.lastRotationTime = Date.now();
+                this.consecutiveFailures = 0;
+                this.controlPortAvailable = true;
                 Logger.info('[TorBrowser] ✅ IP Rotation Signal Sent');
 
                 // Close browser to force new socket connection on next request
                 await this.close();
             } catch (e) {
+                this.consecutiveFailures++;
+                const msg = (e as Error).message;
+
+                // If ECONNREFUSED, mark ControlPort as down to avoid future retries
+                if (msg.includes('ECONNREFUSED') || msg.includes('ECONNRESET') || msg.includes('ENOTFOUND')) {
+                    this.controlPortAvailable = false;
+                    this.controlPortCheckTime = Date.now();
+                    Logger.error('[TorBrowser] ❌ Rotation failed (ControlPort unreachable). Circuit-breaker engaged.', { error: e as Error });
+                    throw new TorError(`Rotation failed: ${msg}`, false);
+                }
+
                 Logger.error('[TorBrowser] ❌ Rotation failed', { error: e as Error });
-                throw new TorError(`Rotation failed: ${(e as Error).message}`);
+
+                // After repeated failures, engage circuit-breaker
+                if (this.consecutiveFailures >= this.MAX_FAILURES_BEFORE_DISABLE) {
+                    this.controlPortAvailable = false;
+                    this.controlPortCheckTime = Date.now();
+                    Logger.warn(`[TorBrowser] Circuit-breaker engaged after ${this.consecutiveFailures} consecutive failures`);
+                }
+
+                throw new TorError(`Rotation failed: ${msg}`);
             }
         });
     }
