@@ -291,8 +291,18 @@ export class BrowserFactory {
             await proxyManager.authenticateProxy(page, 'https://paginegialle.it');
         }
 
+
         // Task: Cookie Consent
-        await CookieConsent.handle(page);
+        try {
+            await CookieConsent.handle(page);
+        } catch (e) {
+            Logger.warn(`[BrowserFactory] ⚠️ Cookie consent failed (non-critical): ${(e as Error).message}`);
+        }
+
+        // 🛡️ MONITOR DETACHED FRAMES
+        page.on('error', err => Logger.error(`[BrowserFactory] ❌ Page Error: ${err.message}`));
+        page.on('close', () => Logger.info(`[BrowserFactory] 🚪 Page Closed`));
+        // page.on('frame detached', ...) can be noisy, but good for debug if needed
 
         return page;
     }

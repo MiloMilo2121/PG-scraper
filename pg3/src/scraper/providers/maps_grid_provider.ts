@@ -112,6 +112,25 @@ export class MapsGridProvider {
         return previousCount;
     }
 
+
+    private static async safeEvaluate<T>(page: Page, fn: (...args: any[]) => T, ...args: any[]): Promise<T | null> {
+        try {
+            return await page.evaluate(fn, ...args);
+        } catch (error) {
+            if ((error as Error).message.includes('detached') || (error as Error).message.includes('destroyed')) {
+                Logger.warn(`[MapsGrid] ⚠️ Frame detached during evaluation. Retrying once...`);
+                try {
+                    await new Promise(r => setTimeout(r, 1000));
+                    return await page.evaluate(fn, ...args);
+                } catch (retryError) {
+                    Logger.warn(`[MapsGrid] ❌ Retry failed: ${(retryError as Error).message}`);
+                    return null;
+                }
+            }
+            throw error;
+        }
+    }
+
     /**
      * Extract business data from all visible result cards.
      */
@@ -120,7 +139,7 @@ export class MapsGridProvider {
         category: string,
         location: string
     ): Promise<CompanyInput[]> {
-        return await page.evaluate((cat, loc) => {
+        const results = await this.safeEvaluate(page, (cat, loc) => {
             const results: any[] = [];
             const feed = document.querySelector('div[role="feed"]');
             if (!feed) return results;
@@ -185,7 +204,9 @@ export class MapsGridProvider {
             }
 
             return results;
-        }, category, location) as CompanyInput[];
+        }, category, location);
+
+        return (results as CompanyInput[]) || [];
     }
 
     /**
