@@ -11,6 +11,7 @@ import { Logger } from '../../utils/logger';
 import { CaptchaSolver } from '../security/captcha_solver';
 import { config } from '../../config';
 import { PagineGialleHarvester } from '../directories/paginegialle';
+import { FatturatoItaliaHarvester } from '../directories/fatturato_italia';
 import { ScraperClient } from '../../utils/scraper_client';
 import * as cheerio from 'cheerio';
 import { FinancialPatterns } from './patterns';
@@ -57,7 +58,8 @@ export class FinancialService {
 
             const strategies = [
                 () => this.scrapeUfficioCameraleDirect(validVat!),
-                () => this.scrapeSecondaryRegistries(validVat!)
+                () => this.scrapeSecondaryRegistries(validVat!),
+                () => this.scrapeFatturatoItalia(company, validVat)
             ];
 
             for (const strategy of strategies) {
@@ -72,6 +74,13 @@ export class FinancialService {
             const nameSearch = await this.googleSearchFinancialsByName(company);
             if (nameSearch.revenue) data.revenue = nameSearch.revenue;
             if (nameSearch.employees) data.employees = nameSearch.employees;
+
+            // Try FatturatoItalia by name search (no VAT)
+            if (!data.revenue || !data.employees) {
+                const fiData = await this.scrapeFatturatoItalia(company);
+                if (fiData.revenue && !data.revenue) data.revenue = fiData.revenue;
+                if (fiData.employees && !data.employees) data.employees = fiData.employees;
+            }
         }
 
         // --- PHASE 3: FALLBACK (ReportAziende) ---
@@ -233,6 +242,29 @@ export class FinancialService {
             }
             return null;
         }, domains);
+    }
+
+    // =========================================================================
+    // 📊 FATTURATO ITALIA
+    // =========================================================================
+
+    private async scrapeFatturatoItalia(company: CompanyInput, vat?: string): Promise<{ revenue?: string; employees?: string }> {
+        try {
+            // Inject VAT into company if we discovered it
+            const enrichedCompany = vat ? { ...company, vat_code: vat } : company;
+            const fiResult = await FatturatoItaliaHarvester.harvest(enrichedCompany);
+
+            if (fiResult) {
+                Logger.info(`[Financial] 📊 FatturatoItalia found: ${fiResult.url} → revenue=${fiResult.revenue || 'N/A'}, employees=${fiResult.employees || 'N/A'}`);
+                return {
+                    revenue: fiResult.revenue,
+                    employees: fiResult.employees,
+                };
+            }
+        } catch (e) {
+            Logger.warn(`[Financial] FatturatoItalia scrape failed: ${(e as Error).message}`);
+        }
+        return {};
     }
 
     // =========================================================================
