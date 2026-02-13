@@ -22,8 +22,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { createObjectCsvWriter } from 'csv-writer';
-import { Page } from 'puppeteer';
-import { BrowserFactory } from './core/browser/factory_v2';
+import { Page, Browser } from 'puppeteer';
+import puppeteerCore from 'puppeteer';
+// BrowserFactory BYPASSED: its newPage() initialization pipeline (GeneticFingerprinter,
+// BrowserEvasion, ProxyManager, CookieConsent) detaches the page frame on the server.
+// Raw puppeteer.launch() works perfectly (confirmed by diagnostic).
 import { Deduplicator } from './utils/deduplicator';
 import { CompanyInput } from './types';
 import { MapsGridProvider } from './providers/maps_grid_provider';
@@ -89,9 +92,66 @@ function resolveProvinceName(code: string): string {
     return PROVINCE_CODES[code] || code;
 }
 
+// ─── HELPER: SETUP PAGE ──────────────────────────────────────────────────────
+// ─── HELPER: SETUP PAGE ──────────────────────────────────────────────────────
+let browserInstance: Browser | null = null;
+
+async function getBrowser(): Promise<Browser> {
+    if (browserInstance && browserInstance.isConnected()) return browserInstance;
+
+    Logger.info('[Browser] 🔄 (Re)launching browser...');
+    try {
+        if (browserInstance) await browserInstance.close().catch(() => { });
+    } catch { }
+
+    browserInstance = await (puppeteerCore as any).launch({
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage', // 🔑 CRITICAL for server stability
+            '--ignore-certificate-errors',
+        ],
+        executablePath: process.env.CHROME_BIN || undefined,
+        defaultViewport: null,
+    }) as Browser;
+    return browserInstance!;
+}
+
+async function setupPage(): Promise<Page> {
+    const maxRetries = 3;
+    let lastError: Error | null = null;
+
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            const browser = await getBrowser();
+            const page = await browser.newPage();
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+            await page.setViewport({ width: 1920, height: 1080 });
+            page.setDefaultTimeout(30000);
+            page.setDefaultNavigationTimeout(30000);
+            return page;
+        } catch (e) {
+            lastError = e as Error;
+            Logger.warn(`[Browser] ⚠️ setupPage failed (Attempt ${i + 1}/${maxRetries}): ${lastError.message}`);
+
+            // Force reset
+            if (browserInstance) {
+                await browserInstance.close().catch(() => { });
+                browserInstance = null;
+            }
+
+            // Wait before retry (exponential backoff)
+            await delay(2000 * (i + 1));
+        }
+    }
+
+    throw new Error(`Failed to setup page after ${maxRetries} attempts. Last error: ${lastError?.message}`);
+}
+
 // ─── PHASE 1: PRE-FLIGHT INTEL ──────────────────────────────────────────────
 async function preFlightCheck(
-    page: Page,
+    // No browser arg needed, uses singleton
     categories: string[],
     provinces: string[]
 ): Promise<ScrapeTarget[]> {
@@ -103,11 +163,14 @@ async function preFlightCheck(
 
     for (const province of provinces) {
         for (const category of categories) {
-            Logger.info(`\n🔍 Checking: "${category}" in ${province}...`);
-
-            const pgUrl = `https://www.paginegialle.it/ricerca/${encodeURIComponent(category)}/${encodeURIComponent(province)}`;
-
+            let page: Page | null = null;
             try {
+                page = await setupPage();
+
+                Logger.info(`\n🔍 Checking: "${category}" in ${province}...`);
+
+                const pgUrl = `https://www.paginegialle.it/ricerca/${encodeURIComponent(category)}/${encodeURIComponent(province)}`;
+
                 await page.goto(pgUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
                 // 🛡️ CAPTCHA CHECK
@@ -119,12 +182,29 @@ async function preFlightCheck(
                 await CookieConsent.handle(page);
 
                 // Parse total count
-                const countText = await page.evaluate(() => {
-                    const el = document.querySelector('.listing-res__numresults span') ||
-                        document.querySelector('.search-ind__res') ||
-                        document.querySelector('.listingresults__numresults span');
-                    return el ? el.textContent : '0';
-                });
+                let countText = '0';
+                try {
+                    countText = await page.evaluate(() => {
+                        const el = document.querySelector('.listing-res__numresults span') ||
+                            document.querySelector('.search-ind__res') ||
+                            document.querySelector('.listingresults__numresults span');
+                        return el ? el.textContent : '0';
+                    }) || '0';
+                } catch (e) {
+                    const msg = (e as Error).message;
+                    if (msg.includes('detached') || msg.includes('destroyed')) {
+                        Logger.warn(`   ⚠️ Frame detached during pre-flight for ${category}/${province}. Retrying...`);
+                        await delay(1000);
+                        countText = await page.evaluate(() => {
+                            const el = document.querySelector('.listing-res__numresults span') ||
+                                document.querySelector('.search-ind__res') ||
+                                document.querySelector('.listingresults__numresults span');
+                            return el ? el.textContent : '0';
+                        }) || '0';
+                    } else {
+                        throw e;
+                    }
+                }
 
                 const totalResults = parseInt(countText?.replace(/\./g, '').replace(/[^\d]/g, '') || '0', 10);
                 Logger.info(`   📊 PG Results: ${totalResults}`);
@@ -163,8 +243,7 @@ async function preFlightCheck(
                         isMunicipality: false,
                         pgResultCount: -1,
                     });
-                }
-
+                } // End if(totalResults > PG_OVERFLOW_THRESHOLD)
             } catch (error) {
                 Logger.error(`   ❌ Pre-flight failed for ${category}/${province}: ${(error as Error).message}`);
                 // Fallback: add province anyway
@@ -175,10 +254,14 @@ async function preFlightCheck(
                     isMunicipality: false,
                     pgResultCount: -1,
                 });
+            } finally {
+                if (page) await page.close().catch(() => { });
             }
 
             await delay(1500);
         }
+        // Force GC/Cleanup between provinces
+        if (global.gc) global.gc();
     }
 
     // Summary
@@ -216,40 +299,61 @@ async function scrapePG(
                 await page.reload({ waitUntil: 'domcontentloaded' });
             }
 
-            const items = await page.evaluate((loc, cat, prov) => {
-                return Array.from(document.querySelectorAll('.search-itm')).map(item => {
-                    const name = item.querySelector('.search-itm__rag')?.textContent?.trim();
-                    const tel = item.querySelector('.search-itm__phone')?.textContent?.trim();
-                    const web = item.querySelector('.search-itm__url')?.getAttribute('href');
-                    const pgUrl = (item.querySelector('a.remove_blank_for_app') as HTMLAnchorElement | null)?.href;
+            let items: CompanyInput[] = [];
+            try {
+                items = await page.evaluate((loc, cat, prov) => {
+                    return Array.from(document.querySelectorAll('.search-itm')).map(item => {
+                        const name = item.querySelector('.search-itm__rag')?.textContent?.trim();
+                        const tel = item.querySelector('.search-itm__phone')?.textContent?.trim();
+                        const web = item.querySelector('.search-itm__url')?.getAttribute('href');
+                        const pgUrl = (item.querySelector('a.remove_blank_for_app') as HTMLAnchorElement | null)?.href;
 
-                    const adr = item.querySelector('.search-itm__adr') as HTMLElement | null;
-                    const rawAddr = adr?.textContent?.replace(/\s+/g, ' ')?.trim();
+                        const adr = item.querySelector('.search-itm__adr') as HTMLElement | null;
+                        const rawAddr = adr?.textContent?.replace(/\s+/g, ' ')?.trim();
 
-                    const region = (adr?.querySelector('div')?.textContent || '').trim() || undefined;
-                    const spans = adr ? Array.from(adr.querySelectorAll('span')).map(s => (s.textContent || '').trim()).filter(Boolean) : [];
-                    const street = spans[0] || '';
-                    const zip = spans[1] || undefined;
-                    const cityName = spans[2] || undefined;
-                    const provMatch = rawAddr ? rawAddr.match(/\(([A-Z]{2})\)/) : null;
-                    const province = provMatch?.[1] || prov;
+                        const region = (adr?.querySelector('div')?.textContent || '').trim() || undefined;
+                        const spans = adr ? Array.from(adr.querySelectorAll('span')).map(s => (s.textContent || '').trim()).filter(Boolean) : [];
+                        const street = spans[0] || '';
+                        const zip = spans[1] || undefined;
+                        const cityName = spans[2] || undefined;
+                        const provMatch = rawAddr ? rawAddr.match(/\(([A-Z]{2})\)/) : null;
+                        const province = provMatch?.[1] || prov;
 
-                    if (!name) return null;
-                    return {
-                        company_name: name,
-                        city: cityName || loc,
-                        province,
-                        zip_code: zip,
-                        region,
-                        address: rawAddr || (street ? street : undefined),
-                        phone: tel,
-                        website: web,
-                        category: cat,
-                        source: 'PG',
-                        pg_url: pgUrl
-                    };
-                }).filter(x => x !== null);
-            }, target.location, target.category, target.province);
+                        if (!name) return null;
+                        return {
+                            company_name: name,
+                            city: cityName || loc,
+                            province,
+                            zip_code: zip,
+                            region,
+                            address: rawAddr || (street ? street : undefined),
+                            phone: tel,
+                            website: web,
+                            category: cat,
+                            source: 'PG',
+                            pg_url: pgUrl
+                        };
+                    }).filter(x => x !== null);
+                }, target.location, target.category, target.province) as CompanyInput[];
+            } catch (evalError) {
+                const msg = (evalError as Error).message;
+                if (msg.includes('detached') || msg.includes('destroyed')) {
+                    Logger.warn(`   ⚠️ Frame detached on page ${pageNum}. Retrying once...`);
+                    await delay(1000);
+                    try {
+                        // Reuse the same logic logic or just reload and skip to next iteration
+                        // Ideally we should re-evaluate, but for simplicity let's reload the page
+                        await page.reload({ waitUntil: 'domcontentloaded' });
+                        // Simple retry - if this fails, the outer catch will catch it
+                        // For now, let's just log and continue to avoid infinite loops
+                        continue;
+                    } catch (retryError) {
+                        Logger.error(`   ❌ Retry failed for page ${pageNum}: ${(retryError as Error).message}`);
+                        break;
+                    }
+                }
+                throw evalError;
+            }
 
             if (items.length === 0) {
                 Logger.info(`   📄 PG: Page ${pageNum} empty. Done.`);
@@ -340,14 +444,17 @@ async function main() {
 
     if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-    const browserFactory = BrowserFactory.getInstance();
-    const page = await browserFactory.newPage();
+    // 🔑 DIRECT BROWSER LAUNCH managed by getBrowser() helper
+    Logger.info('[Browser] 🚀 Initializing browser...');
+    await getBrowser();
+    Logger.info('[Browser] ✅ Browser ready');
+
     const globalDedup = new Deduplicator();
     const allCompanies: CompanyInput[] = [];
 
     try {
         // PHASE 1: Pre-Flight (using province CODES for PG URLs)
-        const targets = await preFlightCheck(page, categories, provinceCodes);
+        const targets = await preFlightCheck(categories, provinceCodes);
 
         if (targets.length === 0) {
             Logger.warn('⚠️ No targets generated. Check categories and provinces.');
@@ -360,22 +467,27 @@ async function main() {
         Logger.info(`${'═'.repeat(60)}\n`);
 
         for (const [idx, target] of targets.entries()) {
-            Logger.info(`\n┌── TARGET ${idx + 1}/${targets.length}: [${target.category}] ${target.location}`);
+            let page: Page | null = null;
+            try {
+                page = await setupPage();
+                Logger.info(`\n┌── TARGET ${idx + 1}/${targets.length}: [${target.category}] ${target.location}`);
 
-            // PG
-            const pgResults = await scrapePG(page, target, globalDedup);
-            allCompanies.push(...pgResults);
+                // PG
+                const pgResults = await scrapePG(page, target, globalDedup);
+                allCompanies.push(...pgResults);
 
-            await delay(PG_LOCATION_DELAY_MS);
+                await delay(PG_LOCATION_DELAY_MS);
 
-            // Maps
-            const { newCount } = await scrapeMaps(page, target, globalDedup);
-            // newCount items are already in dedup but not in allCompanies array
-            // We'll rebuild final list from dedup at the end
+                // Maps
+                const { newCount } = await scrapeMaps(page, target, globalDedup);
+                // newCount items are already in dedup but not in allCompanies array
+                // We'll rebuild final list from dedup at the end
 
-            Logger.info(`└── DONE: ${pgResults.length} PG + ${newCount} new Maps | Running total: ${globalDedup.count}`);
+                Logger.info(`└── DONE: ${pgResults.length} PG + ${newCount} new Maps | Running total: ${globalDedup.count}`);
 
-            await delay(2000);
+            } finally {
+                if (page) await page.close().catch(() => { });
+            }
         }
 
         // PHASE 4: Final output
@@ -458,7 +570,7 @@ async function main() {
     } catch (error) {
         Logger.error(`💀 FATAL: ${(error as Error).message}`);
     } finally {
-        await browserFactory.close();
+        if (browserInstance) await browserInstance.close().catch(() => { });
     }
 }
 
