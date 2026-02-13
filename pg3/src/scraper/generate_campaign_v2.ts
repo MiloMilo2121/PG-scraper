@@ -10,9 +10,9 @@
  * 
  * The user provides a QUERY (e.g., "manifattura", "moda", "metalmeccanica")
  * and PROVINCE CODES (e.g., "LO", "MI"). The system:
- *   0. CategoryMatcher (GPT) resolves the query to ALL matching PG categories
+ *   0. CategoryMatcher (LLM) resolves the query to ALL matching PG categories
  *   1. Pre-Flight: Check PG result count per (category, province code)
- *   2. If >200: GPT-4o-mini splits province into 5 equidistant municipalities
+ *   2. If >200: LLM splits province into 5 equidistant municipalities
  *   3. Scrape PG for each (category, location) — full pagination
  *   4. Scrape Google Maps for each (category, location) — scroll to load all
  *   5. Dedup + Merge + CSV Output

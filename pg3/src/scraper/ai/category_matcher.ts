@@ -1,17 +1,16 @@
-import OpenAI from 'openai';
 import { Logger } from '../utils/logger';
+import { LLMService } from '../../enricher/core/ai/llm_service';
+import { config } from '../config';
 import { ALL_PG_CATEGORIES, PG_CATEGORIES } from '../data/pg_categories';
 
 /**
  * 🧠 CATEGORY MATCHER
- * 
- * Maps user queries (e.g., "manifattura", "metalmeccanica") to ALL 
+ *
+ * Maps user queries (e.g., "manifattura", "metalmeccanica") to ALL
  * relevant PagineGialle categories from the master taxonomy.
- * 
- * Uses GPT-4o-mini for semantic matching — the user's query may not
- * exactly match any PG category, but GPT finds all related ones.
- * 
- * Results are cached per query. (Law 503)
+ *
+ * Uses LLMService for semantic matching against the master list.
+ * Results are cached per query (Law 503: Caching Intelligence).
  */
 
 const CACHE = new Map<string, string[]>();
@@ -27,29 +26,15 @@ category that a user searching for that industry would want to find.
 Rules:
 - ONLY return categories that EXACTLY match entries in the provided master list
 - Include direct matches, synonyms, related sub-categories, and upstream/downstream categories
-- For example, "manifattura" should match: manufacturing, industrial, production, and related B2B categories
-- For "moda", match: all clothing, accessories, textiles, fashion-related categories
 - Be generous — it's better to include a borderline category than to miss a relevant one
 - Respond ONLY with a valid JSON object: {"categories": ["Category1", "Category2", ...]}
 - Do NOT invent categories that don't exist in the master list`;
 
 export class CategoryMatcher {
 
-    private static client: OpenAI | null = null;
-
-    private static getClient(): OpenAI {
-        if (!this.client) {
-            const apiKey = process.env.OPENAI_API_KEY;
-            if (!apiKey) throw new Error('OPENAI_API_KEY is required for CategoryMatcher');
-            Logger.info(`[CategoryMatcher] 🔑 OpenAI Key: ${apiKey.substring(0, 7)}...`);
-            this.client = new OpenAI({ apiKey });
-        }
-        return this.client;
-    }
-
     /**
      * Given a user query, return all matching PG categories.
-     * Uses GPT-4o-mini for semantic matching against the master list.
+     * Uses LLM for semantic matching against the master list.
      */
     public static async match(userQuery: string): Promise<string[]> {
         const cacheKey = userQuery.toLowerCase().trim();
@@ -63,15 +48,15 @@ export class CategoryMatcher {
         Logger.info(`[CategoryMatcher] 🧠 Matching "${userQuery}" against ${ALL_PG_CATEGORIES.length} PG categories...`);
 
         try {
-            const client = this.getClient();
+            const client = LLMService.getClient();
 
-            // Build the category list grouped by sector for better GPT understanding
+            // Build the category list grouped by sector for better understanding
             const categoryListStr = Object.entries(PG_CATEGORIES)
                 .map(([sector, cats]) => `## ${sector}\n${cats.join(', ')}`)
                 .join('\n\n');
 
             const response = await client.chat.completions.create({
-                model: 'gpt-4o-mini',
+                model: config.llm.fastModel,
                 temperature: 0,
                 max_tokens: 4000,
                 messages: [
@@ -85,17 +70,19 @@ export class CategoryMatcher {
             });
 
             const raw = response.choices[0]?.message?.content?.trim();
-            if (!raw) throw new Error('Empty GPT response');
+            if (!raw) throw new Error('Empty LLM response');
 
-            const parsed = JSON.parse(raw);
+            // Strip markdown wrapping if present
+            const cleanRaw = raw.replace(/```json/g, '').replace(/```/g, '').trim();
+            const parsed = JSON.parse(cleanRaw);
             let categories: string[] = parsed.categories || parsed.results || [];
 
-            // VALIDATE — only keep categories that actually exist in the master list
+            // VALIDATE — only keep categories that actually exist in the master list (Law 504)
             const masterSet = new Set(ALL_PG_CATEGORIES.map(c => c.toLowerCase()));
             const validated = categories.filter(cat => {
                 const exists = masterSet.has(cat.toLowerCase());
                 if (!exists) {
-                    Logger.warn(`[CategoryMatcher] ⚠️ GPT hallucinated category: "${cat}" — skipping`);
+                    Logger.warn(`[CategoryMatcher] ⚠️ LLM hallucinated category: "${cat}" — skipping`);
                 }
                 return exists;
             });

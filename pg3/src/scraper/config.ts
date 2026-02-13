@@ -24,7 +24,12 @@ export const config = {
     },
     llm: {
         apiKey: process.env.OPENAI_API_KEY || '',
-        model: process.env.LLM_MODEL || 'gpt-4o',
+        z_ai: {
+            apiKey: process.env.Z_AI_API_KEY || '',
+            baseUrl: 'https://open.bigmodel.cn/api/paas/v4/',
+        },
+        model: process.env.LLM_MODEL || 'glm-5',
+        fastModel: process.env.LLM_MODEL_FAST || 'glm-4-flash',
     },
     google: {
         streetViewKey: process.env.GOOGLE_STREET_VIEW_KEY || '',

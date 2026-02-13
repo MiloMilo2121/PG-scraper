@@ -1,7 +1,9 @@
 import { CompanyInput } from '../../types';
 import { Logger } from '../../utils/logger';
 import { BrowserFactory } from '../browser/factory_v2';
-import { GoogleSearchProvider, DDGSearchProvider } from './search_provider';
+import { GoogleSearchProvider, DDGSearchProvider, SerperSearchProvider } from './search_provider';
+import { LLMValidator } from '../ai/llm_validator';
+import { config } from '../../config';
 import pLimit from 'p-limit';
 
 /**
@@ -20,55 +22,103 @@ export class NuclearStrategy {
     }
 
     /**
-     * The Master Method: Orchestrates 20+ search methods for a single company
+     * The Master Method: Orchestrates Smart AI Search
      */
     public async execute(company: CompanyInput): Promise<{ url: string | null; method: string; confidence: number }> {
+        Logger.info(`☢️ [Nuclear] Launching SMART search for "${company.company_name}"...`);
+
+        // 1. GENERATE QUERIES (Reduced set for AI - Quality over Quantity)
+        const query = `"${company.company_name}" ${company.city || ''} sito ufficiale`;
+
+        // 2. SEARCH (DDG first, then Serper)
+        let serpResults: any[] = [];
+        try {
+            // Try DDG First
+            const ddgProvider = new DDGSearchProvider();
+            serpResults = await ddgProvider.search(query);
+
+            // Fallback to Serper if DDG is empty
+            if (serpResults.length === 0) {
+                Logger.info(`[Nuclear] DDG empty. Escalating to Serper.dev...`);
+                const serperProvider = new SerperSearchProvider();
+                serpResults = await serperProvider.search(query);
+            }
+        } catch (e) {
+            Logger.warn(`[Nuclear] Search failed: ${(e as Error).message}`);
+            return { url: null, method: 'nuclear_failed', confidence: 0 };
+        }
+
+        if (serpResults.length === 0) {
+            return { url: null, method: 'nuclear_no_results', confidence: 0 };
+        }
+
+        // 3. SMART AI SELECTION
+        Logger.info(`[Nuclear] Analyzing ${serpResults.length} SERP results with AI (${config.llm.model})...`);
+        const aiDecision = await LLMValidator.selectBestUrl(company, serpResults);
+
+        if (aiDecision.bestUrl && aiDecision.confidence > 0.6) {
+            Logger.info(`[Nuclear] 🧠 AI selected: ${aiDecision.bestUrl} (Conf: ${aiDecision.confidence})`);
+            Logger.info(`[Nuclear] 💡 Reasoning: ${aiDecision.reasoning}`);
+
+            return {
+                url: aiDecision.bestUrl,
+                method: 'nuclear_smart_ai',
+                confidence: aiDecision.confidence
+            };
+        }
+
+        // 4. FALLBACK: Old Heuristic Logic (if AI is unsure)
+        Logger.info(`[Nuclear] AI unsure (Conf: ${aiDecision.confidence}). Falling back to heuristics.`);
+        Logger.info(`[Nuclear] 💡 AI Reasoning: ${aiDecision.reasoning}`);
+
         const queries = this.generateNuclearQueries(company);
-        Logger.info(`☢️ [Nuclear] Launching ${queries.length} precision warheads for "${company.company_name}"...`);
+        return this.executeLegacy(company, queries);
+    }
 
-        const candidates = new Map<string, number>(); // URL -> Score
-
-        // Execute searches (Simulation of massive concurrency)
+    private async executeLegacy(company: CompanyInput, queries: string[]) {
+        const candidates = new Map<string, number>();
         const searchTasks = queries.map(q => this.queryLimit(async () => {
-            // 🛡️ SAFETY DELAY: 2-5 seconds of randomized pause
             await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));
-
-            // Force DDG (Tor) as Google is blocked/exhausted
-            // Future improvement: Dynamically switch based on success rate
-            const engine = 'ddg';
-            return await this.performSearch(q, engine);
+            const ddgResults = await this.performSearch(q, 'ddg');
+            if (ddgResults.length > 0) return ddgResults;
+            return await this.performSearch(q, 'serper');
         }));
 
         const results = await Promise.all(searchTasks);
         const allUrls = results.flat();
 
-        // Scoring & Deduplication
         for (const url of allUrls) {
             const score = this.scoreCandidate(url, company);
-            if (score > 0) {
-                candidates.set(url, (candidates.get(url) || 0) + score);
-            }
+            if (score > 0) candidates.set(url, (candidates.get(url) || 0) + score);
         }
 
-        // Sort by score
         const sortedCandidates = [...candidates.entries()].sort((a, b) => b[1] - a[1]);
-
-        if (sortedCandidates.length === 0) {
-            return { url: null, method: 'nuclear_failed', confidence: 0 };
-        }
-
-        // Best candidate validation
+        if (sortedCandidates.length === 0) return { url: null, method: 'nuclear_failed', confidence: 0 };
         const [bestUrl, bestScore] = sortedCandidates[0];
-
-        // Normalize confidence to 0-1 range
-        // A score > 15 is extremely high confidence (multi-source confirmation)
         const normalizedConfidence = Math.min(bestScore / 20, 0.95);
 
         return {
             url: bestUrl,
-            method: 'nuclear_triangulation',
+            method: 'nuclear_triangulation_legacy',
             confidence: normalizedConfidence
         };
+    }
+
+    private async performSearch(query: string, engine: 'google' | 'ddg' | 'serper'): Promise<string[]> {
+        try {
+            let results: any[] = [];
+            // Factory logic
+            let provider;
+            if (engine === 'ddg') provider = new DDGSearchProvider();
+            else if (engine === 'serper') provider = new SerperSearchProvider();
+            else provider = new GoogleSearchProvider(); // Legacy fallback if someone calls it, but we prefer Serper now
+
+            results = await provider.search(query);
+            return results.map((r: any) => r.url);
+        } catch (e) {
+            Logger.warn(`[Nuclear] Search error (${engine}): ${(e as Error).message}`);
+            return [];
+        }
     }
 
     /**
@@ -114,18 +164,6 @@ export class NuclearStrategy {
         q.push(`site:linkedin.com "${cleanName}" ${city}`);
 
         return q;
-    }
-
-    private async performSearch(query: string, engine: 'google' | 'ddg'): Promise<string[]> {
-        try {
-            let results: any[] = [];
-            const provider = engine === 'google' ? new GoogleSearchProvider() : new DDGSearchProvider();
-            results = await provider.search(query);
-            return results.map(r => r.url);
-        } catch (e) {
-            Logger.warn(`[Nuclear] Search error (${engine}): ${(e as Error).message}`);
-            return [];
-        }
     }
 
     /**

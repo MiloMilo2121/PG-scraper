@@ -21,9 +21,12 @@ const EnvSchema = z.object({
 
   // 🤖 AI / LLM
   OPENAI_API_KEY: z.string().optional(),
-  LLM_MODEL: z.string().default('gpt-4o'),
-  AI_MODEL_FAST: z.string().default('gpt-4o-mini'),
-  AI_MODEL_SMART: z.string().default('gpt-4o'),
+  Z_AI_API_KEY: z.string().optional(),
+  LLM_MODEL: z.string().default('glm-5'),
+  LLM_MODEL_FAST: z.string().optional(),
+  LLM_MODEL_SMART: z.string().optional(),
+  AI_MODEL_FAST: z.string().default('glm-4-flash'),
+  AI_MODEL_SMART: z.string().default('glm-5'),
   AI_MAX_TOKENS: z.coerce.number().min(100).max(10000).default(500),
 
   // 🔴 REDIS
@@ -152,17 +155,25 @@ export const config = {
   redis: deriveRedis(),
   llm: {
     apiKey: env.OPENAI_API_KEY,
-    model: env.LLM_MODEL,
-    fastModel: env.AI_MODEL_FAST,
-    smartModel: env.AI_MODEL_SMART,
-    maxTokens: env.AI_MAX_TOKENS,
-    /** Per-model pricing in $/1M tokens (2026 OpenAI rates). Law 006: No magic numbers. */
+    z_ai: {
+      apiKey: env.Z_AI_API_KEY,
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4/',
+    },
+    // Z.ai Models as defaults (GLM-5 released Feb 2026 — 745B MoE, 200K context)
+    model: env.LLM_MODEL_SMART || 'glm-5', // Flagship reasoning model (Replaces glm-4-plus/gpt-4o)
+    fastModel: env.LLM_MODEL_FAST || 'glm-4.7-flash', // Fast & Cheap (Replaces gpt-4o-mini)
+    smartModel: env.AI_MODEL_SMART, // Backward compat override
+    maxTokens: 4000,
+    temperature: 0.1,
+    /** Per-model pricing in $/1M tokens. Law 006: No magic numbers. */
     pricing: {
+      'glm-5': { inputPer1M: 2.00, outputPer1M: 8.00 },
+      'glm-4-plus': { inputPer1M: 1.50, outputPer1M: 6.00 },
+      'glm-4.7-flash': { inputPer1M: 0.10, outputPer1M: 0.40 },
+      'glm-4-flash': { inputPer1M: 0.10, outputPer1M: 0.40 }, // Fallback/Reference
       'gpt-4o-mini': { inputPer1M: 0.15, outputPer1M: 0.60 },
       'gpt-4o': { inputPer1M: 2.50, outputPer1M: 10.00 },
-      'gpt-4': { inputPer1M: 30.00, outputPer1M: 60.00 },
-      'gpt-3.5-turbo': { inputPer1M: 0.50, outputPer1M: 1.50 },
-      'o3-mini': { inputPer1M: 1.10, outputPer1M: 4.40 }, // Reasoning model (Tier 1 intelligence, Tier low cost)
+      'o3-mini': { inputPer1M: 1.10, outputPer1M: 4.40 },
     } as Record<string, { inputPer1M: number; outputPer1M: number }>,
   },
   google: {

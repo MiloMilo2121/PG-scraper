@@ -108,3 +108,56 @@ export class ReverseAddressSearchProvider implements SearchProvider {
         return provider.search(query);
     }
 }
+
+
+/**
+ * 🚀 SERPER.DEV PROVIDER (Google API)
+ * High reliability, low cost, fast.
+ */
+export class SerperSearchProvider implements SearchProvider {
+    async search(query: string): Promise<SerpResult[]> {
+        const apiKey = process.env.SERPER_API_KEY || 'e0feae3b0d8ba0ebcdc8a70874543e15bd6bf01a'; // Fallback to provided key for now
+
+        if (!apiKey) {
+            Logger.warn('[SerperProvider] No API Key provided');
+            return [];
+        }
+
+        try {
+            Logger.info(`[SerperProvider] Searching: "${query}"`);
+
+            // Serper.dev API endpoint
+            const response = await fetch('https://google.serper.dev/search', {
+                method: 'POST',
+                headers: {
+                    'X-API-KEY': apiKey,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    q: query,
+                    gl: 'it',
+                    hl: 'it'
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Serper API error: ${response.status} ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            const organic = data.organic || [];
+
+            // Map to SerpResult format
+            return organic.map((result: any) => ({
+                title: result.title,
+                url: result.link,
+                snippet: result.snippet,
+                source: 'serper_google'
+            }));
+
+        } catch (e) {
+            Logger.warn(`[SerperProvider] Search failed: ${(e as Error).message}`);
+            return [];
+        }
+    }
+}

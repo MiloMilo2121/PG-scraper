@@ -987,9 +987,9 @@ export class UnifiedDiscoveryService {
             }
 
             // 🤖 AGENTIC FALLBACK (Phase 3)
-            // If confidence is mediocre (0.4 - 0.85) and no VAT/Phone matched, the site might be correct but complex.
+            // If confidence is LOW (< 0.4) and no VAT/Phone matched, the site might be correct but complex or obfuscated.
             // Unleash the Agent to find the P.IVA.
-            if (evaluation.confidence >= 0.4 && evaluation.confidence < 0.85 && !evaluation.scrapedVat && !evaluation.matchedPhone) {
+            if (evaluation.confidence < 0.4 && evaluation.confidence > 0 && !evaluation.scrapedVat && !evaluation.matchedPhone) {
                 Logger.info(`[DeepVerify] Low confidence (${evaluation.confidence.toFixed(2)}) for ${currentUrl}. Unleashing Agent...`);
                 try {
                     const goal = `Find the VAT number (P.IVA) for "${company.company_name}" in "${company.city || 'Italy'}". Return ONLY the VAT code.`;
@@ -999,7 +999,7 @@ export class UnifiedDiscoveryService {
                     if (agentResult && (agentResult.includes('IT') || agentResult.match(/\d{11}/))) {
                         Logger.info(`[DeepVerify] 🤖 Agent salvaged session! Found: ${agentResult}`);
                         evaluation.scrapedVat = agentResult;
-                        evaluation.confidence = 0.95;
+                        evaluation.confidence = 0.95; // Boost to high confidence if agent finds VAT
                         evaluation.reason += "; Agent verified P.IVA";
                     }
                 } catch (agentError) {

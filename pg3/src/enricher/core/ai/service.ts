@@ -1,20 +1,18 @@
 /**
- * 🧠 AI SERVICE - OpenAI Integration
- * Tasks 21-30: Complete AI intelligence layer
- * 
- * Features:
- * - HTML minification for token savings (Task 22)
- * - Business classification (Task 23)
- * - Hidden contact extraction (Task 24)
- * - Adaptive model selection (Task 28)
- * - Response caching (Task 27)
- * - Token analytics (Task 30)
+ * 🧠 AI SERVICE — Business Intelligence Layer
+ * Tasks 21-30: Contact extraction, classification, navigation, VAT search.
+ *
+ * Uses LLMService.getClient() for provider-agnostic LLM access.
+ * Features: HTML minification, caching (Law 503), adaptive model selection (Law 505).
  */
 
 import OpenAI from 'openai';
 import * as crypto from 'crypto';
 import { Logger } from '../../utils/logger';
 import { config } from '../../config';
+import { LLMService } from './llm_service';
+import { HTMLCleaner } from '../../utils/html_cleaner';
+import { EXTRACT_CONTACTS_PROMPT, CLASSIFY_BUSINESS_PROMPT } from './prompt_templates';
 
 const AI_MODEL_FAST = config.llm.fastModel;
 const AI_MODEL_SMART = config.llm.smartModel;
@@ -84,32 +82,18 @@ export class AIService {
     private smartModel: string;
 
     constructor() {
-        this.openai = new OpenAI({
-            apiKey: config.llm.apiKey,
-        });
+        // Use centralized LLMService client (Z.ai or OpenAI)
+        this.openai = LLMService.getClient();
         this.fastModel = AI_MODEL_FAST;
         this.smartModel = AI_MODEL_SMART;
     }
 
     /**
-     * Task 22: Minify HTML to reduce tokens
+     * Task 22: Clean HTML intelligently (deprecated regex replaced with HTMLCleaner)
+     * @deprecated Use HTMLCleaner.extract() or HTMLCleaner.extractContactInfo() instead
      */
     private minifyHTML(html: string): string {
-        return html
-            // Remove scripts
-            .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-            // Remove styles
-            .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-            // Remove SVG
-            .replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, '')
-            // Remove comments
-            .replace(/<!--[\s\S]*?-->/g, '')
-            // Remove excessive whitespace
-            .replace(/\s+/g, ' ')
-            // Remove common useless tags
-            .replace(/<(?:meta|link|noscript)[^>]*>/gi, '')
-            // Limit length
-            .substring(0, 8000);
+        return HTMLCleaner.minify(html);
     }
 
     /**
@@ -140,9 +124,10 @@ export class AIService {
      */
     private async call(
         prompt: string,
-        taskType: 'extract' | 'classify' | 'search'
+        taskType: 'extract' | 'classify' | 'search',
+        forceSmartModel: boolean = false
     ): Promise<string> {
-        const model = this.selectModel(taskType);
+        const model = forceSmartModel ? this.smartModel : this.selectModel(taskType);
         const cacheKey = this.getCacheKey(prompt, model);
 
         // Check cache
@@ -191,35 +176,41 @@ export class AIService {
     /**
      * Task 24: Extract hidden contacts from text
      */
-    async extractContacts(html: string, companyName: string): Promise<AIExtractionResult> {
-        const minified = this.minifyHTML(html);
+    async extractContacts(html: string, companyName: string = ''): Promise<AIExtractionResult> {
+        // Use HTMLCleaner for intelligent contact info extraction (Law 501)
+        const cleaned = HTMLCleaner.extract(html, 2500, true);
+        const cleanText = HTMLCleaner.toString(cleaned);
 
-        const prompt = `Extract business contact information from this webpage for "${companyName}".
-Look for:
-1. VAT number (Partita IVA) - 11 digit Italian number
-2. PEC email (ends with @pec, @legalmail, @arubapec)
-3. CEO/Owner name
-4. Phone numbers (especially mobile +39 3xx)
-5. Email addresses (especially personal ones, not info@)
-
-Return ONLY valid JSON:
-{
-  "vat": "12345678901" or null,
-  "pec": "example@pec.it" or null,
-  "ceo_name": "Mario Rossi" or null,
-  "phone": "+39 3xx xxx xxxx" or null,
-  "email": "personal@domain.it" or null,
-  "confidence": 0.0-1.0
-}
-
-Text:
-${minified}`;
+        // Use structured prompt template
+        const prompt = EXTRACT_CONTACTS_PROMPT.template({
+            companyName: companyName || 'Unknown',
+            cleanHtml: cleanText,
+        });
 
         try {
             const response = await this.call(prompt, 'extract');
-            return JSON.parse(response);
-        } catch {
-            return { confidence: 0 };
+            const cleanJson = response.replace(/```json/g, '').replace(/```/g, '').trim();
+            const result = JSON.parse(cleanJson);
+
+            // FALLBACK STRATEGY (Law 505): If confidence is low, escalate to Smart Model (GLM-5)
+            if (!result.confidence || result.confidence < 0.6) {
+                Logger.info(`[AIService] Low confidence (${result.confidence}) in contact extraction. Retrying with GLM-5...`);
+                const smartResponse = await this.call(prompt, 'extract', true);
+                const smartJson = smartResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+                return JSON.parse(smartJson);
+            }
+
+            return result;
+        } catch (error) {
+            Logger.warn('[AIService] Contact extraction failed (Fast Model). Retrying with Smart Model...', { error: error as Error });
+            try {
+                const smartResponse = await this.call(prompt, 'extract', true);
+                const smartJson = smartResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+                return JSON.parse(smartJson);
+            } catch (smartError) {
+                Logger.error('[AIService] Contact extraction failed (Smart Model)', { error: smartError as Error });
+                return { confidence: 0 };
+            }
         }
     }
 
@@ -230,32 +221,72 @@ ${minified}`;
         type: 'B2B' | 'B2C' | 'BOTH' | 'UNKNOWN';
         sector: string;
         confidence: number;
+        reasoning: string;
+        tags?: string[];
     }> {
-        const minified = this.minifyHTML(html);
+        // Use HTMLCleaner for intelligent extraction (Law 501)
+        const cleaned = HTMLCleaner.extract(html, 3000, false);
+        const cleanText = HTMLCleaner.toString(cleaned);
 
-        const prompt = `Analyze this company homepage and classify:
-
-Company: "${companyName}"
-
-Questions:
-1. Is this company B2B (sells to businesses), B2C (sells to consumers), or BOTH?
-2. What is the primary industry sector?
-
-Return ONLY valid JSON:
-{
-  "type": "B2B" | "B2C" | "BOTH" | "UNKNOWN",
-  "sector": "Manufacturing" | "Services" | "Retail" | "Technology" | "Healthcare" | "Other",
-  "confidence": 0.0-1.0
-}
-
-Text:
-${minified.substring(0, 4000)}`;
+        // Use structured prompt template
+        const prompt = CLASSIFY_BUSINESS_PROMPT.template({
+            companyName,
+            cleanHtml: cleanText,
+        });
 
         try {
             const response = await this.call(prompt, 'classify');
-            return JSON.parse(response);
-        } catch {
-            return { type: 'UNKNOWN', sector: 'Unknown', confidence: 0 };
+            const cleanJson = response.replace(/```json/g, '').replace(/```/g, '').trim();
+            let parsed = JSON.parse(cleanJson);
+
+            // FALLBACK STRATEGY (Law 505): If confidence is low, escalate to Smart Model (GLM-5)
+            if (!parsed.confidence || parsed.confidence < 0.6) {
+                Logger.info(`[AIService] Low confidence (${parsed.confidence}) in classification. Retrying with GLM-5...`);
+                const smartResponse = await this.call(prompt, 'classify', true);
+                const smartJson = smartResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+                parsed = JSON.parse(smartJson);
+            }
+
+            // Map new deductive fields to existing structure
+            // E.g. sector = "Manufacturing (Precision Machining)"
+            const fullSector = parsed.specific_niche
+                ? `${parsed.primary_sector} (${parsed.specific_niche})`
+                : parsed.primary_sector || parsed.sector || 'Unknown';
+
+            if (parsed.deduced_tags && Array.isArray(parsed.deduced_tags)) {
+                Logger.info(`[AIService] Deduced tags for ${companyName}: ${parsed.deduced_tags.join(', ')}`);
+            }
+
+            return {
+                type: parsed.type || 'UNKNOWN',
+                sector: fullSector,
+                confidence: parsed.confidence || 0,
+                reasoning: parsed.reasoning || '',
+                tags: parsed.deduced_tags || []
+            };
+        } catch (error) {
+            Logger.warn(`[AIService] Classification failed (Fast Model) for ${companyName}. Retrying with Smart Model...`, { error: error as Error });
+            try {
+                const smartResponse = await this.call(prompt, 'classify', true);
+                const smartJson = smartResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+                const parsed = JSON.parse(smartJson);
+
+                const fullSector = parsed.specific_niche
+                    ? `${parsed.primary_sector} (${parsed.specific_niche})`
+                    : parsed.primary_sector || parsed.sector || 'Unknown';
+
+                return {
+                    type: parsed.type || 'UNKNOWN',
+                    sector: fullSector,
+                    confidence: parsed.confidence || 0,
+                    reasoning: parsed.reasoning || '',
+                    tags: parsed.deduced_tags || []
+                };
+
+            } catch (smartError) {
+                Logger.error(`[AIService] Classification failed (Smart Model) for ${companyName}`, { error: smartError as Error });
+                return { type: 'UNKNOWN', sector: 'Unknown', confidence: 0, reasoning: 'Classification failed' };
+            }
         }
     }
 
@@ -341,9 +372,9 @@ Answer ONLY "yes" or "no".`;
         estimatedCostUSD: number;
         cacheHits: number;
     } {
-        // Approximate pricing (GPT-4o-mini)
-        const inputCost = (totalInputTokens / 1000000) * 0.15;
-        const outputCost = (totalOutputTokens / 1000000) * 0.60;
+        // Approximate pricing (GLM-4-flash)
+        const inputCost = (totalInputTokens / 1000000) * 0.10;
+        const outputCost = (totalOutputTokens / 1000000) * 0.40;
 
         return {
             totalInputTokens,

@@ -2,11 +2,13 @@
 import { LLMService } from '../ai/llm_service';
 import { DOMSnapshot } from './dom_distiller';
 import { Logger } from '../../utils/logger';
+import { config } from '../../config';
+import { AGENT_NAVIGATION_PROMPT } from '../ai/prompt_templates';
 
 /**
  * 🧠 AGENT BRAIN (The Decision Maker)
  * Decides the next action based on DOM snapshot and goal.
- * Uses Structured Outputs for guaranteed valid JSON.
+ * Uses structured prompts from PromptTemplates library (Law 506).
  */
 
 export interface AgentDecision {
@@ -16,22 +18,6 @@ export interface AgentDecision {
     text_value?: string;
     extraction_key?: string;
 }
-
-const DECISION_SCHEMA = {
-    type: 'object' as const,
-    properties: {
-        thought: { type: 'string' as const, description: "Reasoning for the chosen action" },
-        action: {
-            type: 'string' as const,
-            enum: ['CLICK', 'TYPE', 'SCROLL', 'EXTRACT', 'DONE', 'FAIL']
-        },
-        target_id: { type: 'string' as const, description: "ID of the element from the snapshot" },
-        text_value: { type: 'string' as const, description: "Text to type (for TYPE action)" },
-        extraction_key: { type: 'string' as const, description: "Key name for extracted data (e.g., 'vat_number')" }
-    },
-    required: ['thought', 'action'] as const,
-    additionalProperties: false as const
-};
 
 export class AgentBrain {
 
@@ -47,36 +33,20 @@ export class AgentBrain {
         history: string[]
     ): Promise<AgentDecision> {
 
-        const prompt = `
-GOAL: ${goal}
-
-CURRENT PAGE:
-Title: ${snapshot.title}
-URL: ${snapshot.url}
-
-DISTILLED DOM (Interactive elements have IDs like [BTN id=1]):
-${snapshot.summary}
-
-HISTORY (Last 5 actions):
-${history.slice(-5).join('\n')}
-
-INSTRUCTIONS:
-1. Analyze the DOM to find elements relevant to the GOAL.
-2. If the goal is achieved (e.g. you see the data), use EXTRACT then DONE.
-3. If you see a likely path (e.g. "Contatti", "Legal"), CLICK it.
-4. If a cookie banner wants acceptance, CLICK the verify/accept button.
-5. Do not repeat actions from HISTORY.
-6. If stuck, try SCROLL to reveal more.
-7. Return a precise JSON decision.
-        `.trim();
+        // Build structured prompt from template
+        const prompt = AGENT_NAVIGATION_PROMPT.template({
+            goal,
+            pageTitle: snapshot.title,
+            pageUrl: snapshot.url,
+            domSummary: snapshot.summary,
+            actionHistory: history,
+        });
 
         try {
-            // Use o3-mini for reasoning capabilities ("Thinking Model") as requested.
-            // Cost: ~$1.10/1M input. Session cost: ~$0.025.
             const decision = await LLMService.completeStructured<AgentDecision>(
                 prompt,
-                DECISION_SCHEMA as Record<string, unknown>,
-                'o3-mini'
+                AGENT_NAVIGATION_PROMPT.schema as Record<string, unknown>,
+                config.llm.model // Use smart model for reasoning
             );
 
             if (!decision) {

@@ -1,13 +1,14 @@
-import OpenAI from 'openai';
 import { Logger } from '../utils/logger';
+import { LLMService } from '../../enricher/core/ai/llm_service';
+import { config } from '../config';
 
 /**
  * 🏘️ MUNICIPALITY SPLITTER
- * When PG returns >200 results for a province, GPT-4o-mini selects
+ * When PG returns >200 results for a province, the LLM selects
  * 5 geographically distributed municipalities for granular scraping.
- * 
- * Results are cached in-memory — same province never queried twice.
- * (Law 503: Caching Intelligence)
+ *
+ * Uses LLMService singleton client — no duplicate OpenAI instances.
+ * Results are cached in-memory (Law 503: Caching Intelligence).
  */
 
 const CACHE = new Map<string, string[]>();
@@ -18,21 +19,9 @@ geographically well-distributed across the province to maximize territorial cove
 Choose municipalities that are spread out — north, south, east, west, and center — 
 to minimize overlap when scraping business directories.
 Prefer municipalities with higher population as they tend to have more businesses.
-Respond ONLY with a valid JSON array of 5 strings. No explanation, no markdown.
-Example: ["Milano","Sesto San Giovanni","Rho","Legnano","San Donato Milanese"]`;
+Respond ONLY with a valid JSON object: {"municipalities": ["Name1", "Name2", "Name3", "Name4", "Name5"]}`;
 
 export class MunicipalitySplitter {
-
-    private static client: OpenAI | null = null;
-
-    private static getClient(): OpenAI {
-        if (!this.client) {
-            const apiKey = process.env.OPENAI_API_KEY;
-            if (!apiKey) throw new Error('OPENAI_API_KEY is required for MunicipalitySplitter');
-            this.client = new OpenAI({ apiKey });
-        }
-        return this.client;
-    }
 
     /**
      * Get 5 geographically distributed municipalities for a province.
@@ -41,18 +30,18 @@ export class MunicipalitySplitter {
     public static async getMunicipalities(province: string): Promise<string[]> {
         const cacheKey = province.toLowerCase().trim();
 
-        // Cache hit — (Law 503)
+        // Cache hit (Law 503)
         if (CACHE.has(cacheKey)) {
             Logger.info(`[MunicipalitySplitter] Cache hit for "${province}"`);
             return CACHE.get(cacheKey)!;
         }
 
-        Logger.info(`[MunicipalitySplitter] Querying GPT-4o-mini for 5 municipalities in "${province}"...`);
+        Logger.info(`[MunicipalitySplitter] 🧠 Querying LLM for 5 municipalities in "${province}"...`);
 
         try {
-            const client = this.getClient();
+            const client = LLMService.getClient();
             const response = await client.chat.completions.create({
-                model: 'gpt-4o-mini',
+                model: config.llm.fastModel,
                 temperature: 0.1,
                 max_tokens: 200,
                 messages: [
@@ -63,11 +52,14 @@ export class MunicipalitySplitter {
             });
 
             const raw = response.choices[0]?.message?.content?.trim();
-            if (!raw) throw new Error('Empty GPT response');
+            if (!raw) throw new Error('Empty LLM response');
+
+            // Strip markdown wrapping if present
+            const cleanRaw = raw.replace(/```json/g, '').replace(/```/g, '').trim();
 
             // Parse — handle both array and object formats
             let municipalities: string[];
-            const parsed = JSON.parse(raw);
+            const parsed = JSON.parse(cleanRaw);
 
             if (Array.isArray(parsed)) {
                 municipalities = parsed;
@@ -79,7 +71,7 @@ export class MunicipalitySplitter {
                 if (firstArray) {
                     municipalities = firstArray;
                 } else {
-                    throw new Error(`Unexpected GPT format: ${raw}`);
+                    throw new Error(`Unexpected LLM format: ${cleanRaw}`);
                 }
             }
 
