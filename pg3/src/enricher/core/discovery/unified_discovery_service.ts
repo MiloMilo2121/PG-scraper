@@ -21,7 +21,7 @@ import { RateLimiter, MemoryRateLimiter } from '../rate_limiter';
 import { ContentFilter } from './content_filter';
 import { HyperGuesser } from './hyper_guesser_v2';
 import { GoogleSerpAnalyzer } from './serp_analyzer';
-import { GoogleSearchProvider, DDGSearchProvider } from './search_provider';
+import { GoogleSearchProvider, DDGSearchProvider, SerperSearchProvider } from './search_provider';
 import { DuckDuckGoSerpAnalyzer } from './ddg_analyzer';
 import { LLMValidator } from '../ai/llm_validator';
 import { AgentRunner } from '../agent/agent_runner';
@@ -335,6 +335,12 @@ export class UnifiedDiscoveryService {
             // Add Bing & DDG to Wave 1
             promises.push(this.searchBing(company));
             promises.push(this.searchDDG(company));
+
+            // OPTIMIZATION: If Proxy is disabled, use Serper (Google API) as high-quality fallback
+            if (process.env.SERPER_API_KEY) {
+                Logger.info('[Wave1] 🚀 Proxy disabled & Serper Key found: Engaging Serper (Google API)');
+                promises.push(this.serperAttack(company));
+            }
         }
 
         // 🧠 JINA SEARCH: If enabled, add as high-priority search provider (no browser needed)
@@ -582,6 +588,12 @@ export class UnifiedDiscoveryService {
             this.rateLimiter.reportFailure('bing');
             Logger.warn('[Wave2] Bing targeted search failed', { error: e as Error, company_name: company.company_name });
         }
+
+        Logger.info(`[Wave2] 🕸️ Collected ${allCandidates.length} candidates from Net`);
+
+        // DEDUPLICATION: Filter out candidates already found in Wave 1
+        // (This is handled naturally by validateAndSelectBest -> seen set, but we can optimize network calls here if needed)
+        // For now, we just proceed as existing logic is robust enough.
 
         Logger.info(`[Wave2] 🕸️ Collected ${allCandidates.length} candidates from Net`);
 
@@ -969,7 +981,7 @@ export class UnifiedDiscoveryService {
                 };
             }
 
-            if (evaluation.confidence < THRESHOLDS.WAVE3_JUDGE && process.env.OPENAI_API_KEY) {
+            if (evaluation.confidence < THRESHOLDS.WAVE3_JUDGE && (process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.KIMI_API_KEY || process.env.Z_AI_API_KEY)) {
                 try {
                     const llm = await LLMValidator.validateCompany(company, combinedText);
                     if (llm.isValid && llm.confidence > evaluation.confidence) {
@@ -1186,7 +1198,7 @@ export class UnifiedDiscoveryService {
     }
 
     private async deepVerifyWithAI(url: string, company: CompanyInput): Promise<any | null> {
-        if (!process.env.OPENAI_API_KEY) return null;
+        if (!process.env.OPENAI_API_KEY && !process.env.DEEPSEEK_API_KEY && !process.env.KIMI_API_KEY && !process.env.Z_AI_API_KEY) return null;
         const normalizedUrl = this.normalizeUrl(url);
         if (!normalizedUrl || ContentFilter.isDirectoryOrSocial(normalizedUrl)) return null;
 

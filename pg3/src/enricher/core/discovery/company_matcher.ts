@@ -99,8 +99,8 @@ export class CompanyMatcher {
     const vatMatch = !!matchedVat;
     if (vatMatch) {
       return {
-        confidence: 1,
-        reason: 'VAT match',
+        confidence: 0.95, // GOLDEN SIGNAL
+        reason: 'VAT match (Golden Signal)',
         scrapedVat: matchedVat,
         signals: {
           vatMatch: true,
@@ -126,7 +126,7 @@ export class CompanyMatcher {
     const hasContactKeywords = this.hasContactKeywords(normalizedText, normalizedTitle);
 
     let confidence = 0.05;
-    if (phoneMatch) confidence += 0.55;
+    if (phoneMatch) confidence += 0.65; // BOOSTED: Was 0.55
 
     if (nameCoverage >= 0.85) confidence += 0.26;
     else if (nameCoverage >= 0.65) confidence += 0.2;
