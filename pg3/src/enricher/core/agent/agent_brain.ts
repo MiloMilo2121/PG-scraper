@@ -3,7 +3,7 @@ import { LLMService } from '../ai/llm_service';
 import { DOMSnapshot } from './dom_distiller';
 import { Logger } from '../../utils/logger';
 import { config } from '../../config';
-import { LLMService } from '../ai/llm_service';
+import { AGENT_NAVIGATION_PROMPT } from '../ai/prompt_templates';
 import { ModelRouter, TaskDifficulty } from '../ai/model_router';
 
 /**
@@ -46,7 +46,6 @@ export class AgentBrain {
         try {
             const decision = await LLMService.completeStructured<AgentDecision>(
                 prompt,
-                AGENT_NAVIGATION_PROMPT.schema as Record<string, unknown>,
                 AGENT_NAVIGATION_PROMPT.schema as Record<string, unknown>,
                 ModelRouter.selectModel(TaskDifficulty.COMPLEX) // 🧠 ROUTER: Complex task -> GLM-5
             );

@@ -33,32 +33,34 @@ export class ModelRouter {
             case TaskDifficulty.SIMPLE:
                 // TIER 1: Flash / Instant
                 // Target: GLM-4.7-FlashX ($0.07/M)
-                if (pricing['glm-4.7-flash']) return 'glm-4.7-flash';
-                return 'glm-4-flash'; // Fallback
+                if (config.llm.z_ai?.apiKey && pricing['glm-4.7-flash']) return 'glm-4.7-flash';
+                return 'gpt-4o-mini'; // Fallback to OpenAI if Z.ai missing
 
             case TaskDifficulty.MODERATE:
                 // TIER 2: Smart & Cheap
                 // Target: DeepSeek V3.2 ($0.28/M)
-                if (pricing['deepseek-v3.2']) return 'deepseek-v3.2';
-                if (pricing['deepseek-chat']) return 'deepseek-chat'; // V3 Legacy
-                return 'glm-4-flash'; // Fallback to Z.ai if DeepSeek not available
+                if (config.llm.deepseek?.apiKey) return 'deepseek-v3.2';
+                // Fallback: GLM-4 Flash (Z.ai)
+                if (config.llm.z_ai?.apiKey) return 'glm-4-flash';
+                return 'gpt-4o-mini';
 
             case TaskDifficulty.COMPLEX:
                 // TIER 3: Reasoning Standard
                 // Target: GLM-5 ($1.00/M)
-                return 'glm-5';
+                if (config.llm.z_ai?.apiKey) return 'glm-5';
+                return 'gpt-4o'; // Fallback
 
             case TaskDifficulty.HARD:
                 // TIER 4: Maximum Intelligence
-                // Target: Kimi K2 Thinking ($0.60/M input, high output cost but worth it)
-                if (pricing['moonshot-k2-thinking']) return 'moonshot-k2-thinking';
-                // Fallback: DeepSeek R1/Reasoner or GLM-5
-                if (pricing['deepseek-reasoner']) return 'deepseek-reasoner';
-                return 'glm-5'; // Ultimate fallback
+                // Target: Kimi K2 Thinking or DeepSeek R1
+                if (config.llm.kimi?.apiKey) return 'moonshot-k2-thinking';
+                if (config.llm.deepseek?.apiKey) return 'deepseek-reasoner';
+                if (config.llm.z_ai?.apiKey) return 'glm-5';
+                return 'gpt-4o'; // Ultimate fallback
 
             default:
                 Logger.warn(`[ModelRouter] Unknown difficulty ${difficulty}, defaulting to SIMPLE`);
-                return 'glm-4.7-flash';
+                return 'gpt-4o-mini';
         }
     }
 

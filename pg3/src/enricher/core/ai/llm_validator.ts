@@ -59,7 +59,6 @@ export class LLMValidator {
             const res = await LLMService.completeStructured<ValidationResult>(
                 prompt,
                 VALIDATE_COMPANY_PROMPT.schema as Record<string, unknown>,
-                VALIDATE_COMPANY_PROMPT.schema as Record<string, unknown>,
                 ModelRouter.selectModel(TaskDifficulty.SIMPLE) // 🚦 ROUTER: Simple task -> FlashX
             );
 
