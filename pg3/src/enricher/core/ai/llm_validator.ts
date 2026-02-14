@@ -1,7 +1,8 @@
-import { CompanyInput } from '../../types';
+import { CompanyInput } from '../../types'; // Restore CompanyInput
+import { config } from '../../config';
 import { Logger } from '../../utils/logger';
 import { LLMService } from './llm_service';
-import { config } from '../../config';
+import { ModelRouter, TaskDifficulty } from './model_router';
 import { HTMLCleaner } from '../../utils/html_cleaner';
 import { VALIDATE_COMPANY_PROMPT, SELECT_BEST_URL_PROMPT } from './prompt_templates';
 
@@ -58,7 +59,14 @@ export class LLMValidator {
             const res = await LLMService.completeStructured<ValidationResult>(
                 prompt,
                 VALIDATE_COMPANY_PROMPT.schema as Record<string, unknown>,
+                VALIDATE_COMPANY_PROMPT.schema as Record<string, unknown>,
+                ModelRouter.selectModel(TaskDifficulty.SIMPLE) // 🚦 ROUTER: Simple task -> FlashX
             );
+
+            // Log model usage for verification (Law 007)
+            if (res) {
+                ModelRouter.logSelection('CompanyValidation', TaskDifficulty.SIMPLE);
+            }
 
             if (res && typeof res.isValid === 'boolean' && typeof res.confidence === 'number') {
                 return {
@@ -129,7 +137,7 @@ export class LLMValidator {
             const res = await LLMService.completeStructured<{ bestUrl: string | null; confidence: number; reasoning: string }>(
                 prompt,
                 SELECT_BEST_URL_PROMPT.schema as Record<string, unknown>,
-                config.llm.model // Use smart model for high-reasoning task
+                ModelRouter.selectModel(TaskDifficulty.MODERATE) // 🚦 ROUTER: Selection -> DeepSeek V3.2 (more nuance)
             );
 
             if (res && typeof res.confidence === 'number') {

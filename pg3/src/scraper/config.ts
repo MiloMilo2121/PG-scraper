@@ -28,6 +28,14 @@ export const config = {
             apiKey: process.env.Z_AI_API_KEY || '',
             baseUrl: 'https://open.bigmodel.cn/api/paas/v4/',
         },
+        deepseek: {
+            apiKey: process.env.DEEPSEEK_API_KEY || '',
+            baseUrl: 'https://api.deepseek.com',
+        },
+        kimi: {
+            apiKey: process.env.KIMI_API_KEY || '',
+            baseUrl: 'https://api.moonshot.cn/v1',
+        },
         model: process.env.LLM_MODEL || 'glm-5',
         fastModel: process.env.LLM_MODEL_FAST || 'glm-4-flash',
     },

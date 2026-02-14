@@ -3,7 +3,8 @@ import { LLMService } from '../ai/llm_service';
 import { DOMSnapshot } from './dom_distiller';
 import { Logger } from '../../utils/logger';
 import { config } from '../../config';
-import { AGENT_NAVIGATION_PROMPT } from '../ai/prompt_templates';
+import { LLMService } from '../ai/llm_service';
+import { ModelRouter, TaskDifficulty } from '../ai/model_router';
 
 /**
  * 🧠 AGENT BRAIN (The Decision Maker)
@@ -46,8 +47,12 @@ export class AgentBrain {
             const decision = await LLMService.completeStructured<AgentDecision>(
                 prompt,
                 AGENT_NAVIGATION_PROMPT.schema as Record<string, unknown>,
-                config.llm.model // Use smart model for reasoning
+                AGENT_NAVIGATION_PROMPT.schema as Record<string, unknown>,
+                ModelRouter.selectModel(TaskDifficulty.COMPLEX) // 🧠 ROUTER: Complex task -> GLM-5
             );
+
+            // Log selection
+            ModelRouter.logSelection('AgentDecision', TaskDifficulty.COMPLEX);
 
             if (!decision) {
                 return {

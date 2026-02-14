@@ -40,7 +40,7 @@ import { CookieConsent } from './core/browser/cookie_consent';
 dotenv.config();
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
-const PG_OVERFLOW_THRESHOLD = 200;
+const PG_OVERFLOW_THRESHOLD = 199;
 const MAX_PG_PAGES = 10;       // PG shows ~25/page, 10 pages = 250 max per location
 const PG_PAGE_DELAY_MS = 2000; // Respect rate limits (Law 305)
 const PG_LOCATION_DELAY_MS = 3000;
@@ -104,6 +104,9 @@ async function getBrowser(): Promise<Browser> {
         if (browserInstance) await browserInstance.close().catch(() => { });
     } catch { }
 
+    const browserProfileDir = path.join(process.cwd(), 'search_profile_scraper');
+    if (!fs.existsSync(browserProfileDir)) fs.mkdirSync(browserProfileDir, { recursive: true });
+
     browserInstance = await (puppeteerCore as any).launch({
         headless: true,
         args: [
@@ -113,6 +116,7 @@ async function getBrowser(): Promise<Browser> {
             '--ignore-certificate-errors',
         ],
         executablePath: process.env.CHROME_BIN || undefined,
+        userDataDir: browserProfileDir,
         defaultViewport: null,
     }) as Browser;
     return browserInstance!;
@@ -432,7 +436,13 @@ async function main() {
     Logger.info(`🧠 PHASE 0: CATEGORY INTELLIGENCE`);
     Logger.info(`${'═'.repeat(60)}`);
 
-    const categories = await CategoryMatcher.match(query);
+    let categories: string[];
+    if (query.includes(',')) {
+        Logger.info('⚡ Query contains commas - Skipping LLM matching, using query tags directly.');
+        categories = query.split(',').map(s => s.trim());
+    } else {
+        categories = await CategoryMatcher.match(query);
+    }
 
     if (categories.length === 0) {
         Logger.error(`❌ No PG categories matched for "${query}". Aborting.`);
@@ -492,6 +502,13 @@ async function main() {
 
         // PHASE 4: Final output
         const finalList = globalDedup.getAll();
+
+        if (finalList.length === 0) {
+            Logger.warn('\n⚠️  SCRAPING FINISHED BUT NO COMPANIES FOUND.');
+            Logger.warn('   This usually means all targets returned 0 results or browser crashes were systematic.');
+            Logger.error('❌ FATAL: Generation failed to produce any data.');
+            process.exit(1);
+        }
 
         Logger.info(`\n${'═'.repeat(60)}`);
         Logger.info(`💾 PHASE 4: SAVING RESULTS`);

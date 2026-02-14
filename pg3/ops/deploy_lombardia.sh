@@ -46,9 +46,10 @@ $SSH_CMD root@"$SERVER_IP" "bash -s" <<EOF
   echo "📦 Updating dependencies..."
   npm install --omit=dev
 
-  # Launch Mission
-  echo "🔥 executing mission_lombardia_manifattura.sh..."
-  ./ops/mission_lombardia_manifattura.sh
+  # Launch Mission (Detached)
+  echo "🔥 executing mission_lombardia_manifattura.sh (DETACHED)..."
+  nohup ./ops/mission_lombardia_manifattura.sh > output/mission.log 2>&1 &
+  echo "✅ Mission launched in background. Check output/mission.log"
 EOF
 
 echo "--- ✨ DEPLOY & LAUNCH COMPLETE ✨ ---"

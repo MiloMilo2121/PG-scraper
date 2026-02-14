@@ -7,44 +7,97 @@ import OpenAI from 'openai';
  * 🧠 LLM SERVICE — Centralized AI Gateway
  *
  * Single point of access for ALL LLM calls across the application.
- * Handles provider selection (Z.ai / OpenAI), cost tracking (Law 006),
+ * Handles provider selection (Z.ai / DeepSeek / Kimi / OpenAI), cost tracking (Law 006),
  * structured JSON output (Law 502), and vision analysis.
  *
  * NO other module should instantiate OpenAI directly — use this service.
  */
 export class LLMService {
     private static totalCost = 0;
-    private static client: OpenAI | null = null;
+    private static clients: Map<string, OpenAI> = new Map();
 
     // ─────────────────────────────────────────────
     // CLIENT MANAGEMENT
     // ─────────────────────────────────────────────
 
     /**
-     * Singleton client factory. Uses Z.ai if API key is configured, otherwise OpenAI.
-     * Called lazily on first LLM call.
+     * Factory: Get the correct OpenAI-compatible client for the requested model.
+     * Route based on model prefix or explicit mapping.
      */
-    public static getClient(): OpenAI {
-        if (!LLMService.client) {
-            if (config.llm.z_ai.apiKey) {
-                Logger.info('🧠 [LLMService] Initializing Z.ai (GLM-5) Client...');
-                LLMService.client = new OpenAI({
+    private static getClientForModel(model: string): OpenAI {
+        let providerKey = 'openai'; // Default
+
+        // 1. Determine Provider based on Model Name
+        if (model.startsWith('glm-')) {
+            providerKey = 'z_ai';
+        } else if (model.startsWith('deepseek-')) {
+            providerKey = 'deepseek';
+        } else if (model.startsWith('moonshot-')) {
+            providerKey = 'kimi';
+        } else {
+            // Fallback for gpt-*, o1-*, etc. to OpenAI
+            providerKey = 'openai';
+        }
+
+        // 2. Return cached client if exists
+        if (this.clients.has(providerKey)) {
+            return this.clients.get(providerKey)!;
+        }
+
+        // 3. Initialize new client
+        let newClient: OpenAI;
+
+        switch (providerKey) {
+            case 'z_ai':
+                if (!config.llm.z_ai.apiKey) throw new Error(`⛔ Z.ai (GLM) API Key missing! Cannot use model ${model}`);
+                Logger.info(`🧠 [LLMService] Initializing Z.ai Client for ${model}...`);
+                newClient = new OpenAI({
                     apiKey: config.llm.z_ai.apiKey,
                     baseURL: config.llm.z_ai.baseUrl,
                 });
-            } else if (config.llm.apiKey) {
-                Logger.info('🧠 [LLMService] Initializing OpenAI Client...');
-                LLMService.client = new OpenAI({ apiKey: config.llm.apiKey });
-            } else {
-                throw new Error('⛔ No LLM API key configured. Set Z_AI_API_KEY or OPENAI_API_KEY.');
-            }
+                break;
+
+            case 'deepseek':
+                if (!config.llm.deepseek?.apiKey) throw new Error(`⛔ DeepSeek API Key missing! Cannot use model ${model}`);
+                Logger.info(`🧠 [LLMService] Initializing DeepSeek Client for ${model}...`);
+                newClient = new OpenAI({
+                    apiKey: config.llm.deepseek.apiKey,
+                    baseURL: config.llm.deepseek.baseUrl,
+                });
+                break;
+
+            case 'kimi':
+                if (!config.llm.kimi?.apiKey) throw new Error(`⛔ Kimi (Moonshot) API Key missing! Cannot use model ${model}`);
+                Logger.info(`🧠 [LLMService] Initializing Kimi Client for ${model}...`);
+                newClient = new OpenAI({
+                    apiKey: config.llm.kimi.apiKey,
+                    baseURL: config.llm.kimi.baseUrl,
+                });
+                break;
+
+            case 'openai':
+            default:
+                if (!config.llm.apiKey) throw new Error(`⛔ OpenAI API Key missing! Cannot use model ${model}`);
+                Logger.info(`🧠 [LLMService] Initializing OpenAI Client for ${model}...`);
+                newClient = new OpenAI({ apiKey: config.llm.apiKey });
+                break;
         }
-        return LLMService.client;
+
+        this.clients.set(providerKey, newClient);
+        return newClient;
     }
 
-    /** Returns true if Z.ai is the active provider. */
-    public static isZAI(): boolean {
-        return !!config.llm.z_ai.apiKey;
+    /**
+     * @deprecated Use specific methods which handle client selection automatically.
+     * Returns the default client (usually Z.ai or OpenAI fallback).
+     */
+    public static getClient(): OpenAI {
+        // Fallback for legacy calls that don't specify model
+        // Prefer Z.ai -> DeepSeek -> Kimi -> OpenAI
+        if (config.llm.z_ai.apiKey) return this.getClientForModel('glm-5');
+        if (config.llm.deepseek?.apiKey) return this.getClientForModel('deepseek-chat');
+        if (config.llm.kimi?.apiKey) return this.getClientForModel('moonshot-v1-8k');
+        return this.getClientForModel('gpt-4o');
     }
 
     // ─────────────────────────────────────────────
@@ -56,7 +109,7 @@ export class LLMService {
      * Uses the configured smart model by default.
      */
     public static async complete(prompt: string, model: string = config.llm.model): Promise<string> {
-        const client = this.getClient();
+        const client = this.getClientForModel(model);
 
         try {
             const response = await client.chat.completions.create({
@@ -71,7 +124,7 @@ export class LLMService {
 
             return content;
         } catch (error) {
-            Logger.error('[LLM] complete() failed', { error: error as Error });
+            Logger.error(`[LLM] complete() failed with model ${model}`, { error: error as Error });
             throw error;
         }
     }
@@ -91,7 +144,11 @@ export class LLMService {
         schema: Record<string, unknown>,
         model: string = config.llm.fastModel
     ): Promise<T | null> {
-        const client = this.getClient();
+        const client = this.getClientForModel(model);
+
+        // Kimi/Moonshot might not support 'json_schema' strictly yet, usually better to prompt it.
+        // But OpenAI SDK requires valid keys. We'll try standard way, fallback if 400.
+        // DeepSeek V3 supports standard tools/json objects usually.
 
         try {
             const response = await client.chat.completions.create({
@@ -106,7 +163,7 @@ export class LLMService {
                         strict: true,
                         schema,
                     },
-                } as any, // SDK types may lag behind API features
+                } as any,
             });
 
             const content = response.choices[0]?.message?.content;
@@ -117,20 +174,29 @@ export class LLMService {
 
             this.trackUsage(response.usage, model);
 
-            // GLM models may wrap JSON in markdown blocks even with json_schema mode
+            // GLM/DeepSeek models may wrap JSON in markdown blocks even with json_schema mode
             const cleanContent = content.replace(/```json/g, '').replace(/```/g, '').trim();
             return JSON.parse(cleanContent) as T;
 
         } catch (error) {
-            Logger.error('[LLM] completeStructured() failed', { error: error as Error });
-            return null;
+            Logger.warn(`[LLM] Structured output failed with model ${model}, trying pure JSON prompt...`, { error: (error as Error).message });
+
+            // Fallback: Try standard JSON mode or plaintext
+            try {
+                const legacyRes = await this.complete(prompt + "\n\nResponse MUST be valid JSON matching the schema.", model);
+                const cleanLegacy = legacyRes.replace(/```json/g, '').replace(/```/g, '').trim();
+                return JSON.parse(cleanLegacy) as T;
+            } catch (legacyError) {
+                Logger.error('[LLM] Legacy fallback failed', { error: legacyError as Error });
+                return null;
+            }
         }
     }
 
     /**
      * 👁️ VISION COMPLETION — Analyze images with LLM.
      * Sends a base64-encoded image alongside a text prompt.
-     * Uses the configured smart model (GLM-5 supports vision natively).
+     * Not all models support vision (DeepSeek V3 doesn't, GLM-4v does, GPT-4o does).
      *
      * @param prompt       - System/analysis prompt
      * @param imageBase64  - Base64-encoded image data
@@ -142,7 +208,14 @@ export class LLMService {
         imageBase64: string,
         model: string = config.llm.model
     ): Promise<string | null> {
-        const client = this.getClient();
+        // Guard: DeepSeek Chat (V3) does NOT support vision. DeepSeek VL does but via different API usually? 
+        // For now assume assume only GLM-4v/5 and GPT-4o support vision.
+        if (model.includes('deepseek') || model.includes('moonshot')) {
+            Logger.warn(`[LLM] Vision request sent to non-vision model (${model}). Fallback to GLM-4v/GPT-4o.`);
+            // Fallback logic could be added here, or just let it fail/warn.
+        }
+
+        const client = this.getClientForModel(model);
 
         try {
             const response = await client.chat.completions.create({

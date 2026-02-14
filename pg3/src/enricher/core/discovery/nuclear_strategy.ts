@@ -48,28 +48,29 @@ export class NuclearStrategy {
             return { url: null, method: 'nuclear_failed', confidence: 0 };
         }
 
+
         if (serpResults.length === 0) {
-            return { url: null, method: 'nuclear_no_results', confidence: 0 };
+            Logger.warn(`[Nuclear] Initial search yielded NO results. Switching to LEGACY PROTOCOL immediately.`);
+            // Fall through to legacy...
+        } else {
+            // 3. SMART AI SELECTION (Only if we have results)
+            Logger.info(`[Nuclear] Analyzing ${serpResults.length} SERP results with AI...`);
+            const aiDecision = await LLMValidator.selectBestUrl(company, serpResults);
+
+            if (aiDecision.bestUrl && aiDecision.confidence > 0.6) {
+                Logger.info(`[Nuclear] 🧠 AI selected: ${aiDecision.bestUrl} (Conf: ${aiDecision.confidence})`);
+                Logger.info(`[Nuclear] 💡 Reasoning: ${aiDecision.reasoning}`);
+
+                return {
+                    url: aiDecision.bestUrl,
+                    method: 'nuclear_smart_ai',
+                    confidence: aiDecision.confidence
+                };
+            }
+
+            Logger.info(`[Nuclear] AI unsure (Conf: ${aiDecision.confidence}). Falling back to heuristics.`);
+            Logger.info(`[Nuclear] 💡 AI Reasoning: ${aiDecision.reasoning}`);
         }
-
-        // 3. SMART AI SELECTION
-        Logger.info(`[Nuclear] Analyzing ${serpResults.length} SERP results with AI (${config.llm.model})...`);
-        const aiDecision = await LLMValidator.selectBestUrl(company, serpResults);
-
-        if (aiDecision.bestUrl && aiDecision.confidence > 0.6) {
-            Logger.info(`[Nuclear] 🧠 AI selected: ${aiDecision.bestUrl} (Conf: ${aiDecision.confidence})`);
-            Logger.info(`[Nuclear] 💡 Reasoning: ${aiDecision.reasoning}`);
-
-            return {
-                url: aiDecision.bestUrl,
-                method: 'nuclear_smart_ai',
-                confidence: aiDecision.confidence
-            };
-        }
-
-        // 4. FALLBACK: Old Heuristic Logic (if AI is unsure)
-        Logger.info(`[Nuclear] AI unsure (Conf: ${aiDecision.confidence}). Falling back to heuristics.`);
-        Logger.info(`[Nuclear] 💡 AI Reasoning: ${aiDecision.reasoning}`);
 
         const queries = this.generateNuclearQueries(company);
         return this.executeLegacy(company, queries);
