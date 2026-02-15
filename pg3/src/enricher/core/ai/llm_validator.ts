@@ -1,4 +1,4 @@
-import { CompanyInput } from '../../types'; // Restore CompanyInput
+import { CompanyInput } from '../../types';
 import { config } from '../../config';
 import { Logger } from '../../utils/logger';
 import { LLMService } from './llm_service';
@@ -28,7 +28,7 @@ export class LLMValidator {
      * Uses structured prompts + Cheerio-cleaned HTML for better accuracy.
      */
     public static async validateCompany(company: CompanyInput, scrapedHtml: string): Promise<ValidationResult> {
-        if (!process.env.OPENAI_API_KEY && !process.env.Z_AI_API_KEY) {
+        if (!process.env.OPENAI_API_KEY && !process.env.Z_AI_API_KEY && !process.env.DEEPSEEK_API_KEY && !process.env.KIMI_API_KEY) {
             return {
                 isValid: false,
                 confidence: 0,
@@ -59,8 +59,7 @@ export class LLMValidator {
             const res = await LLMService.completeStructured<ValidationResult>(
                 prompt,
                 VALIDATE_COMPANY_PROMPT.schema as Record<string, unknown>,
-                VALIDATE_COMPANY_PROMPT.schema as Record<string, unknown>,
-                ModelRouter.selectModel(TaskDifficulty.SIMPLE) // 🚦 ROUTER: Simple task -> FlashX
+                ModelRouter.selectModel(TaskDifficulty.SIMPLE)
             );
 
             // Log model usage for verification (Law 007)
@@ -117,7 +116,7 @@ export class LLMValidator {
         company: CompanyInput,
         serpResults: Array<{ url: string; title: string; snippet: string }>
     ): Promise<{ bestUrl: string | null; confidence: number; reasoning: string }> {
-        if (!process.env.OPENAI_API_KEY && !process.env.Z_AI_API_KEY) {
+        if (!process.env.OPENAI_API_KEY && !process.env.Z_AI_API_KEY && !process.env.DEEPSEEK_API_KEY && !process.env.KIMI_API_KEY) {
             Logger.warn('[LLMValidator] selectBestUrl: No LLM API key configured');
             return { bestUrl: null, confidence: 0, reasoning: 'LLM disabled (missing API key)' };
         }

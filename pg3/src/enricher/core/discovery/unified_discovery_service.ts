@@ -21,7 +21,7 @@ import { RateLimiter, MemoryRateLimiter } from '../rate_limiter';
 import { ContentFilter } from './content_filter';
 import { HyperGuesser } from './hyper_guesser_v2';
 import { GoogleSerpAnalyzer } from './serp_analyzer';
-import { GoogleSearchProvider, DDGSearchProvider } from './search_provider';
+import { GoogleSearchProvider, DDGSearchProvider, SerperSearchProvider } from './search_provider';
 import { DuckDuckGoSerpAnalyzer } from './ddg_analyzer';
 import { LLMValidator } from '../ai/llm_validator';
 import { AgentRunner } from '../agent/agent_runner';
@@ -33,6 +33,7 @@ import { DomainValidator } from '../../utils/domain_validator';
 import { NuclearStrategy } from './nuclear_strategy';
 import { PagineGialleHarvester } from '../directories/paginegialle';
 import { ScraperClient } from '../../utils/scraper_client';
+import { IdentityResolver } from './identity_resolver';
 
 // ============================================================================
 // INTERFACES
@@ -178,6 +179,21 @@ export class UnifiedDiscoveryService {
         let bestInvalid: DiscoveryResult | null = null;
 
         try {
+            // --- STEP 0: IDENTITY RESOLUTION (FatturatoItalia) ---
+            if (!company.vat_code && !company.piva && !company.vat) {
+                const identity = await IdentityResolver.resolve(company);
+                if (identity.vat_number && identity.identity_confidence >= 0.5) {
+                    company = {
+                        ...company,
+                        vat_code: identity.vat_number,
+                        fiscal_code: identity.fiscal_code || company.fiscal_code,
+                        // Preserve identity data in the company object for downstream use
+                        _identity: identity,
+                    } as CompanyInput;
+                    Logger.info(`[Discovery] 🪪 Identity resolved: VAT=${identity.vat_number} (confidence: ${identity.identity_confidence.toFixed(2)})`);
+                }
+            }
+
             // --- PRE-CHECK: Validate existing website if present ---
             if (company.website && company.website.length > 5 && !company.website.includes('paginegialle.it')) {
                 Logger.info(`[Discovery] 🏁 Pre-validating existing website: ${company.website}`);
@@ -280,7 +296,8 @@ export class UnifiedDiscoveryService {
                 return bestInvalid;
             }
 
-            // All waves exhausted
+            // All waves exhausted — preserve identity data even when website not found
+            const identityData = (company as any)._identity || {};
             AntigravityClient.getInstance().trackCompanyUpdate(company, 'FAILED', { reason: 'All waves exhausted' });
             return {
                 url: null,
@@ -288,7 +305,7 @@ export class UnifiedDiscoveryService {
                 method: 'waves_exhausted',
                 confidence: 0,
                 wave: 'ALL',
-                details: {}
+                details: { identity: identityData }
             };
 
         } catch (error) {
@@ -342,6 +359,12 @@ export class UnifiedDiscoveryService {
             promises.push(this.searchJina(company));
         }
 
+        // 🪪 VAT SEARCH: If identity resolved a P.IVA, search for it directly (highest precision query)
+        const vatCode = company.vat_code || company.piva || company.vat || '';
+        if (vatCode.replace(/\D/g, '').length === 11) {
+            promises.push(this.searchByVat(company, vatCode.replace(/\D/g, '')));
+        }
+
         // Launch all methods in parallel
         const results = await Promise.all(promises);
 
@@ -356,6 +379,40 @@ export class UnifiedDiscoveryService {
 
         // Validate candidates in parallel
         return await this.validateAndSelectBest(allCandidates, company, 'WAVE1_SWARM', threshold, maxCandidates);
+    }
+
+    // 🪪 VAT-based search — highest precision discovery method
+    private async searchByVat(company: CompanyInput, vat: string): Promise<Candidate[] | null> {
+        try {
+            const serper = new SerperSearchProvider();
+            // Query 1: P.IVA exact match (most precise)
+            const results1 = await serper.search(`"${vat}"`);
+            // Query 2: P.IVA with label (catches footer mentions)
+            const results2 = await serper.search(`"P.IVA ${vat}"`);
+
+            const allResults = [...results1, ...results2];
+            if (allResults.length === 0) {
+                Logger.info(`[VatSearch] No results for VAT ${vat}`);
+                return null;
+            }
+
+            const candidates: Candidate[] = [];
+            for (const result of allResults) {
+                if (result.url && !ContentFilter.isDirectoryOrSocial(result.url)) {
+                    candidates.push({
+                        url: result.url,
+                        source: 'vat_search',
+                        confidence: 0.91,
+                    });
+                }
+            }
+
+            Logger.info(`[VatSearch] Found ${candidates.length} candidates for VAT ${vat}`);
+            return candidates.length > 0 ? candidates.slice(0, 5) : null;
+        } catch (e) {
+            Logger.warn(`[VatSearch] Search failed for VAT ${vat}`, { error: e as Error });
+            return null;
+        }
     }
 
     // Wrappers for Bing/DDG to match signature
@@ -969,7 +1026,7 @@ export class UnifiedDiscoveryService {
                 };
             }
 
-            if (evaluation.confidence < THRESHOLDS.WAVE3_JUDGE && process.env.OPENAI_API_KEY) {
+            if (evaluation.confidence < THRESHOLDS.WAVE3_JUDGE && this.hasAnyLlmKey()) {
                 try {
                     const llm = await LLMValidator.validateCompany(company, combinedText);
                     if (llm.isValid && llm.confidence > evaluation.confidence) {
@@ -1085,7 +1142,7 @@ export class UnifiedDiscoveryService {
             }
 
             // LLM boost if confidence is borderline
-            if (evaluation.confidence < THRESHOLDS.WAVE3_JUDGE && process.env.OPENAI_API_KEY) {
+            if (evaluation.confidence < THRESHOLDS.WAVE3_JUDGE && this.hasAnyLlmKey()) {
                 try {
                     const llm = await LLMValidator.validateCompany(company, text);
                     if (llm.isValid && llm.confidence > evaluation.confidence) {
@@ -1186,7 +1243,7 @@ export class UnifiedDiscoveryService {
     }
 
     private async deepVerifyWithAI(url: string, company: CompanyInput): Promise<any | null> {
-        if (!process.env.OPENAI_API_KEY) return null;
+        if (!this.hasAnyLlmKey()) return null;
         const normalizedUrl = this.normalizeUrl(url);
         if (!normalizedUrl || ContentFilter.isDirectoryOrSocial(normalizedUrl)) return null;
 
@@ -1477,6 +1534,19 @@ export class UnifiedDiscoveryService {
             Logger.warn('[ScrapeBingDIY] Failed', { error: e as Error, query });
             return [];
         }
+    }
+
+    // =========================================================================
+    // HELPERS
+    // =========================================================================
+
+    private hasAnyLlmKey(): boolean {
+        return !!(
+            process.env.OPENAI_API_KEY ||
+            process.env.Z_AI_API_KEY ||
+            process.env.DEEPSEEK_API_KEY ||
+            process.env.KIMI_API_KEY
+        );
     }
 
     // =========================================================================

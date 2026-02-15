@@ -190,8 +190,6 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
 }
 
 function getHeaders() {
-    // We need to know headers in advance or derive them. 
-    // Let's use a standard list based on CompanyInput + enrichment
     return [
         { id: 'company_name', title: 'company_name' },
         { id: 'address', title: 'address' },
@@ -200,7 +198,7 @@ function getHeaders() {
         { id: 'zip_code', title: 'zip_code' },
         { id: 'region', title: 'region' },
         { id: 'phone', title: 'phone' },
-        { id: 'vat', title: 'vat' }, // Mapping might be loose in input
+        { id: 'vat', title: 'vat' },
         { id: 'piva', title: 'piva' },
         { id: 'website', title: 'website' },
         { id: 'website_found', title: 'website_found' },
@@ -209,13 +207,23 @@ function getHeaders() {
         { id: 'scraped_piva', title: 'scraped_piva' },
         { id: 'validation_level', title: 'validation_level' },
         { id: 'validation_reason', title: 'validation_reason' },
-        { id: 'lead_score', title: 'lead_score' }, // 🏆 New Score Column
-        { id: 'category', title: 'category' } // Preserve category
+        { id: 'lead_score', title: 'lead_score' },
+        { id: 'category', title: 'category' },
+        // Identity fields (Step 0 - FatturatoItalia)
+        { id: 'legal_name', title: 'legal_name' },
+        { id: 'vat_number', title: 'vat_number' },
+        { id: 'ateco', title: 'ateco' },
+        { id: 'legal_form', title: 'legal_form' },
+        { id: 'revenue_identity', title: 'revenue_identity' },
+        { id: 'employees_identity', title: 'employees_identity' },
+        { id: 'identity_confidence', title: 'identity_confidence' },
+        { id: 'fi_profile_url', title: 'fi_profile_url' },
     ];
 }
 
 
 function enrichCompanyWithResult(company: CompanyInput, res: DiscoveryResult): any {
+    const identity = res.details?.identity || (company as any)._identity || {};
     return {
         website: res.url || '',
         website_found: res.status === 'FOUND_VALID' ? 'Yes' : (res.status === 'FOUND_INVALID' ? 'Invalid' : 'No'),
@@ -223,7 +231,16 @@ function enrichCompanyWithResult(company: CompanyInput, res: DiscoveryResult): a
         discovery_confidence: res.confidence,
         scraped_piva: res.details?.scraped_piva || '',
         validation_level: res.details?.level || '',
-        validation_reason: res.details?.reason || ''
+        validation_reason: res.details?.reason || '',
+        // Identity fields from Step 0
+        legal_name: identity.legal_name || '',
+        vat_number: identity.vat_number || company.vat_code || company.piva || company.vat || '',
+        ateco: identity.ateco || '',
+        legal_form: identity.legal_form || '',
+        revenue_identity: identity.revenue || '',
+        employees_identity: identity.employees || '',
+        identity_confidence: identity.identity_confidence ?? '',
+        fi_profile_url: identity.fi_profile_url || '',
     };
 }
 

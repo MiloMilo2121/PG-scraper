@@ -116,10 +116,9 @@ export class ReverseAddressSearchProvider implements SearchProvider {
  */
 export class SerperSearchProvider implements SearchProvider {
     async search(query: string): Promise<SerpResult[]> {
-        const apiKey = process.env.SERPER_API_KEY || 'e0feae3b0d8ba0ebcdc8a70874543e15bd6bf01a'; // Fallback to provided key for now
-
+        const apiKey = process.env.SERPER_API_KEY;
         if (!apiKey) {
-            Logger.warn('[SerperProvider] No API Key provided');
+            Logger.warn('[SerperProvider] SERPER_API_KEY not configured, skipping');
             return [];
         }
 

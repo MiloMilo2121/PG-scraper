@@ -177,23 +177,22 @@ export const config = {
     temperature: 0.1,
     /** Per-model pricing in $/1M tokens. Law 006: No magic numbers. */
     pricing: {
-      'glm-5': { inputPer1M: 2.00, outputPer1M: 8.00 },
+      // Z.ai (GLM)
+      'glm-5': { inputPer1M: 1.00, outputPer1M: 3.20 },
       'glm-4-plus': { inputPer1M: 1.50, outputPer1M: 6.00 },
-      'glm-4.7-flash': { inputPer1M: 0.10, outputPer1M: 0.40 },
-      'glm-4-flash': { inputPer1M: 0.10, outputPer1M: 0.40 }, // Fallback/Reference
+      'glm-4.7-flash': { inputPer1M: 0.07, outputPer1M: 0.40 },
+      'glm-4-flash': { inputPer1M: 0.10, outputPer1M: 0.40 },
+      // OpenAI
       'gpt-4o-mini': { inputPer1M: 0.15, outputPer1M: 0.60 },
       'gpt-4o': { inputPer1M: 2.50, outputPer1M: 10.00 },
       'o3-mini': { inputPer1M: 1.10, outputPer1M: 4.40 },
       // DeepSeek
-      'deepseek-chat': { inputPer1M: 0.14, outputPer1M: 0.28 }, // V3 Legacy
-      'deepseek-v3.2': { inputPer1M: 0.28, outputPer1M: 0.42 }, // V3.2 (New Standard)
-      'deepseek-reasoner': { inputPer1M: 0.55, outputPer1M: 2.19 }, // R1
-      // Z.ai (GLM)
-      'glm-4.7-flash': { inputPer1M: 0.07, outputPer1M: 0.40 }, // FlashX
-      'glm-5': { inputPer1M: 1.00, outputPer1M: 3.20 }, // Flagship
+      'deepseek-chat': { inputPer1M: 0.14, outputPer1M: 0.28 },
+      'deepseek-v3.2': { inputPer1M: 0.28, outputPer1M: 0.42 },
+      'deepseek-reasoner': { inputPer1M: 0.55, outputPer1M: 2.19 },
       // Kimi (Moonshot)
       'moonshot-v1-8k': { inputPer1M: 1.70, outputPer1M: 1.70 },
-      'moonshot-k2-thinking': { inputPer1M: 0.60, outputPer1M: 2.50 }, // K2 Thinking
+      'moonshot-k2-thinking': { inputPer1M: 0.60, outputPer1M: 2.50 },
     } as Record<string, { inputPer1M: number; outputPer1M: number }>,
   },
   google: {
