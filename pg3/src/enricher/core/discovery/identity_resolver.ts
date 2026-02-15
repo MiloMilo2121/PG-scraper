@@ -107,61 +107,116 @@ export class IdentityResolver {
 
     private async scrapeProfile(url: string, originalCompany: CompanyInput): Promise<IdentityResult | null> {
         try {
-            const html = await ScraperClient.fetchText(url, { mode: 'scrape_do', render: false }); // Fast fetch
+            const html = await ScraperClient.fetchText(url, { mode: 'scrape_do', render: false });
             const $ = cheerio.load(html);
+            const bodyText = $('body').text(); // Fallback for text-based regex
 
-            // Extract data from FatturatoItalia schema (approximate - needs actual selectors)
-            // Typically: H1 = Name, Specific fields for P.IVA
+            // 1. Extract Legal Name (Usually H1 or specific label)
+            let legalName = $('h1').first().text().trim();
+            if (!legalName) {
+                legalName = this.extractByLabel($, 'Ragione sociale') || '';
+            }
 
-            const legalName = $('h1').first().text().trim();
-
-            // P.IVA extraction (usually in text or specific span)
-            const bodyText = $('body').text();
-            const vatMatch = bodyText.match(/Partita IVA:?\s*(\d{11})/i);
-            const vat = vatMatch ? vatMatch[1] : null;
+            // 2. Extract VAT (P.IVA)
+            let vat: string | undefined | null = this.extractByLabel($, 'Partita IVA');
+            if (!vat) {
+                const vatMatch = bodyText.match(/Partita IVA:?\s*(\d{11})/i);
+                vat = vatMatch ? vatMatch[1] : undefined;
+            }
 
             if (!legalName || !vat) return null;
 
-            // Financials
-            const revenue = this.extractFinancialMetric($, 'Fatturato');
-            const employees = this.extractFinancialMetric($, 'Dipendenti');
-            const profit = this.extractFinancialMetric($, 'Utile');
+            // 3. Extract Financials
+            // Labels: "Fatturato 2024", "Utile 2024", "N. Dipendenti", "Attività prevalente"
+            const revenue = this.extractByLabel($, 'Fatturato'); // Matches "Fatturato 202X" via partial match logic if needed
+            const employees = this.extractByLabel($, 'N. Dipendenti') || this.extractByLabel($, 'Dipendenti');
+            const profit = this.extractByLabel($, 'Utile');
 
-            // Address/City check
-            const addressText = bodyText;
-            const cityMatch = originalCompany.city ? addressText.toLowerCase().includes(originalCompany.city.toLowerCase()) : true;
+            // 4. Extract Category/Activity
+            const activity = this.extractByLabel($, 'Attività prevalente') || this.extractByLabel($, 'ATECO');
 
-            // Confidence check
-            // If City matches or Name is very similar -> HIGH
-            // Real logic: VAT checksum validity + City match
+            // 5. Confidence Logic
+            // If the found city matches the input city (geo check) OR matched via very specific name
+            let confidence: 'HIGH' | 'MEDIUM' | 'LOW' = 'MEDIUM';
+            const pageTextLower = bodyText.toLowerCase();
+
+            if (originalCompany.city && pageTextLower.includes(originalCompany.city.toLowerCase())) {
+                confidence = 'HIGH';
+            }
+            if (originalCompany.vat_number && vat.includes(originalCompany.vat_number)) {
+                confidence = 'HIGH'; // Manual override if we already had VAT
+            }
 
             return {
                 legal_name: legalName,
                 vat_number: vat,
+                activity_code: activity,
                 financials: {
-                    revenue,
-                    employees,
-                    profit
+                    revenue: this.cleanCurrency(revenue),
+                    employees: this.cleanEmployees(employees),
+                    profit: this.cleanCurrency(profit)
                 },
-                confidence: cityMatch ? 'HIGH' : 'MEDIUM',
+                confidence,
                 source_url: url
             };
 
         } catch (e) {
-            Logger.warn('[IdentityResolver] Profile scraping failed', { url, error: e });
+            Logger.warn('[IdentityResolver] Profile scraping failed', { url, error: (e as Error).message });
             return null;
         }
     }
 
-    private extractFinancialMetric($: cheerio.CheerioAPI, label: string): string | undefined {
-        // Generic extractor looking for label and taking next number
-        // This is a placeholder for the specific DOM structure of fatturatoitalia
+    /**
+     * Extracts text following a label (e.g., "Fatturato: € 100").
+     * Tries multiple strategies: Sibling element, Table cell, or Text proximity.
+     */
+    private extractByLabel($: cheerio.CheerioAPI, labelPattern: string): string | undefined {
+        // Strategy 1: Definition lists or divs (Label -> Value)
+        // Look for element containing label, then take the next element or text node
         try {
-            const element = $(`div:contains("${label}")`).last();
-            const value = element.next().text().trim() || element.text().split(label)[1]?.trim();
-            return value?.replace(/[^0-9.,€]/g, '').trim();
-        } catch {
+            // Find all elements containing the label
+            const labelEls = $(`*:contains('${labelPattern}')`).filter((i, el) => {
+                // Filter to ensure it's the deepest element containing the text (leaf node)
+                return $(el).children().length === 0 || $(el).text().trim().startsWith(labelPattern);
+            });
+
+            if (labelEls.length > 0) {
+                const finalEl = labelEls.last(); // Usually the most specific
+
+                // Option A: Value is in the NEXT sibling
+                let val = finalEl.next().text().trim();
+                if (val) return val;
+
+                // Option B: Value is in the SAME parent's text (e.g. <div>Label: Value</div>)
+                const parentText = finalEl.parent().text().trim();
+                if (parentText.length > labelPattern.length + 2) {
+                    return parentText.replace(labelPattern, '').replace(/^[:\s]+/, '').trim();
+                }
+
+                // Option C: Table structure (TD -> next TD)
+                const td = finalEl.closest('td');
+                if (td.length > 0) {
+                    return td.next('td').text().trim();
+                }
+            }
+            return undefined;
+        } catch (e) {
             return undefined;
         }
+    }
+
+    private cleanCurrency(value?: string): string | undefined {
+        if (!value) return undefined;
+        // Handle "€ 186.975.036" -> "186975036" (or keep formatting if preferred)
+        // User request shows format "€ -2.299.451". Let's keep the standard numeric representation.
+        // Actually, keeping the raw string is often safer for display, but for DB we might want numbers.
+        // Let's return just numbers and minus sign.
+        return value.replace(/[^0-9,-]/g, '').trim();
+    }
+
+    private cleanEmployees(value?: string): string | undefined {
+        if (!value) return undefined;
+        // Handle "oltre 1000" -> "1000+" or keep text
+        return value.replace(/\n/g, '').trim();
     }
 }
