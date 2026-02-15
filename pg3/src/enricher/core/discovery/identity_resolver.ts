@@ -72,9 +72,34 @@ export class IdentityResolver {
     }
 
     private async findProfileUrl(query: string): Promise<string | null> {
-        // Use Serper if available (Best for Google index)
+        // 1. Try Bing First (Cheaper/Free via ScraperClient)
+        try {
+            const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+            // Use render: true to ensure Bing results load, but Scrape.do handles the heavy lifting
+            const html = await ScraperClient.fetchText(bingUrl, { mode: 'scrape_do', render: true });
+            const $ = cheerio.load(html);
+            let matchedUrl: string | null = null;
+            $('li.b_algo h2 a').each((i, el) => {
+                if (matchedUrl) return;
+                const url = $(el).attr('href');
+                if (url && url.includes('fatturatoitalia.it')) {
+                    matchedUrl = url;
+                }
+            });
+
+            if (matchedUrl) {
+                Logger.info(`[IdentityResolver] 🟢 Found via Bing: ${matchedUrl}`);
+                return matchedUrl;
+            }
+        } catch (e) {
+            Logger.warn(`[IdentityResolver] Bing fallback failed: ${query}`, { error: e as Error });
+            // Continue to Serper fallback
+        }
+
+        // 2. Fallback to Serper (High Accuracy, Costly)
         if (process.env.SERPER_API_KEY) {
             try {
+                Logger.info(`[IdentityResolver] 🟡 Bing failed, engaging Serper fallback...`);
                 const response = await fetch('https://google.serper.dev/search', {
                     method: 'POST',
                     headers: {
@@ -93,25 +118,7 @@ export class IdentityResolver {
             }
         }
 
-        // Fallback or if Serper key missing -> Use Bing via Scrape.do (cheaper/slower)
-        try {
-            const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
-            // Use render: true to ensure Bing results load, but Scrape.do handles the heavy lifting
-            const html = await ScraperClient.fetchText(bingUrl, { mode: 'scrape_do', render: true });
-            const $ = cheerio.load(html);
-            let matchedUrl: string | null = null;
-            $('li.b_algo h2 a').each((i, el) => {
-                if (matchedUrl) return;
-                const url = $(el).attr('href');
-                if (url && url.includes('fatturatoitalia.it')) {
-                    matchedUrl = url;
-                }
-            });
-            return matchedUrl;
-        } catch (e) {
-            Logger.warn(`[IdentityResolver] Bing fallback failed: ${query}`, { error: e as Error });
-            return null;
-        }
+        return null;
     }
 
     private async scrapeProfile(url: string, originalCompany: CompanyInput): Promise<IdentityResult | null> {
