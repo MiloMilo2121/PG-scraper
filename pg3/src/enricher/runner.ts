@@ -189,19 +189,20 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
     }
 }
 
+
 function getHeaders() {
-    // We need to know headers in advance or derive them. 
-    // Let's use a standard list based on CompanyInput + enrichment
     return [
         { id: 'company_name', title: 'company_name' },
+        { id: 'legal_name', title: 'legal_name' }, // New
         { id: 'address', title: 'address' },
         { id: 'city', title: 'city' },
         { id: 'province', title: 'province' },
         { id: 'zip_code', title: 'zip_code' },
         { id: 'region', title: 'region' },
         { id: 'phone', title: 'phone' },
-        { id: 'vat', title: 'vat' }, // Mapping might be loose in input
+        { id: 'vat', title: 'vat' },
         { id: 'piva', title: 'piva' },
+        { id: 'fiscal_code', title: 'fiscal_code' }, // New
         { id: 'website', title: 'website' },
         { id: 'website_found', title: 'website_found' },
         { id: 'discovery_method', title: 'discovery_method' },
@@ -209,13 +210,25 @@ function getHeaders() {
         { id: 'scraped_piva', title: 'scraped_piva' },
         { id: 'validation_level', title: 'validation_level' },
         { id: 'validation_reason', title: 'validation_reason' },
-        { id: 'lead_score', title: 'lead_score' }, // 🏆 New Score Column
-        { id: 'category', title: 'category' } // Preserve category
+        { id: 'lead_score', title: 'lead_score' },
+        { id: 'category', title: 'category' },
+        // Extended Identity Fields
+        { id: 'rea', title: 'rea' },
+        { id: 'legal_form', title: 'legal_form' },
+        { id: 'foundation_year', title: 'foundation_year' },
+        { id: 'activity_status', title: 'activity_status' },
+        { id: 'activity_code', title: 'activity_code' },
+        { id: 'revenue', title: 'revenue' },
+        { id: 'employees', title: 'employees' },
+        { id: 'profit', title: 'profit' },
+        { id: 'personnel_cost', title: 'personnel_cost' }
     ];
 }
 
 
 function enrichCompanyWithResult(company: CompanyInput, res: DiscoveryResult): any {
+    const identity = res.details?.identity;
+
     return {
         website: res.url || '',
         website_found: res.status === 'FOUND_VALID' ? 'Yes' : (res.status === 'FOUND_INVALID' ? 'Invalid' : 'No'),
@@ -223,7 +236,27 @@ function enrichCompanyWithResult(company: CompanyInput, res: DiscoveryResult): a
         discovery_confidence: res.confidence,
         scraped_piva: res.details?.scraped_piva || '',
         validation_level: res.details?.level || '',
-        validation_reason: res.details?.reason || ''
+        validation_reason: res.details?.reason || '',
+
+        // Identity Mapping
+        legal_name: identity?.legal_name || company.company_name, // Use discovered Name if available
+        fiscal_code: identity?.fiscal_code || '',
+        rea: identity?.rea || '',
+        legal_form: identity?.legal_form || '',
+        foundation_year: identity?.foundation_year || '',
+        activity_status: identity?.activity_status || '',
+        activity_code: identity?.activity_code || '',
+        revenue: identity?.financials?.revenue || '',
+        employees: identity?.financials?.employees || '',
+        profit: identity?.financials?.profit || '',
+        personnel_cost: identity?.financials?.personnel_cost || '',
+        // Geo overrides if Identity is more precise?
+        // Let's keep original unless empty, or add separate cols. 
+        // For now, identity fields are just added.
+        region: identity?.region || company.region || '',
+        address: identity?.address || company.address || '',
+        city: identity?.city || company.city || '',
+        province: identity?.province || company.province || ''
     };
 }
 

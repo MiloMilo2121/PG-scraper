@@ -9,6 +9,7 @@ export interface FinancialData {
     revenue?: string;
     employees?: string;
     profit?: string;
+    personnel_cost?: string; // New
     year?: string;
 }
 
@@ -16,8 +17,14 @@ export interface IdentityResult {
     legal_name: string;
     vat_number: string;
     fiscal_code?: string;
+    rea?: string; // New
+    legal_form?: string; // New
+    foundation_year?: string; // New
+    activity_status?: string; // New
     activity_code?: string; // ATECO
     city?: string;
+    province?: string; // New
+    region?: string; // New
     address?: string;
     financials?: FinancialData;
     confidence: 'HIGH' | 'MEDIUM' | 'LOW';
@@ -126,17 +133,29 @@ export class IdentityResolver {
 
             if (!legalName || !vat) return null;
 
-            // 3. Extract Financials
-            // Labels: "Fatturato 2024", "Utile 2024", "N. Dipendenti", "Attività prevalente"
-            const revenue = this.extractByLabel($, 'Fatturato'); // Matches "Fatturato 202X" via partial match logic if needed
+            // 3. Extract Extended Fields
+            const fiscalCode = this.extractByLabel($, 'Codice Fiscale') || vat; // Fallback to VAT if same
+            const rea = this.extractByLabel($, 'REA'); // e.g., "PD 179091"
+            const legalForm = this.extractByLabel($, 'Forma giuridica'); // e.g., "Societa' per azioni"
+            const foundationYear = this.extractByLabel($, 'Anno Fondazione'); // e.g., "09/02/1983"
+            const activityStatus = this.extractByLabel($, 'Stato Attività'); // e.g., "Attiva"
+
+            // Geo
+            const address = this.extractByLabel($, 'Indirizzo');
+            const city = this.extractByLabel($, 'Città');
+            const province = this.extractByLabel($, 'Provincia');
+            const region = this.extractByLabel($, 'Regione');
+
+            // 4. Extract Financials
+            const revenue = this.extractByLabel($, 'Fatturato');
             const employees = this.extractByLabel($, 'N. Dipendenti') || this.extractByLabel($, 'Dipendenti');
             const profit = this.extractByLabel($, 'Utile');
+            const personnelCost = this.extractByLabel($, 'Costo del personale');
 
-            // 4. Extract Category/Activity
+            // 5. Extract Category/Activity
             const activity = this.extractByLabel($, 'Attività prevalente') || this.extractByLabel($, 'ATECO');
 
-            // 5. Confidence Logic
-            // If the found city matches the input city (geo check) OR matched via very specific name
+            // 6. Confidence Logic
             let confidence: 'HIGH' | 'MEDIUM' | 'LOW' = 'MEDIUM';
             const pageTextLower = bodyText.toLowerCase();
 
@@ -144,17 +163,27 @@ export class IdentityResolver {
                 confidence = 'HIGH';
             }
             if (originalCompany.vat_number && vat.includes(originalCompany.vat_number)) {
-                confidence = 'HIGH'; // Manual override if we already had VAT
+                confidence = 'HIGH';
             }
 
             return {
                 legal_name: legalName,
                 vat_number: vat,
+                fiscal_code: fiscalCode,
+                rea,
+                legal_form: legalForm,
+                foundation_year: foundationYear,
+                activity_status: activityStatus,
                 activity_code: activity,
+                address,
+                city,
+                province,
+                region,
                 financials: {
                     revenue: this.cleanCurrency(revenue),
                     employees: this.cleanEmployees(employees),
-                    profit: this.cleanCurrency(profit)
+                    profit: this.cleanCurrency(profit),
+                    personnel_cost: this.cleanCurrency(personnelCost)
                 },
                 confidence,
                 source_url: url
