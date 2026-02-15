@@ -35,22 +35,24 @@ export class IdentityResolver {
 
     /**
      * 🕵️ ZERO-COST IDENTITY RESOLUTION
-     * Step 0: Find the "Official Identity" via fatturatoitalia.it (or equiv)
-     * Queries Bing/DDG to find the specific profile page, then scrapes it.
+     * Step 0: Find the "Official Identity" via fatturatoitalia.it
+     * Uses Serper.dev (Google API) to find the specific profile page, then fetches it via ScraperClient.
      */
     public async resolveIdentity(company: CompanyInput): Promise<IdentityResult | null> {
         Logger.info(`[IdentityResolver] 🕵️ Resolving identity for: ${company.company_name}`);
 
         // 1. Generate Identity Queries
         // Strategy: Use site:fatturatoitalia.it to find the official record
+        // We prioritize Serper for high accuracy here.
         const queries = [
             `site:fatturatoitalia.it "${company.company_name}" "${company.city || ''}"`,
-            `site:fatturatoitalia.it "${company.company_name}" "${company.province || ''}"`,
         ];
 
         // Add ATECO/Sector hint if Name is generic
         if (company.company_name.split(' ').length < 2 && company.category) {
             queries.push(`site:fatturatoitalia.it "${company.company_name}" "${company.category}" "${company.city || ''}"`);
+        } else if (company.province) {
+            queries.push(`site:fatturatoitalia.it "${company.company_name}" "${company.province}"`);
         }
 
         // 2. Execute Queries (Waterfall)
@@ -70,32 +72,34 @@ export class IdentityResolver {
     }
 
     private async findProfileUrl(query: string): Promise<string | null> {
+        // Use Serper if available (Best for Google index)
+        if (process.env.SERPER_API_KEY) {
+            try {
+                const response = await fetch('https://google.serper.dev/search', {
+                    method: 'POST',
+                    headers: {
+                        'X-API-KEY': process.env.SERPER_API_KEY,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ q: query, gl: 'it', hl: 'it' })
+                });
+                const data = await response.json();
+                const firstResult = data.organic?.[0]?.link;
+                if (firstResult && firstResult.includes('fatturatoitalia.it')) {
+                    return firstResult;
+                }
+            } catch (e) {
+                Logger.warn(`[IdentityResolver] Serper query failed: ${query}`, { error: e as Error });
+            }
+        }
+
+        // Fallback or if Serper key missing -> Use Bing via Scrape.do (cheaper/slower)
         try {
-            // Use existing Search Providers (Bing via ScraperClient/Puppeteer)
-            // We reuse ScraperClient.fetchText with a "smart" approach or just basic Google/Bing search
-            // For zero-cost, we prefer Bing/DDG. 
-            // HERE: We simulate a search by using a "SearchProvider" logic or direct scraping?
-            // To keep it clean, let's use ScraperClient to fetch Bing SERP.
-            // But we actually have proper SearchProviders in unified_discovery_service. 
-            // Ideally this class should use them, but to avoid circular deps, we can use ScraperClient direct.
-
-            // NOTE: For now, assuming ScraperClient has a specific method or we construct a Bing URL.
-            // Using ScraperClient.fetchBingSearch (hypothetical) or just parsing.
-            // Let's use a simple Jina/Bing fetch if available, or fall back to standard extraction.
-
-            // Implementation: Simple "site:" search via current available ScraperClient methods
-            // Since we don't have a direct "searchBing" static method exposed easily, 
-            // we will use a dedicated helper or just return null for now to be filled by the integration step.
-
-            // ACTUAL IMPLEMENTATION: 
-            // We will use `ScraperClient.fetchText` on a Bing URL.
             const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+            // Use render: true to ensure Bing results load, but Scrape.do handles the heavy lifting
             const html = await ScraperClient.fetchText(bingUrl, { mode: 'scrape_do', render: true });
-
             const $ = cheerio.load(html);
-            // Extract first organic result matching fatturatoitalia.it
             let matchedUrl: string | null = null;
-
             $('li.b_algo h2 a').each((i, el) => {
                 if (matchedUrl) return;
                 const url = $(el).attr('href');
@@ -103,26 +107,24 @@ export class IdentityResolver {
                     matchedUrl = url;
                 }
             });
-
             return matchedUrl;
-
         } catch (e) {
-            Logger.warn(`[IdentityResolver] Search query failed: ${query}`);
+            Logger.warn(`[IdentityResolver] Bing fallback failed: ${query}`, { error: e as Error });
             return null;
         }
     }
 
     private async scrapeProfile(url: string, originalCompany: CompanyInput): Promise<IdentityResult | null> {
         try {
+            // Fetch profile HTML without browser overhead
             const html = await ScraperClient.fetchText(url, { mode: 'scrape_do', render: false });
             const $ = cheerio.load(html);
-            const bodyText = $('body').text(); // Fallback for text-based regex
+            const bodyText = $('body').text();
+            const lowerBody = bodyText.toLowerCase();
 
-            // 1. Extract Legal Name (Usually H1 or specific label)
+            // 1. Extract Legal Name
             let legalName = $('h1').first().text().trim();
-            if (!legalName) {
-                legalName = this.extractByLabel($, 'Ragione sociale') || '';
-            }
+            if (!legalName) legalName = this.extractByLabel($, 'Ragione sociale') || '';
 
             // 2. Extract VAT (P.IVA)
             let vat: string | undefined | null = this.extractByLabel($, 'Partita IVA');
@@ -134,11 +136,11 @@ export class IdentityResolver {
             if (!legalName || !vat) return null;
 
             // 3. Extract Extended Fields
-            const fiscalCode = this.extractByLabel($, 'Codice Fiscale') || vat; // Fallback to VAT if same
-            const rea = this.extractByLabel($, 'REA'); // e.g., "PD 179091"
-            const legalForm = this.extractByLabel($, 'Forma giuridica'); // e.g., "Societa' per azioni"
-            const foundationYear = this.extractByLabel($, 'Anno Fondazione'); // e.g., "09/02/1983"
-            const activityStatus = this.extractByLabel($, 'Stato Attività'); // e.g., "Attiva"
+            const fiscalCode = this.extractByLabel($, 'Codice Fiscale') || vat;
+            const rea = this.extractByLabel($, 'REA');
+            const legalForm = this.extractByLabel($, 'Forma giuridica');
+            const foundationYear = this.extractByLabel($, 'Anno Fondazione');
+            const activityStatus = this.extractByLabel($, 'Stato Attività');
 
             // Geo
             const address = this.extractByLabel($, 'Indirizzo');
@@ -156,14 +158,20 @@ export class IdentityResolver {
             const activity = this.extractByLabel($, 'Attività prevalente') || this.extractByLabel($, 'ATECO');
 
             // 6. Confidence Logic
+            // Disambiguation: Must match City OR Province matches input
             let confidence: 'HIGH' | 'MEDIUM' | 'LOW' = 'MEDIUM';
-            const pageTextLower = bodyText.toLowerCase();
 
-            if (originalCompany.city && pageTextLower.includes(originalCompany.city.toLowerCase())) {
+            const cityMatch = originalCompany.city && lowerBody.includes(originalCompany.city.toLowerCase());
+            const provinceMatch = originalCompany.province && lowerBody.includes(originalCompany.province.toLowerCase());
+
+            if (cityMatch || provinceMatch) {
                 confidence = 'HIGH';
-            }
-            if (originalCompany.vat_number && vat.includes(originalCompany.vat_number)) {
+            } else if (originalCompany.vat_number && vat.includes(originalCompany.vat_number)) {
                 confidence = 'HIGH';
+            } else {
+                // If geo doesn't match, risk of homonym (e.g. Rossi Srl in Milano vs Roma)
+                // We mark it interesting but maybe uncertain
+                confidence = 'MEDIUM';
             }
 
             return {
@@ -190,7 +198,7 @@ export class IdentityResolver {
             };
 
         } catch (e) {
-            Logger.warn('[IdentityResolver] Profile scraping failed', { url, error: (e as Error).message });
+            Logger.warn('[IdentityResolver] Profile scraping failed', { url, error: e as Error });
             return null;
         }
     }

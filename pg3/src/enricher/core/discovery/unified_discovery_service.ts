@@ -381,6 +381,10 @@ export class UnifiedDiscoveryService {
                 Logger.info('[Wave1] 🛡️ Proxy disabled, Scrape.do enabled: using Google via gateway + Bing');
             }
             // Standard Google Swarm (Puppeteer) or Scrape.do fallback (HTTP) when proxy is disabled.
+            // 🧩 VAT MATCH: If we have a resolved VAT (from IdentityResolver), use it for a surgical strike
+            if (company.vat_code || company.vat || company.piva) { // Use any available VAT field
+                promises.push(this.googleSearchByVat(company));
+            }
             promises.push(this.googleSearchByName(company));
             promises.push(this.googleSearchByAddress(company));
             promises.push(this.googleSearchByPhone(company));
@@ -401,7 +405,10 @@ export class UnifiedDiscoveryService {
         }
 
         // 🧠 JINA SEARCH: If enabled, add as high-priority search provider (no browser needed)
-        if (ScraperClient.isJinaEnabled()) {
+
+        // 🛠️ LLM GUARD FIX: Check multiple keys, not just OPENAI
+        const hasLLMKey = process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.KIMI_API_KEY || process.env.Z_AI_API_KEY;
+        if (ScraperClient.isJinaEnabled() && hasLLMKey) {
             promises.push(this.searchJina(company));
         }
 
@@ -612,6 +619,33 @@ export class UnifiedDiscoveryService {
         } catch (e) {
             this.rateLimiter.reportFailure('google');
             Logger.warn('[Wave1] Google phone search failed', { error: e as Error, company_name: company.company_name });
+            return null;
+        }
+    }
+
+    /**
+     * 🧩 VAT/P.IVA SEARCH
+     * Searches specifically for the VAT number. Highly accurate if found.
+     */
+    private async googleSearchByVat(company: CompanyInput): Promise<Candidate[] | null> {
+        const vat = company.vat_code || company.vat || company.piva;
+        if (!vat || vat.length < 5) return null;
+
+        try {
+            await this.rateLimiter.waitForSlot('google');
+            // Query: "01234567890" OR "P.IVA 01234567890"
+            const query = `"${vat}" sito ufficiale`;
+            const results = await this.scrapeGoogleDIY(query);
+
+            this.rateLimiter.reportSuccess('google');
+            return results.slice(0, 5).map(r => ({
+                url: r.link,
+                source: 'google_vat',
+                confidence: 0.92 // Very High confidence for VAT match
+            }));
+        } catch (e) {
+            this.rateLimiter.reportFailure('google');
+            Logger.warn('[Wave1] Google VAT search failed', { error: e as Error, company_name: company.company_name });
             return null;
         }
     }
