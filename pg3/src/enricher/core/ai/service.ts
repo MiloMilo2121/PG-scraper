@@ -20,7 +20,7 @@ const AI_MAX_TOKENS = config.llm.maxTokens;
 const AI_CACHE_MAX_ENTRIES = config.ai.cacheMaxEntries;
 const AI_CACHE_TTL_MS = config.ai.cacheTtlMs;
 
-// Simple in-memory cache (Redis TODO)
+// Simple in-memory cache (Redis implementation pending scalability needs)
 type CachedResponse = {
     response: string;
     tokens: number;

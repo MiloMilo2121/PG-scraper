@@ -10,23 +10,20 @@
  */
 
 import pLimit from 'p-limit';
-import { HTTPRequest, Page } from 'puppeteer';
-import axios from 'axios';
+import { Page } from 'puppeteer';
 import * as cheerio from 'cheerio';
 import { BrowserFactory } from '../browser/factory_v2';
-import { GeneticFingerprinter } from '../browser/genetic_fingerprinter';
 import { CompanyInput } from '../../types';
 import { Logger } from '../../utils/logger';
 import { RateLimiter, MemoryRateLimiter } from '../rate_limiter';
 import { ContentFilter } from './content_filter';
 import { HyperGuesser } from './hyper_guesser_v2';
 import { GoogleSerpAnalyzer } from './serp_analyzer';
-import { GoogleSearchProvider, DDGSearchProvider, SerperSearchProvider } from './search_provider';
+import { SerperSearchProvider, DDGSearchProvider } from './search_provider';
 import { DuckDuckGoSerpAnalyzer } from './ddg_analyzer';
 import { LLMValidator } from '../ai/llm_validator';
 import { AgentRunner } from '../agent/agent_runner';
 import { AntigravityClient } from '../../observability/antigravity_client';
-import { HoneyPotDetector } from '../security/honeypot_detector';
 import { config } from '../../config';
 import { CompanyMatcher } from './company_matcher';
 import { DomainValidator } from '../../utils/domain_validator';
@@ -147,7 +144,6 @@ export class UnifiedDiscoveryService {
     private browserFactory: BrowserFactory;
     private rateLimiter: RateLimiter;
     private validatorLimit = pLimit(5);
-    private fingerprinter: GeneticFingerprinter;
     private nuclearStrategy: NuclearStrategy;
     private identityResolver: IdentityResolver;
     private surgicalSearch: SurgicalSearch;
@@ -160,7 +156,6 @@ export class UnifiedDiscoveryService {
     ) {
         this.browserFactory = browserFactory || BrowserFactory.getInstance();
         this.rateLimiter = rateLimiter || new MemoryRateLimiter();
-        this.fingerprinter = GeneticFingerprinter.getInstance();
         this.nuclearStrategy = new NuclearStrategy();
         this.identityResolver = new IdentityResolver();
         this.surgicalSearch = new SurgicalSearch();
@@ -253,9 +248,23 @@ export class UnifiedDiscoveryService {
             // =====================================================================
             Logger.info(`[Discovery] 🐝 WAVE 1: THE SWARM`);
             const wave1Threshold = this.applyThresholdDelta(THRESHOLDS.WAVE1_SWARM, profile.wave1ThresholdDelta);
-            const wave1Result = await this.executeWave1Swarm(company, wave1Threshold, profile.wave1MaxCandidates);
+            let wave1Result = await this.executeWave1Swarm(company, wave1Threshold, profile.wave1MaxCandidates);
             if (wave1Result) {
-                if (wave1Result.status === 'FOUND_VALID') {
+                if (wave1Result.status === 'FOUND_VALID' && wave1Result.url) {
+                    Logger.info(`[Discovery] ✅ FOUND: ${company.company_name} -> ${wave1Result.url}`);
+
+                    // 🧠 AI EMPLOYEE RECOVERY
+                    // If we found the site, but Identity (FatturatoItalia) didn't give us employees, ask AI.
+                    if (identity && !identity.financials?.employees) {
+                        const aiEmployees = await this.identityResolver.estimateEmployeesFromWebsite(company, wave1Result.url);
+                        if (aiEmployees) {
+                            if (!identity.financials) identity.financials = {};
+                            identity.financials.employees = `${aiEmployees} (AI Est.)`;
+                            // Update identity attached to result
+                            wave1Result = this.attachIdentity(wave1Result, identity);
+                        }
+                    }
+
                     const finalRes = this.attachIdentity(wave1Result, identity);
                     this.notifySuccess(company, finalRes);
                     return finalRes;
@@ -347,7 +356,7 @@ export class UnifiedDiscoveryService {
                 confidence: 0,
                 wave: 'ERROR',
                 details: { error: (error as Error).message }
-            }, identity);
+            }, null); // Fix: Pass null instead of identity (which might be null/undefined)
         }
     }
 
@@ -441,7 +450,7 @@ export class UnifiedDiscoveryService {
                 confidence: 0.80
             }));
         } catch (e) {
-            Logger.warn('[Wave1] Serper search failed', { error: (e as Error).message });
+            Logger.warn('[Wave1] Serper search failed', { error: e as Error });
             return null;
         }
     }
@@ -601,6 +610,10 @@ export class UnifiedDiscoveryService {
         }
     }
 
+    /**
+     * @deprecated Use PagineGialleHarvester for reverse phone lookup (more reliable).
+     * Keeping this as a low-priority fallback.
+     */
     private async googleSearchByPhone(company: CompanyInput): Promise<Candidate[] | null> {
         if (!company.phone || company.phone.length < 6) return null;
 
@@ -963,12 +976,12 @@ export class UnifiedDiscoveryService {
         const cached = this.getCachedVerification(cacheKey);
         if (cached) return cached;
 
-        const dnsProbe = await HoneyPotDetector.getInstance().checkDNS(normalizedUrl);
-        if (!dnsProbe.safe) {
-            const result = { confidence: 0, reason: dnsProbe.reason || 'DNS check failed' };
-            this.setCachedVerification(cacheKey, result);
-            return result;
-        }
+        // const dnsProbe = await HoneyPotDetector.getInstance().checkDNS(normalizedUrl);
+        // if (!dnsProbe.safe) {
+        //     const result = { confidence: 0, reason: dnsProbe.reason || 'DNS check failed' };
+        //     this.setCachedVerification(cacheKey, result);
+        //     return result;
+        // }
 
         let page;
         try {
@@ -1030,15 +1043,15 @@ export class UnifiedDiscoveryService {
                 return result;
             }
 
-            // 🛡️ HONEYPOT CHECK
-            const honeyPot = HoneyPotDetector.getInstance();
-            const safety = honeyPot.analyzeContent(extraction.html);
-            if (!safety.safe) {
-                Logger.warn(`[DeepVerify] 🍯 Trap: ${normalizedUrl} -> ${safety.reason}`);
-                const result = { confidence: 0, reason: safety.reason };
-                this.setCachedVerification(cacheKey, result);
-                return result;
-            }
+            // 🛡️ HONEYPOT CHECK - Deprecated for performance
+            // const honeyPot = HoneyPotDetector.getInstance();
+            // const safety = honeyPot.analyzeContent(extraction.html);
+            // if (!safety.safe) {
+            //     Logger.warn(`[DeepVerify] 🍯 Trap: ${normalizedUrl} -> ${safety.reason}`);
+            //     const result = { confidence: 0, reason: safety.reason };
+            //     this.setCachedVerification(cacheKey, result);
+            //     return result;
+            // }
 
             // Content validation
             const filter = ContentFilter.isValidContent(extraction.text);
@@ -1046,7 +1059,7 @@ export class UnifiedDiscoveryService {
                 // Report failure to genetic algorithm if blocked
                 if (extraction.text.includes('Captcha') || extraction.text.includes('Access Denied')) {
                     const geneId = (page as any).__geneId;
-                    if (geneId) this.fingerprinter.reportFailure(geneId);
+                    // if (geneId) this.fingerprinter.reportFailure(geneId);
                 }
                 const result = { confidence: 0, reason: filter.reason };
                 this.setCachedVerification(cacheKey, result);
@@ -1055,7 +1068,7 @@ export class UnifiedDiscoveryService {
 
             // Report success to genetic algorithm
             const geneId = (page as any).__geneId;
-            if (geneId) this.fingerprinter.reportSuccess(geneId);
+            // if (geneId) this.fingerprinter.reportSuccess(geneId);
 
             let combinedText = extraction.text;
             let evaluation = CompanyMatcher.evaluate(company, currentUrl, combinedText, extraction.title);
@@ -1268,10 +1281,10 @@ export class UnifiedDiscoveryService {
                     return { confidence: 0, reason: 'Directory-like title', final_url: currentUrl };
                 }
 
-                const safety = HoneyPotDetector.getInstance().analyzeContent(html);
-                if (!safety.safe) {
-                    return { confidence: 0, reason: safety.reason, final_url: currentUrl };
-                }
+                // const safety = HoneyPotDetector.getInstance().analyzeContent(html);
+                // if (!safety.safe) {
+                //     return { confidence: 0, reason: safety.reason, final_url: currentUrl };
+                // }
 
                 const text = ($('body').text() || '').replace(/\s+/g, ' ').trim().slice(0, 20000);
                 const filter = ContentFilter.isValidContent(text);
@@ -1355,7 +1368,7 @@ export class UnifiedDiscoveryService {
 
     private async setupFastInterception(page: Page): Promise<void> {
         await page.setRequestInterception(true);
-        const requestHandler = (req: HTTPRequest) => {
+        const requestHandler = (req: any) => {
             if (['image', 'media', 'font', 'stylesheet', 'other'].includes(req.resourceType())) {
                 req.abort();
             } else {

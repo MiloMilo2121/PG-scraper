@@ -177,9 +177,7 @@ export const config = {
     temperature: 0.1,
     /** Per-model pricing in $/1M tokens. Law 006: No magic numbers. */
     pricing: {
-      'glm-5': { inputPer1M: 2.00, outputPer1M: 8.00 },
       'glm-4-plus': { inputPer1M: 1.50, outputPer1M: 6.00 },
-      'glm-4.7-flash': { inputPer1M: 0.10, outputPer1M: 0.40 },
       'glm-4-flash': { inputPer1M: 0.10, outputPer1M: 0.40 }, // Fallback/Reference
       'gpt-4o-mini': { inputPer1M: 0.15, outputPer1M: 0.60 },
       'gpt-4o': { inputPer1M: 2.50, outputPer1M: 10.00 },

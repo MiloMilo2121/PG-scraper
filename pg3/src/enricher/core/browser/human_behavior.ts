@@ -10,7 +10,6 @@ export class HumanBehavior {
      */
     static async randomPause(page: Page, min = 500, max = 3000): Promise<void> {
         const delay = Math.floor(Math.random() * (max - min + 1)) + min;
-        // console.log(`[Human] Pausing for ${delay}ms...`);
         await new Promise(r => setTimeout(r, delay));
     }
 
@@ -31,7 +30,6 @@ export class HumanBehavior {
             const y = Math.floor(Math.random() * height);
 
             await page.mouse.move(x, y, { steps });
-            // console.log(`[Human] Moved mouse to ${x},${y}`);
         } catch (e) {
             Logger.warn('[HumanBehavior] randomMouseMove skipped', { error: e as Error });
         }

@@ -2,6 +2,7 @@
 import { CompanyInput } from '../../types';
 import { Logger } from '../../utils/logger';
 import { ScraperClient } from '../../utils/scraper_client';
+import { LLMService } from '../ai/llm_service';
 import * as cheerio from 'cheerio';
 import { ContentFilter } from './content_filter';
 
@@ -10,7 +11,13 @@ export interface FinancialData {
     employees?: string;
     profit?: string;
     personnel_cost?: string; // New
+    confidence?: string; // New: For AI confidence
     year?: string;
+}
+
+interface AIEmployeeResult {
+    employees: string;
+    confidence: string;
 }
 
 export interface IdentityResult {
@@ -119,6 +126,63 @@ export class IdentityResolver {
         }
 
         return null;
+    }
+
+    /**
+     * 🧠 AI EMPLOYEE ESTIMATION (Optimization Phase)
+     * If official data is missing, ask the AI to estimate based on the company website.
+     * Uses Z.ai / DeepSeek / OpenAI via LLMService.
+     */
+    public async estimateEmployeesFromWebsite(company: CompanyInput, websiteUrl: string): Promise<string | undefined> {
+        try {
+            // 1. Fetch "Chi Siamo" or Homepage content
+            // We use ScraperClient to get text (Markdown via Jina would be best, but text is fine)
+            Logger.info(`[IdentityResolver] 🧠 Estimating employees for ${company.company_name} from ${websiteUrl}`);
+
+            const html = await ScraperClient.fetchText(websiteUrl, { mode: 'auto', render: false });
+            const text = this.distillContent(html);
+
+            if (text.length < 500) {
+                Logger.warn(`[IdentityResolver] Website content too short for estimation.`);
+                return undefined;
+            }
+
+            // 2. Ask AI
+            // We use a lightweight prompt to save tokens.
+            const prompt = `
+            Analyze this text from "${company.company_name}" website.
+            Estimate the number of employees.
+            Return ONLY a JSON object: { "employees": "1-10" | "10-50" | "50+" | "N/A", "confidence": "HIGH" | "LOW" }
+            
+            TEXT:
+            ${text.slice(0, 8000)}
+            `;
+
+            // TS1117 Workaround: Remove generic, cast result
+            const completion = await LLMService.completeStructured(prompt, {
+                type: 'object',
+                properties: {
+                    employees: { type: 'string' },
+                    confidence: { type: 'string' }
+                },
+                required: ['employees', 'confidence']
+            }) as any;
+
+            if (completion && completion.employees && completion.employees !== 'N/A') {
+                Logger.info(`[IdentityResolver] 🤖 AI Estimate: ${completion.employees} (Conf: ${completion.confidence})`);
+                return completion.employees;
+            }
+
+        } catch (e) {
+            Logger.warn(`[IdentityResolver] AI Estimation failed`, { error: e as Error });
+        }
+        return undefined;
+    }
+
+    private distillContent(html: string): string {
+        const $ = cheerio.load(html);
+        $('script, style, noscript, svg, img').remove();
+        return $('body').text().replace(/\s+/g, ' ').trim();
     }
 
     private async scrapeProfile(url: string, originalCompany: CompanyInput): Promise<IdentityResult | null> {

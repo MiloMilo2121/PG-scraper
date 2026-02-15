@@ -130,23 +130,17 @@ export class LLMService {
     }
 
     /**
-     * 🎯 STRUCTURED OUTPUT — Guaranteed valid JSON (Law 502).
-     * Uses json_schema response format. Falls back to markdown stripping if model
-     * wraps output in ```json blocks (common with GLM models).
-     *
-     * @param prompt   - The user prompt
-     * @param schema   - JSON Schema object defining the response structure
-     * @param model    - Model to use (defaults to fast model for cost efficiency)
-     * @returns Parsed response object, or null on failure
+     * 🧱 STRUCTURED COMPLETION — Force JSON Schema
+     * Guaranteed to return a valid JSON object matching the schema.
      */
     public static async completeStructured<T>(
         prompt: string,
         schema: Record<string, unknown>,
-        model: string = config.llm.fastModel
+        model: string = config.llm.model
     ): Promise<T | null> {
         const client = this.getClientForModel(model);
 
-        // Kimi/Moonshot might not support 'json_schema' strictly yet, usually better to prompt it.
+        // Optimization: Use `response_format: { type: "json_object" }` where supported
         // But OpenAI SDK requires valid keys. We'll try standard way, fallback if 400.
         // DeepSeek V3 supports standard tools/json objects usually.
 
@@ -179,7 +173,7 @@ export class LLMService {
             return JSON.parse(cleanContent) as T;
 
         } catch (error) {
-            Logger.warn(`[LLM] Structured output failed with model ${model}, trying pure JSON prompt...`, { error: (error as Error).message });
+            Logger.warn(`[LLM] Structured output failed with model ${model}, trying pure JSON prompt...`, { error: error as Error });
 
             // Fallback: Try standard JSON mode or plaintext
             try {

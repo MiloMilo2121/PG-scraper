@@ -139,7 +139,8 @@ export class BlockClassifier {
     static getTotalBlocks(domain: string): number {
         const profile = BlockClassifier.getBlockProfile(domain);
         let total = 0;
-        for (const count of profile.values()) {
+        // Law 209: Array.from is safer than iterator for ts-node/downlevel
+        for (const count of Array.from(profile.values())) {
             total += count;
         }
         return total;

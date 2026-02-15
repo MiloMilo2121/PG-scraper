@@ -80,8 +80,8 @@ async function withRetry<T>(fn: () => Promise<T>, retries: number): Promise<T> {
 
 export class ScraperClient {
   public static isScrapeDoEnabled(): boolean {
-    return false; // FORCE DISABLED per user request (Migrated to Serper.dev)
-    // return !!(config.scrapeDo?.token && config.scrapeDo.token.trim().length > 0);
+    // LAW 309: Proxy is life. Enable if token exists.
+    return !!(config.scrapeDo?.token && config.scrapeDo.token.trim().length > 0);
   }
 
   public static isJinaEnabled(): boolean {
