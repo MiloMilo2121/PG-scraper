@@ -6,6 +6,8 @@ import { Mutex } from 'async-mutex';
 import * as net from 'net';
 import { TorError } from '../../../utils/errors';
 import { config } from '../../config';
+import { GeneticFingerprinter } from './genetic_fingerprinter';
+import { BrowserEvasion } from './evasion';
 
 // Enable stealth
 puppeteer.use(StealthPlugin());
@@ -48,13 +50,47 @@ export class TorBrowser {
                 this.lastUsed = Date.now();
             });
 
+            // Apply anti-detection (v3)
+            await this.applyAntiDetection(page);
+
             return page;
         } catch (e) {
             Logger.warn('[TorBrowser] Failed to create page, restarting...', { error: e as Error });
             await this.forceRestart();
             const page = await this.browser!.newPage();
             this.activePages++;
+            await this.applyAntiDetection(page);
             return page;
+        }
+    }
+
+    /**
+     * Apply genetic fingerprint + full evasion to a Tor page
+     */
+    private async applyAntiDetection(page: Page): Promise<void> {
+        try {
+            const fingerprinter = GeneticFingerprinter.getInstance();
+            const gene = fingerprinter.getBestGene();
+            const geneConfig = fingerprinter.geneToConfig(gene);
+
+            (page as any).__geneId = gene.id;
+            await page.setUserAgent(geneConfig.userAgent);
+            await page.setViewport({
+                width: geneConfig.viewport.width,
+                height: geneConfig.viewport.height,
+                isMobile: geneConfig.isMobile,
+                hasTouch: geneConfig.isMobile,
+            });
+            await page.setExtraHTTPHeaders({
+                'Accept-Language': geneConfig.acceptLanguage,
+                ...geneConfig.clientHintsHeaders,
+            });
+            await page.evaluateOnNewDocument((c) => {
+                Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => c });
+            }, geneConfig.hardwareConcurrency);
+            await BrowserEvasion.apply(page, geneConfig.evasionConfig);
+        } catch (e) {
+            Logger.warn('[TorBrowser] Anti-detection setup failed', { error: e as Error });
         }
     }
 

@@ -251,29 +251,28 @@ export class BrowserFactory {
         this.activePages.add(page);
         page.once('close', () => this.activePages.delete(page));
 
-        // 🧬 GENETIC EVOLUTION: Task 1
+        // 🧬 GENETIC EVOLUTION v3: Full trait-consistent fingerprinting
         const fingerprinter = GeneticFingerprinter.getInstance();
         const gene = fingerprinter.getBestGene();
+        const geneConfig = fingerprinter.geneToConfig(gene);
 
         // Attach gene ID to page for feedback loop
         (page as any).__geneId = gene.id;
 
-        await page.setUserAgent(gene.userAgent);
+        await page.setUserAgent(geneConfig.userAgent);
 
         await page.setViewport({
-            width: gene.viewport.width,
-            height: gene.viewport.height,
-            isMobile: gene.userAgent.includes('Mobile') || gene.userAgent.includes('Android'),
-            hasTouch: gene.userAgent.includes('Mobile') || gene.userAgent.includes('Android')
+            width: geneConfig.viewport.width,
+            height: geneConfig.viewport.height,
+            isMobile: geneConfig.isMobile,
+            hasTouch: geneConfig.isMobile,
         });
 
-        // Add headers from gene locale
+        // Set headers: Accept-Language + Client Hints (Sec-CH-UA-*)
         await page.setExtraHTTPHeaders({
-            'Accept-Language': gene.locale === 'it-IT'
-                ? 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
-                : 'en-US,en;q=0.9,it;q=0.8',
+            'Accept-Language': geneConfig.acceptLanguage,
             'Upgrade-Insecure-Requests': '1',
-            'Sec-Ch-Ua-Platform': gene.userAgent.includes('Mac') ? '"macOS"' : '"Windows"'
+            ...geneConfig.clientHintsHeaders,
         });
 
         // Mock Hardware Concurrency
@@ -281,19 +280,18 @@ export class BrowserFactory {
             Object.defineProperty(navigator, 'hardwareConcurrency', {
                 get: () => concurrency,
             });
-        }, gene.hardwareConcurrency);
+        }, geneConfig.hardwareConcurrency);
 
         // PROXY AUTHENTICATION
-        // We use google.com to get the Residential credentials if available
         await ProxyManager.getInstance().authenticateProxy(page, 'https://www.google.com');
 
-        // Task 12: Page timeout recovery
+        // Page timeout recovery
         page.setDefaultTimeout(config.scraping.timeout);
         page.setDefaultNavigationTimeout(config.scraping.pageLoadTimeout);
 
-        // Task: Anti-Fingerprinting
-        await BrowserEvasion.apply(page);
-        // Task: Cookie Consent
+        // Anti-Fingerprinting v3: Full evasion with gene-derived config
+        await BrowserEvasion.apply(page, geneConfig.evasionConfig);
+        // Cookie Consent
         await CookieConsent.handle(page);
 
         return page;
