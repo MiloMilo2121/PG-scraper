@@ -144,7 +144,10 @@ export class CompanyMatcher {
     if (hasContactKeywords) confidence += 0.04;
 
     // Only penalize short text if we don't have strong signals
-    if (normalizedText.length < 160 && nameCoverage < 0.6 && domainCoverage < 0.6) {
+    // FIX: Do not penalize if we have a very strong Title match (often landing pages are just an image + title)
+    const titleOnlyCoverage = this.nameCoverage(company.company_name, normalizedTitle);
+
+    if (normalizedText.length < 160 && nameCoverage < 0.6 && domainCoverage < 0.6 && titleOnlyCoverage < 0.8) {
       confidence -= 0.1;
     }
 

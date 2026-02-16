@@ -32,6 +32,7 @@ import { IdentityResolver, IdentityResult } from './identity_resolver';
 import { SurgicalSearch } from './surgical_search';
 import { PagineGialleHarvester } from '../directories/paginegialle';
 import { ScraperClient } from '../../utils/scraper_client';
+import { LLMOracle } from './llm_oracle';
 
 // ============================================================================
 // INTERFACES
@@ -236,6 +237,28 @@ export class UnifiedDiscoveryService {
                         confidence: surgicalResult.confidence,
                         wave: 'PHASE1_SURGICAL',
                         details: surgicalResult
+                    };
+                    const finalRes = this.attachIdentity(validResult, identity);
+                    this.notifySuccess(company, finalRes);
+                    return finalRes;
+                }
+            }
+
+            // =====================================================================
+            // 🧠 PHASE 2: SEMANTIC WEB (The Oracle)
+            // =====================================================================
+            Logger.info(`[Discovery] 🧠 PHASE 2: SEMANTIC WEB (LLM Oracle)`);
+            const oracleUrl = await LLMOracle.predictWebsite(company);
+            if (oracleUrl) {
+                const oracleVerification = await this.deepVerify(oracleUrl, company);
+                if (oracleVerification && oracleVerification.confidence >= 0.85) {
+                    const validResult: DiscoveryResult = {
+                        url: oracleVerification.final_url || oracleUrl,
+                        status: 'FOUND_VALID',
+                        method: 'llm_oracle',
+                        confidence: oracleVerification.confidence,
+                        wave: 'PHASE2_ORACLE',
+                        details: oracleVerification
                     };
                     const finalRes = this.attachIdentity(validResult, identity);
                     this.notifySuccess(company, finalRes);
@@ -1572,7 +1595,7 @@ export class UnifiedDiscoveryService {
             // We can optionally fall through to Serper here too if strict.
 
         } catch (e) {
-            Logger.warn('[ScrapeGoogleDIY] Browser attempt failed, switching to Serper fallback', { error: (e as Error).message });
+            Logger.warn('[ScrapeGoogleDIY] Browser attempt failed, switching to Serper fallback', { error: e as Error });
             // Fallthrough to Serper
         } finally {
             if (page) await this.browserFactory.closePage(page);

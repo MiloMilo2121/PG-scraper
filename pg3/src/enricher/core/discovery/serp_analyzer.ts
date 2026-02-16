@@ -109,3 +109,31 @@ export class GoogleSerpAnalyzer {
         return uniqueResults.slice(0, 10);
     }
 }
+
+export class BingSerpAnalyzer {
+    static async parseSerp(html: string): Promise<SerpResult[]> {
+        const $ = cheerio.load(html);
+        const results: SerpResult[] = [];
+
+        // Bing standard results: <li class="b_algo"><h2><a href="...">...</a></h2>
+        $('.b_algo h2 a').each((_, el) => {
+            const url = $(el).attr('href');
+            const title = $(el).text().trim();
+            if (url && url.startsWith('http') && !url.includes('microsoft.com') && !url.includes('bing.com')) {
+                results.push({ url, title });
+            }
+        });
+
+        // Bing "b_m" (mobile?) or other variations
+        $('.b_m .b_header a').each((_, el) => {
+            const url = $(el).attr('href');
+            const title = $(el).text().trim();
+            if (url && url.startsWith('http')) results.push({ url, title });
+        });
+
+        // Deduplicate
+        const unique = results.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
+
+        return unique.slice(0, 10);
+    }
+}

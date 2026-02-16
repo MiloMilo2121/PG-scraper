@@ -31,17 +31,29 @@ export class HyperGuesser {
 
         // 1. Normalize Inputs
         const cleanName = this.normalize(companyName);
+
+        // Strategy: Handle "&" -> "e"
+        const nameWithAnd = companyName.toLowerCase().replace(/&/g, 'e');
+        const cleanNameAnd = this.normalize(nameWithAnd);
+
         const ultraCleanName = cleanName.replace(/[^a-z0-9]/g, ''); // No spaces/dashes
+        const ultraCleanNameAnd = cleanNameAnd.replace(/[^a-z0-9]/g, '');
+
         const cleanCity = this.normalize(city).replace(/\s/g, '');
         const cleanProvince = province.toLowerCase().trim();
         const cleanCategory = this.normalize(category).replace(/\s/g, '');
-        const words = cleanName.split(' ').filter((word) => word.length >= 3 && !this.GENERIC_WORDS.has(word));
+        const words = cleanName.split(' ').filter((word) => word.length >= 2 && !this.GENERIC_WORDS.has(word)); // Allow 2-char words (e.g. "2M")
         const firstWord = words[0] || cleanName.split(' ')[0];
         const secondWord = words.length > 1 ? words[1] : '';
 
-        // 2. Exact Match Variations
+        // 2. Exact Match Variations (Standard)
         this.addVariations(domains, cleanName.replace(/\s/g, ''), suffixes); // pavireflex.it
         this.addVariations(domains, cleanName.replace(/\s/g, '-'), suffixes); // pavi-reflex.it
+
+        // 2b. Phonetic "&" -> "e" variation
+        if (companyName.includes('&')) {
+            this.addVariations(domains, ultraCleanNameAnd, suffixes); // marioefigli.it
+        }
 
         // 3. Ultra Clean (Aggressive)
         if (ultraCleanName.length > 3) {
@@ -57,8 +69,8 @@ export class HyperGuesser {
         }
 
         // 5. First Word Strategy (Riskier but high recall if the first token is meaningful)
-        if (firstWord.length >= 4) {
-            this.addVariations(domains, firstWord, ['.it', '.com']); // Strictly common TLDs to avoid noise
+        if (firstWord.length >= 3) {
+            this.addVariations(domains, firstWord, ['.it', '.com']);
             if (cleanCity) {
                 this.addVariations(domains, `${firstWord}${cleanCity}`, suffixes);
                 this.addVariations(domains, `${firstWord}-${cleanCity}`, suffixes);
@@ -68,21 +80,43 @@ export class HyperGuesser {
             }
         }
 
-        // 6. Multi-word combinations are common for artisan SMBs
+        // 6. Multi-word combinations (Artisan SMBs)
         if (firstWord && secondWord) {
             this.addVariations(domains, `${firstWord}${secondWord}`, ['.it', '.com']);
             this.addVariations(domains, `${firstWord}-${secondWord}`, ['.it', '.com']);
             if (cleanCity) {
                 this.addVariations(domains, `${firstWord}${secondWord}${cleanCity}`, ['.it', '.com']);
+                this.addVariations(domains, `${firstWord}-${secondWord}-${cleanCity}`, ['.it', '.com']);
             }
         }
 
         // 7. "Italia" Suffix
         this.addVariations(domains, `${ultraCleanName}italia`, suffixes);
         this.addVariations(domains, `${firstWord}italia`, suffixes);
-        if (cleanCategory.length >= 4) {
+
+        // 8. Category & Generic Suffixes (NEW)
+        if (cleanCategory.length >= 3) {
             this.addVariations(domains, `${ultraCleanName}${cleanCategory}`, ['.it', '.com']);
+            // e.g. "startuplab" -> "startup" + "lab"
         }
+
+        // 9. Acronym Strategy (NEW)
+        // "Officine Meccaniche Rossi" -> "OMR"
+        if (words.length >= 2) {
+            const acronym = words.map(w => w[0]).join('');
+            if (acronym.length >= 3) {
+                this.addVariations(domains, acronym, ['.it', '.com']); // omr.it
+                if (cleanCity) {
+                    this.addVariations(domains, `${acronym}${cleanCity}`, ['.it', '.com']); // omrmilano.it
+                    this.addVariations(domains, `${acronym}-${cleanCity}`, ['.it', '.com']); // omr-milano.it
+                }
+                this.addVariations(domains, `${acronym}srl`, ['.it']); // omrsrl.it
+            }
+        }
+
+        // 10. Common Corporate Suffixes (NEW)
+        // sometimes they include "srl" in the domain
+        this.addVariations(domains, `${ultraCleanName}srl`, ['.it', '.com']);
 
         // Stable ranking: shorter and cleaner domains first.
         const ranked = Array.from(domains)
@@ -90,10 +124,14 @@ export class HyperGuesser {
             .sort((a, b) => {
                 const aHost = a.replace(/^https?:\/\//, '').replace(/^www\./, '');
                 const bHost = b.replace(/^https?:\/\//, '').replace(/^www\./, '');
-                return aHost.length - bHost.length;
+                // Penalize dashes slightly in sorting to prefer cleaner domains
+                const aDashes = (aHost.match(/-/g) || []).length;
+                const bDashes = (bHost.match(/-/g) || []).length;
+                if (aHost.length !== bHost.length) return aHost.length - bHost.length;
+                return aDashes - bDashes;
             });
 
-        return ranked.slice(0, 80);
+        return ranked.slice(0, 150); // Increased limit from 80 to 150 to accommodate new strategies
     }
 
     private static normalize(text: string): string {
@@ -102,11 +140,23 @@ export class HyperGuesser {
         norm = norm
             .normalize('NFD')
             .replace(/[\u0300-\u036f]/g, '');
+
+        // Remove dots for acronyms like "A.B.C." -> "abc"
+        // But keep spaces intact for word splitting
+        norm = norm.replace(/\./g, '');
+
         // Remove stop words
-        for (const stop of this.STOP_WORDS) {
-            const regex = new RegExp(`\\b${stop}\\b`, 'gi');
+        // Use a more aggressive word boundary check
+        // Sort stop words by length desc to handle "s.r.l." before "srl"
+        const sortedStop = [...this.STOP_WORDS].sort((a, b) => b.length - a.length);
+        for (const stop of sortedStop) {
+            // Remove stop word if it's a whole word
+            // Escaping dots is important for regex
+            const escaped = stop.replace(/\./g, '\\.');
+            const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
             norm = norm.replace(regex, '');
         }
+
         return norm
             .replace(/[^a-z0-9\s-]/g, '')
             .replace(/\s+/g, ' ')

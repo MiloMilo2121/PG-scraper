@@ -2,7 +2,7 @@
 import { IdentityResult } from './identity_resolver';
 import { CompanyInput } from '../../types';
 import { Logger } from '../../utils/logger';
-import { GoogleSerpAnalyzer, SerpResult } from './serp_analyzer';
+import { GoogleSerpAnalyzer, BingSerpAnalyzer, SerpResult } from './serp_analyzer';
 import { ScraperClient } from '../../utils/scraper_client';
 import { CompanyMatcher } from './company_matcher';
 import pLimit from 'p-limit';
@@ -44,6 +44,8 @@ export class SurgicalSearch {
         const nameQueries = [
             `"${identity.legal_name}" "${originalCompany.city || ''}"`,
             `"${identity.legal_name}" "${originalCompany.address || ''}"`,
+            `"${identity.legal_name}" "contattaci"`,             // Golden: Name + Contacts
+            `intitle:"${identity.legal_name}" "${originalCompany.city || ''}"`, // Golden: Intitle
             `"${identity.legal_name}" "sito ufficiale"`,
             `"${identity.legal_name}" ("P. IVA" OR "Partita IVA")`
         ];
@@ -138,11 +140,10 @@ export class SurgicalSearch {
         // reuse ScraperClient Bing logic or call a provider
         const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
         const html = await ScraperClient.fetchText(url, { mode: 'scrape_do', render: true });
-        // Simplified parser for now - should ideally reuse existing Analyzers
-        // Assuming we have a parser or similar. 
-        // For robustness, let's use GoogleSerpAnalyzer logic adapted, or regex.
-        // Actually, we should import the Bing parser if available.
-        return GoogleSerpAnalyzer.parseSerp(html); // NOTE: Google parser might fail on Bing HTML. 
-        // Ideally we need a BingAnalyzer. For this implementation step, assuming we have one or using generic.
+
+        if (!html) return [];
+
+        // Parse with Bing Parser
+        return BingSerpAnalyzer.parseSerp(html);
     }
 }
