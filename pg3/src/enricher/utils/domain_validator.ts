@@ -1,10 +1,11 @@
 /**
- * 🌐 DOMAIN VALIDATOR
- * Tasks 36-37: DNS/Ping check and SSL analysis
+ * DOMAIN VALIDATOR
+ * Tasks 36-37: DNS/Ping check, SSL analysis, and Parking detection.
  */
 
 import * as dns from 'dns';
 import * as https from 'https';
+import axios from 'axios';
 import { Logger } from './logger';
 
 export interface DomainHealth {
@@ -14,6 +15,15 @@ export interface DomainHealth {
     responseTime?: number;
     error?: string;
 }
+
+// Parking/junk indicators found in HTML HEAD responses
+const PARKING_INDICATORS = [
+    'domain is for sale', 'buy this domain', 'questo dominio è in vendita',
+    'domain parked', 'godaddy', 'sedo.com', 'dan.com', 'afternic',
+    'hugedomains', 'domain name is available', 'acquista questo dominio',
+    'is available for purchase', 'parking', 'domaincontrol.com',
+    'sedoparking', 'bodis.com', 'above.com', 'register this domain',
+];
 
 export class DomainValidator {
     /**
@@ -41,6 +51,73 @@ export class DomainValidator {
                 resolve(!err);
             });
         });
+    }
+
+    /**
+     * Bulk DNS check with high concurrency.
+     * Returns only domains that resolve.
+     */
+    static async bulkCheckDNS(domains: string[], concurrency: number = 500, timeoutMs: number = 3000): Promise<string[]> {
+        const results: string[] = [];
+        const batches: string[][] = [];
+
+        for (let i = 0; i < domains.length; i += concurrency) {
+            batches.push(domains.slice(i, i + concurrency));
+        }
+
+        for (const batch of batches) {
+            const checks = await Promise.all(
+                batch.map(async (domain) => {
+                    const ok = await this.checkDNS(domain, timeoutMs);
+                    return ok ? domain : null;
+                })
+            );
+            results.push(...checks.filter((d): d is string => !!d));
+        }
+
+        return results;
+    }
+
+    /**
+     * Parking Page Filter: HEAD request + body sniff to detect parked domains.
+     * Returns true if the domain appears to be a real website (not parked).
+     */
+    static async isNotParked(domain: string, timeoutMs: number = 8000): Promise<boolean> {
+        const hostname = this.extractHostname(domain);
+        if (!hostname) return false;
+
+        const url = domain.startsWith('http') ? domain : `https://${hostname}`;
+
+        try {
+            const resp = await axios.get(url, {
+                timeout: timeoutMs,
+                maxRedirects: 3,
+                validateStatus: () => true,
+                responseType: 'text',
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    'Accept': 'text/html',
+                },
+            });
+
+            const body = typeof resp.data === 'string' ? resp.data.slice(0, 5000).toLowerCase() : '';
+
+            // Empty or very short body = likely parked
+            if (body.length < 100) return false;
+
+            // Check for parking indicators
+            for (const indicator of PARKING_INDICATORS) {
+                if (body.includes(indicator)) {
+                    Logger.info(`[DomainValidator] Parking detected for ${hostname}: "${indicator}"`);
+                    return false;
+                }
+            }
+
+            return true;
+        } catch {
+            // Connection errors might mean the site exists but is down. We allow it through.
+            return true;
+        }
     }
 
     /**

@@ -79,13 +79,28 @@ async function withRetry<T>(fn: () => Promise<T>, retries: number): Promise<T> {
 }
 
 export class ScraperClient {
+  // BUG-03 FIX: Circuit breaker for Jina 402 errors.
+  // If Jina returns 402 (quota exceeded), disable it globally for this session.
+  private static jinaCircuitBroken = false;
+
   public static isScrapeDoEnabled(): boolean {
     return false; // FORCE DISABLED per user request (Migrated to Serper.dev)
-    // return !!(config.scrapeDo?.token && config.scrapeDo.token.trim().length > 0);
   }
 
   public static isJinaEnabled(): boolean {
+    if (this.jinaCircuitBroken) return false;
     return !!(config.jina?.enabled && config.jina.apiKey && config.jina.apiKey.trim().length > 0);
+  }
+
+  /**
+   * Trip the Jina circuit breaker. Called when a 402 response is received.
+   * Once tripped, isJinaEnabled() returns false for the rest of the session.
+   */
+  private static tripJinaCircuitBreaker(): void {
+    if (!this.jinaCircuitBroken) {
+      this.jinaCircuitBroken = true;
+      Logger.warn('[ScraperClient] Jina circuit breaker TRIPPED (402 quota exceeded). Jina disabled for this session.');
+    }
   }
 
   private static defaultHeaders(): Record<string, string> {
@@ -218,7 +233,7 @@ export class ScraperClient {
    */
   public static async fetchJinaReader(targetUrl: string, options: ScraperClientOptions = {}): Promise<ScraperClientResponse> {
     if (!this.isJinaEnabled()) {
-      throw new Error('JINA_API_KEY missing or JINA_ENABLED is not true');
+      throw new Error('JINA_API_KEY missing, JINA_ENABLED is not true, or circuit breaker tripped');
     }
 
     const timeoutMs = options.timeoutMs ?? config.jina.timeoutMs;
@@ -244,8 +259,13 @@ export class ScraperClient {
       return r;
     }, options.maxRetries ?? 1);
 
+    // BUG-03 FIX: Trip circuit breaker on 402 (quota exceeded)
+    if (resp.status === 402) {
+      this.tripJinaCircuitBreaker();
+      throw new Error('Jina quota exceeded (402). Circuit breaker tripped.');
+    }
+
     let body = typeof resp.data === 'string' ? resp.data : String(resp.data);
-    // Trim to save tokens downstream
     if (body.length > maxLen) {
       body = body.slice(0, maxLen);
     }
@@ -266,7 +286,7 @@ export class ScraperClient {
    */
   public static async fetchJinaSearch(query: string, options: ScraperClientOptions = {}): Promise<ScraperClientResponse> {
     if (!this.isJinaEnabled()) {
-      throw new Error('JINA_API_KEY missing or JINA_ENABLED is not true');
+      throw new Error('JINA_API_KEY missing, JINA_ENABLED is not true, or circuit breaker tripped');
     }
 
     const timeoutMs = options.timeoutMs ?? config.jina.timeoutMs;
@@ -290,6 +310,12 @@ export class ScraperClient {
       });
       return r;
     }, options.maxRetries ?? 1);
+
+    // BUG-03 FIX: Trip circuit breaker on 402 (quota exceeded)
+    if (resp.status === 402) {
+      this.tripJinaCircuitBreaker();
+      throw new Error('Jina quota exceeded (402). Circuit breaker tripped.');
+    }
 
     const body = typeof resp.data === 'string' ? resp.data : String(resp.data);
 

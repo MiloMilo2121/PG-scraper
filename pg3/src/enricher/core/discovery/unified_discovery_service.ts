@@ -35,6 +35,8 @@ import { IdentityResolver, IdentityResult } from './identity_resolver';
 import { SurgicalSearch } from './surgical_search';
 import { PagineGialleHarvester } from '../directories/paginegialle';
 import { ScraperClient } from '../../utils/scraper_client';
+import { LLMOracle } from './llm_oracle';
+import { QueryBuilder } from './query_builder';
 
 // ============================================================================
 // INTERFACES
@@ -404,12 +406,15 @@ export class UnifiedDiscoveryService {
             }
         }
 
-        // 🧠 JINA SEARCH: If enabled, add as high-priority search provider (no browser needed)
-
-        // 🛠️ LLM GUARD FIX: Check multiple keys, not just OPENAI
+        // JINA SEARCH: If enabled, add as high-priority search provider (no browser needed)
         const hasLLMKey = process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.KIMI_API_KEY || process.env.Z_AI_API_KEY;
         if (ScraperClient.isJinaEnabled() && hasLLMKey) {
             promises.push(this.searchJina(company));
+        }
+
+        // LAYER 2: LLM Oracle — Use LLMs to "remember" or "infer" the domain (Cost: ~0.0001 EUR)
+        if (hasLLMKey) {
+            promises.push(this.llmOracleAttack(company));
         }
 
         // Launch all methods in parallel
@@ -431,17 +436,51 @@ export class UnifiedDiscoveryService {
     private async serperAttack(company: CompanyInput): Promise<Candidate[] | null> {
         try {
             await this.rateLimiter.waitForSlot('google');
-            const query = `${company.company_name} ${company.city || ''} sito ufficiale`;
+            // LAYER 3: Use QueryBuilder for optimized exclusionary query
+            const query = QueryBuilder.buildSerperQuery(company);
             const provider = new SerperSearchProvider();
             const results = await provider.search(query);
             this.rateLimiter.reportSuccess('google');
             return results.slice(0, 8).map(r => ({
                 url: r.url,
-                source: 'serper_google',
-                confidence: 0.80
+                source: 'serper_golden',
+                confidence: 0.82
             }));
         } catch (e) {
             Logger.warn('[Wave1] Serper search failed', { error: (e as Error).message });
+            return null;
+        }
+    }
+
+    /**
+     * LAYER 2: LLM Oracle Attack
+     * Uses LLMs to infer/remember the company's domain.
+     * Cost: ~0.0001 EUR per company. Results are cached.
+     */
+    private async llmOracleAttack(company: CompanyInput): Promise<Candidate[] | null> {
+        try {
+            const oracleResult = await LLMOracle.infer(company);
+            if (!oracleResult || oracleResult.candidates.length === 0) return null;
+
+            Logger.info(`[LLMOracle] Inferred ${oracleResult.candidates.length} candidates for "${company.company_name}" (model: ${oracleResult.model})`);
+
+            // Validate oracle candidates against DNS before returning
+            const validCandidates: Candidate[] = [];
+            for (const candidate of oracleResult.candidates) {
+                const dnsOk = await DomainValidator.checkDNS(candidate.url, 3000);
+                if (dnsOk) {
+                    validCandidates.push({
+                        url: candidate.url,
+                        source: 'llm_oracle',
+                        confidence: candidate.confidence,
+                    });
+                }
+            }
+
+            Logger.info(`[LLMOracle] DNS-validated: ${validCandidates.length}/${oracleResult.candidates.length}`);
+            return validCandidates.length > 0 ? validCandidates : null;
+        } catch (e) {
+            Logger.warn('[Wave1] LLM Oracle failed', { error: (e as Error).message });
             return null;
         }
     }
@@ -535,21 +574,24 @@ export class UnifiedDiscoveryService {
                 company.category || ''
             );
 
-            // Take top guesses and keep only domains with valid DNS
-            const topGuesses = guesses.slice(0, 30);
-            Logger.info(`[HyperGuesser] Generated ${topGuesses.length} domain candidates`);
+            // Use bulk DNS check with high concurrency (free, non-blocking)
+            const topGuesses = guesses.slice(0, 50);
+            Logger.info(`[HyperGuesser] Generated ${topGuesses.length} domain candidates (v3 with strategies)`);
 
-            const checks = await Promise.all(
-                topGuesses.map(async (url) => {
-                    const dnsOk = await DomainValidator.checkDNS(url);
-                    return dnsOk ? url : null;
-                })
-            );
-
-            const live = checks.filter((url): url is string => !!url);
+            const live = await DomainValidator.bulkCheckDNS(topGuesses, 500, 3000);
             Logger.info(`[HyperGuesser] DNS-valid candidates: ${live.length}/${topGuesses.length}`);
 
-            return live.map((url) => ({
+            // Parking filter: HEAD request to detect parked domains (async, parallel)
+            const parkingChecks = await Promise.all(
+                live.slice(0, 20).map(async (url) => {
+                    const notParked = await DomainValidator.isNotParked(url, 6000);
+                    return notParked ? url : null;
+                })
+            );
+            const validDomains = parkingChecks.filter((url): url is string => !!url);
+            Logger.info(`[HyperGuesser] After parking filter: ${validDomains.length}/${live.length}`);
+
+            return validDomains.map((url) => ({
                 url,
                 source: 'hyper_guesser',
                 confidence: 0.74,
@@ -563,14 +605,17 @@ export class UnifiedDiscoveryService {
     private async googleSearchByName(company: CompanyInput): Promise<Candidate[] | null> {
         try {
             await this.rateLimiter.waitForSlot('google');
-            const query = `"${company.company_name}" ${company.city || ''} sito ufficiale -site:facebook.com -site:paginegialle.it`;
+            // LAYER 3: Use QueryBuilder exclusionary query instead of naive pattern
+            const goldenQueries = QueryBuilder.buildGoldenQueries(company);
+            const exclusionary = goldenQueries.find(q => q.type === 'exclusionary');
+            const query = exclusionary?.query || `"${company.company_name}" ${company.city || ''} sito ufficiale -site:facebook.com -site:paginegialle.it`;
             const results = await this.scrapeGoogleDIY(query);
 
             this.rateLimiter.reportSuccess('google');
             return results.slice(0, 8).map(r => ({
                 url: r.link,
-                source: 'google_name',
-                confidence: 0.76
+                source: 'google_name_golden',
+                confidence: 0.78
             }));
         } catch (e) {
             this.rateLimiter.reportFailure('google');

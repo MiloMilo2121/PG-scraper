@@ -8,6 +8,8 @@ export interface MatchSignals {
   addressCoverage: number;
   domainCoverage: number;
   hasContactKeywords: boolean;
+  hasOgImage: boolean;
+  titleNameMatch: boolean;
 }
 
 export interface MatchEvaluation {
@@ -95,7 +97,8 @@ export class CompanyMatcher {
 
     const targetVat = getVatFromCompany(company);
     const vatCandidates = this.extractVatNumbers(text);
-    const matchedVat = targetVat && vatCandidates.includes(targetVat) ? targetVat : undefined;
+    // Case-insensitive VAT matching: normalize both sides and handle "IT" prefix + spacing
+    const matchedVat = targetVat ? this.findMatchingVat(targetVat, vatCandidates) : undefined;
     const vatMatch = !!matchedVat;
     if (vatMatch) {
       return {
@@ -110,6 +113,8 @@ export class CompanyMatcher {
           addressCoverage: 0,
           domainCoverage: this.domainCoverage(company.company_name, url),
           hasContactKeywords: this.hasContactKeywords(normalizedText, normalizedTitle),
+          hasOgImage: false,
+          titleNameMatch: false,
         },
       };
     }
@@ -124,9 +129,11 @@ export class CompanyMatcher {
     const addressCoverage = this.addressCoverage(company.address, normalizedText);
     const domainCoverage = this.domainCoverage(company.company_name, url);
     const hasContactKeywords = this.hasContactKeywords(normalizedText, normalizedTitle);
+    const hasOgImage = this.hasOgImage(text);
+    const titleNameMatch = this.nameCoverage(company.company_name, normalizedTitle) >= 0.6;
 
     let confidence = 0.05;
-    if (phoneMatch) confidence += 0.65; // BOOSTED: Was 0.55
+    if (phoneMatch) confidence += 0.65;
 
     if (nameCoverage >= 0.85) confidence += 0.26;
     else if (nameCoverage >= 0.65) confidence += 0.2;
@@ -143,18 +150,23 @@ export class CompanyMatcher {
 
     if (hasContactKeywords) confidence += 0.04;
 
-    // Only penalize short text if we don't have strong signals
-    if (normalizedText.length < 160 && nameCoverage < 0.6 && domainCoverage < 0.6) {
+    // VISUAL MATCHER: If og:image is present AND title matches name, accept with boost.
+    // Many Italian SMB sites have minimal text but og:image proves it's a real company page.
+    if (hasOgImage && titleNameMatch) {
+      confidence += 0.08;
+    }
+
+    // Only penalize short text if we don't have strong signals (og:image overrides)
+    if (normalizedText.length < 160 && nameCoverage < 0.6 && domainCoverage < 0.6 && !hasOgImage) {
       confidence -= 0.1;
     }
 
-    // ASSUMPTION: Hard cap at 0.35 should only trigger when BOTH name AND domain fail.
-    // Previously this killed valid candidates where domain matched but name tokenization failed.
+    // Hard cap only when BOTH name AND domain fail
     if (!phoneMatch && nameCoverage < 0.4 && domainCoverage < 0.5) {
       confidence = Math.min(confidence, 0.35);
     }
 
-    // SYNERGY BONUS: domain + name convergence is a very strong signal for Italian SMBs
+    // SYNERGY BONUS: domain + name convergence
     if (domainCoverage >= 0.8 && nameCoverage >= 0.4) confidence += 0.06;
 
     if (phoneMatch && nameCoverage < 0.25 && domainCoverage < 0.25) {
@@ -168,6 +180,7 @@ export class CompanyMatcher {
     if (cityMatch) reasonParts.push('city match');
     if (addressCoverage >= 0.45) reasonParts.push('address match');
     if (domainCoverage >= 0.5) reasonParts.push('domain match');
+    if (hasOgImage && titleNameMatch) reasonParts.push('visual match (og:image+title)');
     if (reasonParts.length === 0) reasonParts.push('weak evidence');
 
     return {
@@ -182,6 +195,8 @@ export class CompanyMatcher {
         addressCoverage,
         domainCoverage,
         hasContactKeywords,
+        hasOgImage,
+        titleNameMatch,
       },
     };
   }
@@ -312,6 +327,29 @@ export class CompanyMatcher {
       .map((raw) => this.normalizePhone(raw))
       .filter((digits) => digits.length >= 7 && digits.length <= 15);
     return [...new Set(phones)];
+  }
+
+  /**
+   * Case-insensitive VAT matching with format normalization.
+   * Handles: "IT 123 456 789 01", "IT12345678901", "12345678901"
+   */
+  private static findMatchingVat(targetVat: string, candidates: string[]): string | undefined {
+    if (!targetVat || targetVat.length < 5) return undefined;
+    const cleanTarget = targetVat.replace(/\D/g, '');
+    for (const candidate of candidates) {
+      const cleanCandidate = candidate.replace(/\D/g, '');
+      if (cleanCandidate === cleanTarget) return candidate;
+    }
+    return undefined;
+  }
+
+  /**
+   * Detect og:image meta tag presence in raw HTML.
+   * Pages with og:image are almost certainly real company pages, not directories.
+   */
+  private static hasOgImage(rawText: string): boolean {
+    const lower = rawText.toLowerCase();
+    return lower.includes('og:image') || lower.includes('property="og:image"') || lower.includes("property='og:image'");
   }
 
   private static findMatchingPhone(targetPhone: string, candidates: string[]): string | null {

@@ -151,15 +151,20 @@ export class BrowserFactory {
             let proxyArgs: string[] = [];
 
             if (process.env.DISABLE_PROXY === 'true') {
-                Logger.warn(`[BrowserFactory:${this.instanceId}] 🛑 PROXY DISABLED via env var`);
+                Logger.warn(`[BrowserFactory:${this.instanceId}] PROXY DISABLED via env var`);
             } else {
                 proxyArgs = proxyManager.getLaunchArgsForUrl('https://www.google.com');
             }
 
             if (proxyArgs.length > 0) {
-                Logger.info(`[BrowserFactory:${this.instanceId}] 🛡️ Launching with Proxy: ${proxyArgs[0]}`);
+                Logger.info(`[BrowserFactory:${this.instanceId}] Launching with Proxy: ${proxyArgs[0]}`);
+            } else if (config.scrapeDo.enforce) {
+                // BUG-01 FIX: Hard-fail if proxy is enforced but missing (Law 005: Assume Malice)
+                const msg = `[BrowserFactory:${this.instanceId}] SCRAPE_DO_ENFORCE=true but no proxy available. Refusing to launch unprotected browser.`;
+                Logger.error(msg);
+                throw new Error(msg);
             } else {
-                Logger.warn(`[BrowserFactory:${this.instanceId}] ⚠️ No Proxy configured! Running raw (DIRECT).`);
+                Logger.warn(`[BrowserFactory:${this.instanceId}] No Proxy configured. Running raw (DIRECT).`);
             }
 
             try {
