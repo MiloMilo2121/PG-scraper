@@ -11,7 +11,40 @@ import { config } from '../config';
  * Results are cached in-memory (Law 503: Caching Intelligence).
  */
 
-const CACHE = new Map<string, string[]>();
+
+import * as fs from 'fs';
+import * as path from 'path';
+
+const CACHE_FILE = path.join(process.cwd(), 'data', 'municipalities_cache.json');
+let MEMOLOCK_CACHE: Map<string, string[]> | null = null;
+
+function loadCache(): Map<string, string[]> {
+    if (MEMOLOCK_CACHE) return MEMOLOCK_CACHE;
+    try {
+        if (fs.existsSync(CACHE_FILE)) {
+            const data = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8'));
+            MEMOLOCK_CACHE = new Map(Object.entries(data));
+        } else {
+            MEMOLOCK_CACHE = new Map();
+        }
+    } catch (e) {
+        Logger.warn(`[MunicipalitySplitter] Failed to load cache: ${(e as Error).message}`);
+        MEMOLOCK_CACHE = new Map();
+    }
+    return MEMOLOCK_CACHE!;
+}
+
+function saveCache(cache: Map<string, string[]>) {
+    try {
+        const data = Object.fromEntries(cache);
+        if (!fs.existsSync(path.dirname(CACHE_FILE))) {
+            fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
+        }
+        fs.writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2));
+    } catch (e) {
+        Logger.error(`[MunicipalitySplitter] Failed to save cache: ${(e as Error).message}`);
+    }
+}
 
 const SYSTEM_PROMPT = `You are an expert in Italian geography. 
 Given an Italian province name, return exactly 5 municipalities (comuni) that are 
@@ -25,15 +58,16 @@ export class MunicipalitySplitter {
 
     /**
      * Get 5 geographically distributed municipalities for a province.
-     * Returns cached results if available.
+     * Returns persistent cached results if available.
      */
     public static async getMunicipalities(province: string): Promise<string[]> {
+        const cache = loadCache();
         const cacheKey = province.toLowerCase().trim();
 
-        // Cache hit (Law 503)
-        if (CACHE.has(cacheKey)) {
-            Logger.info(`[MunicipalitySplitter] Cache hit for "${province}"`);
-            return CACHE.get(cacheKey)!;
+        // Persistent Cache hit
+        if (cache.has(cacheKey)) {
+            Logger.info(`[MunicipalitySplitter] 💾 Persistent Cache hit for "${province}"`);
+            return cache.get(cacheKey)!;
         }
 
         Logger.info(`[MunicipalitySplitter] 🧠 Querying LLM for 5 municipalities in "${province}"...`);
@@ -82,8 +116,9 @@ export class MunicipalitySplitter {
 
             Logger.info(`[MunicipalitySplitter] ✅ ${province} → [${municipalities.join(', ')}]`);
 
-            // Cache
-            CACHE.set(cacheKey, municipalities);
+            // Save to Persistent Cache
+            cache.set(cacheKey, municipalities);
+            saveCache(cache);
 
             return municipalities;
 

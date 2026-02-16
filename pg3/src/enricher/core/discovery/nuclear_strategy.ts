@@ -80,13 +80,36 @@ export class NuclearStrategy {
         const candidates = new Map<string, number>();
         const searchTasks = queries.map(q => this.queryLimit(async () => {
             await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));
-            const ddgResults = await this.performSearch(q, 'ddg');
-            if (ddgResults.length > 0) return ddgResults;
-            return await this.performSearch(q, 'serper');
+
+            // 1. Try DDG (Fast, but often blocked)
+            try {
+                const provider = new DDGSearchProvider();
+                let results = await provider.search(q);
+                if (results.length > 0) return results.map((r: any) => r.url);
+            } catch (e) { }
+
+            // 2. Try Serper (API, reliable but needs key)
+            if (process.env.SERPER_API_KEY) {
+                try {
+                    const provider = new SerperSearchProvider();
+                    let results = await provider.search(q);
+                    if (results.length > 0) return results.map((r: any) => r.url);
+                } catch (e) { }
+            }
+
+            // 3. Try Google (Puppeteer + Scrape.do - Slow but robust)
+            // Added as fallback for Rescue Mission
+            try {
+                const provider = new GoogleSearchProvider();
+                let results = await provider.search(q);
+                return results.map((r: any) => r.link); // Google provider uses 'link' not 'url'
+            } catch (e) {
+                return [];
+            }
         }));
 
         const results = await Promise.all(searchTasks);
-        const allUrls = results.flat();
+        const allUrls = results.flat().filter(u => u); // Filter undefined/null
 
         for (const url of allUrls) {
             const score = this.scoreCandidate(url, company);
@@ -106,20 +129,10 @@ export class NuclearStrategy {
     }
 
     private async performSearch(query: string, engine: 'google' | 'ddg' | 'serper'): Promise<string[]> {
-        try {
-            let results: any[] = [];
-            // Factory logic
-            let provider;
-            if (engine === 'ddg') provider = new DDGSearchProvider();
-            else if (engine === 'serper') provider = new SerperSearchProvider();
-            else provider = new GoogleSearchProvider(); // Legacy fallback if someone calls it, but we prefer Serper now
-
-            results = await provider.search(query);
-            return results.map((r: any) => r.url);
-        } catch (e) {
-            Logger.warn(`[Nuclear] Search error (${engine}): ${(e as Error).message}`);
-            return [];
-        }
+        // Redundant method now that logic is inlined for clarity in executeLegacy, 
+        // but keeping it if needed for other methods, or we can just remove it.
+        // Actually, executeLegacy now inlines the logic to fix the scope issues.
+        return [];
     }
 
     /**

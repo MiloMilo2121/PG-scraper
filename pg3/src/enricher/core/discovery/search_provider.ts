@@ -1,7 +1,6 @@
 import { Logger } from '../../utils/logger';
 import { GoogleSerpAnalyzer, SerpResult } from './serp_analyzer';
 import { DuckDuckGoSerpAnalyzer } from './ddg_analyzer';
-import { ScraperClient } from '../../utils/scraper_client';
 import { TorBrowser } from '../browser/tor_browser';
 import { Retry } from '../../../utils/decorators';
 
@@ -9,38 +8,23 @@ export interface SearchProvider {
     search(query: string): Promise<SerpResult[]>;
 }
 
+/**
+ * 🚀 GOOGLE PROVIDER (via SERPER.DEV)
+ * Replaced Scrape.do/Puppeteer with Serper.dev API for stability and speed.
+ * Law 002: O(1) efficiency vs O(n) browser rendering.
+ */
 export class GoogleSearchProvider implements SearchProvider {
     async search(query: string): Promise<SerpResult[]> {
-        const url = `https://www.google.it/search?q=${encodeURIComponent(query)}&hl=it&gl=it`;
-        try {
-            // Use ScraperClient (Scrape.do API) - bypassing browser proxy issues
-            const html = await ScraperClient.fetchText(url, {
-                mode: 'scrape_do',
-                render: true,
-                super: true,
-                timeoutMs: 25000,
-                maxRetries: 2
-            });
-
-            const lower = html.toLowerCase();
-            if (lower.includes('unusual traffic') || lower.includes('traffico insolito') || lower.includes('/sorry/')) {
-                Logger.warn('[GoogleProvider] Blocked by CAPTCHA/traffic gate', { query });
-                return [];
-            }
-
-            const results = await GoogleSerpAnalyzer.parseSerp(html);
-            return results;
-        } catch (e: any) {
-            Logger.warn(`[GoogleProvider] Search failed for "${query}": ${e.message}`);
-            return [];
-        }
+        // Delegate to SerperProvider directly
+        const provider = new SerperSearchProvider();
+        return provider.search(query);
     }
 }
 
 
 export class DDGSearchProvider implements SearchProvider {
 
-    @Retry({ attempts: 3, delay: 2000, backoff: 'exponential' })
+    @Retry({ attempts: 3, delay: 5000, backoff: 'exponential' })
     async search(query: string): Promise<SerpResult[]> {
         let page;
         try {
@@ -49,8 +33,8 @@ export class DDGSearchProvider implements SearchProvider {
 
             const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
 
-            Logger.info(`[DDGProvider] Searching: ${url}`);
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            Logger.info(`[DDGProvider] Searching via Tor: ${url}`);
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }); // Increased timeout for Tor
 
             const title = await page.title();
             const content = await page.content();
@@ -80,7 +64,7 @@ export class DDGSearchProvider implements SearchProvider {
         return content.includes('bots use duckduckgo too') ||
             title.includes('403') ||
             content.includes('issue with the Tor Exit Node') ||
-            content.length < 1000;
+            content.length < 500; // Adjusted length check
     }
 }
 
@@ -103,7 +87,7 @@ export class ReverseAddressSearchProvider implements SearchProvider {
     }
 
     async search(query: string): Promise<SerpResult[]> {
-        // Reuse logic from Google search via ScraperClient
+        // Use Serper via GoogleProvider
         const provider = new GoogleSearchProvider();
         return provider.search(query);
     }
@@ -116,7 +100,7 @@ export class ReverseAddressSearchProvider implements SearchProvider {
  */
 export class SerperSearchProvider implements SearchProvider {
     async search(query: string): Promise<SerpResult[]> {
-        const apiKey = process.env.SERPER_API_KEY || 'e0feae3b0d8ba0ebcdc8a70874543e15bd6bf01a'; // Fallback to provided key for now
+        const apiKey = process.env.SERPER_API_KEY || 'e0feae3b0d8ba0ebcdc8a70874543e15bd6bf01a';
 
         if (!apiKey) {
             Logger.warn('[SerperProvider] No API Key provided');
@@ -141,6 +125,10 @@ export class SerperSearchProvider implements SearchProvider {
             });
 
             if (!response.ok) {
+                // Handle 403/429 specifically
+                if (response.status === 403) Logger.error('[SerperProvider] Invalid API Key');
+                if (response.status === 429) Logger.warn('[SerperProvider] Rate Limit Exceeded');
+
                 throw new Error(`Serper API error: ${response.status} ${response.statusText}`);
             }
 

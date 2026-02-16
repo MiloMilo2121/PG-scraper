@@ -32,6 +32,9 @@ export class ModelRouter {
         switch (difficulty) {
             case TaskDifficulty.SIMPLE:
                 // TIER 1: Flash / Instant
+                // Prioritize DeepSeek if available (More reliable than Z.ai currently)
+                if (config.llm.deepseek?.apiKey) return 'deepseek-chat';
+
                 // Target: GLM-4.7-FlashX ($0.07/M)
                 if (config.llm.z_ai?.apiKey && pricing['glm-4.7-flash']) return 'glm-4.7-flash';
                 return 'gpt-4o-mini'; // Fallback to OpenAI if Z.ai missing

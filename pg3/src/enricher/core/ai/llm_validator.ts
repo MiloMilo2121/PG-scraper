@@ -18,8 +18,9 @@ export interface ValidationResult {
     isValid: boolean;
     confidence: number;
     reason: string;
+    thought?: string; // Law 506: Chain-of-Thought
     entity_type: 'official_site' | 'directory' | 'social' | 'uncertain';
-    next_action: 'accept' | 'crawl_contact' | 'reject';
+    next_action: 'accept' | 'crawl_contact' | 'reject' | 'manual_review';
 }
 
 export class LLMValidator {
@@ -56,7 +57,17 @@ export class LLMValidator {
         });
 
         try {
-            const res = await LLMService.completeStructured<ValidationResult>(
+            // Define a type that matches the prompt schema strictly
+            type PromptResponse = {
+                thought: string;
+                isValid: boolean;
+                confidence: number;
+                reasoning: string;
+                entity_type: 'official_site' | 'directory' | 'social' | 'uncertain';
+                next_action: 'accept' | 'crawl_contact' | 'reject' | 'manual_review';
+            };
+
+            const res = await LLMService.completeStructured<PromptResponse>(
                 prompt,
                 VALIDATE_COMPANY_PROMPT.schema as Record<string, unknown>,
                 ModelRouter.selectModel(TaskDifficulty.SIMPLE) // 🚦 ROUTER: Simple task -> FlashX
@@ -71,7 +82,8 @@ export class LLMValidator {
                 return {
                     isValid: res.isValid,
                     confidence: Math.max(0, Math.min(1, res.confidence)),
-                    reason: typeof res.reason === 'string' && res.reason.trim() ? res.reason.trim() : 'LLM validated',
+                    reason: res.reasoning || 'LLM validated',
+                    thought: res.thought,
                     entity_type: res.entity_type || 'uncertain',
                     next_action: res.next_action || 'reject',
                 };
@@ -86,9 +98,7 @@ export class LLMValidator {
                     return {
                         isValid: legacyRes.isValid,
                         confidence: Math.max(0, Math.min(1, legacyRes.confidence)),
-                        reason: typeof legacyRes.reason === 'string' && legacyRes.reason.trim()
-                            ? legacyRes.reason.trim()
-                            : 'LLM validated (legacy)',
+                        reason: legacyRes.reason || 'LLM validated (legacy)',
                         entity_type: legacyRes.entity_type || 'uncertain',
                         next_action: legacyRes.next_action || 'reject',
                     };
@@ -115,7 +125,7 @@ export class LLMValidator {
     public static async selectBestUrl(
         company: CompanyInput,
         serpResults: Array<{ url: string; title: string; snippet: string }>
-    ): Promise<{ bestUrl: string | null; confidence: number; reasoning: string }> {
+    ): Promise<{ bestUrl: string | null; confidence: number; reasoning: string; thought?: string }> {
         if (!process.env.OPENAI_API_KEY && !process.env.Z_AI_API_KEY) {
             Logger.warn('[LLMValidator] selectBestUrl: No LLM API key configured');
             return { bestUrl: null, confidence: 0, reasoning: 'LLM disabled (missing API key)' };
@@ -133,7 +143,14 @@ export class LLMValidator {
         });
 
         try {
-            const res = await LLMService.completeStructured<{ bestUrl: string | null; confidence: number; reasoning: string }>(
+            type SelectResponse = {
+                thought: string;
+                bestUrl: string | null;
+                confidence: number;
+                reasoning: string;
+            };
+
+            const res = await LLMService.completeStructured<SelectResponse>(
                 prompt,
                 SELECT_BEST_URL_PROMPT.schema as Record<string, unknown>,
                 ModelRouter.selectModel(TaskDifficulty.MODERATE) // 🚦 ROUTER: Selection -> DeepSeek V3.2 (more nuance)
@@ -144,6 +161,7 @@ export class LLMValidator {
                     bestUrl: res.bestUrl,
                     confidence: Math.max(0, Math.min(1, res.confidence)),
                     reasoning: res.reasoning || 'LLM selected best URL',
+                    thought: res.thought, // Capture CoT
                 };
             }
         } catch (error) {

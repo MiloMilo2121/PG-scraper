@@ -49,6 +49,44 @@ WEBPAGE CONTENT:
 ${vars.cleanHtml}
 \`\`\`
 
+EXAMPLES (FEW-SHOT LEARNING):
+
+Example 1: ✅ STRONG MATCH
+Input: Target="Acme Srl" (Milano), Content="Benvenuti in Acme Srl, leader a Milano. P.IVA 12345678901."
+Output:
+{
+  "thought": "The webpage explicitly mentions 'Acme Srl' and the location 'Milano'. The VAT number is present. This is clearly the official site.",
+  "isValid": true,
+  "confidence": 0.95,
+  "reasoning": "Exact name and city match. VAT number found.",
+  "entity_type": "official_site",
+  "next_action": "accept"
+}
+
+Example 2: ❌ REJECT (Directory)
+Input: Target="Beta Spa" (Roma), Content="PagineGialle: Beta Spa a Roma. Telefono..."
+Output:
+{
+  "thought": "The content is from PagineGialle, which is a business directory, not the official website of 'Beta Spa'. matching name but wrong entity type.",
+  "isValid": false,
+  "confidence": 0.1,
+  "reasoning": "Detected directory/aggregator site (PagineGialle).",
+  "entity_type": "directory",
+  "next_action": "reject"
+}
+
+Example 3: ⚠️ UNCERTAIN (Name Match, Wrong City)
+Input: Target="Gamma Snc" (Torino), Content="Gamma Snc - Sede di Napoli. Produzione di..."
+Output:
+{
+  "thought": "The company name 'Gamma Snc' matches, but the city is 'Napoli' while the target is 'Torino'. This could be a different branch or a different company with the same name.",
+  "isValid": false,
+  "confidence": 0.4,
+  "reasoning": "Name matches but city implies different location (Napoli vs Torino).",
+  "entity_type": "uncertain",
+  "next_action": "reject"
+}
+
 DECISION CRITERIA:
 1. ✅ STRONG MATCH (confidence ≥ 0.9):
    - Exact VAT number match on a non-directory page
@@ -78,24 +116,25 @@ NEXT ACTION:
 - "accept" → High confidence (≥ 0.8), official site, use this data
 - "crawl_contact" → Medium confidence (0.6-0.7), extract contacts for verification
 - "reject" → Low confidence or directory/social page
+- "manual_review" → Uncertain cases
 
 OUTPUT SCHEMA:
 \`\`\`json
 {
+  "thought": "Step-by-step reasoning for the decision (REQUIRED, detailed)",
   "isValid": boolean,
   "confidence": number (0.0-1.0),
-  "reasoning": "Step-by-step explanation of your decision",
+  "reasoning": "Final summary of the decision",
   "entity_type": "official_site" | "directory" | "social" | "uncertain",
-  "next_action": "accept" | "crawl_contact" | "reject"
+  "next_action": "accept" | "crawl_contact" | "reject" | "manual_review"
 }
 \`\`\`
-
-Think step-by-step. Explain your reasoning before deciding.
     `.trim(),
 
     schema: {
         type: 'object' as const,
         properties: {
+            thought: { type: 'string' as const },
             isValid: { type: 'boolean' as const },
             confidence: { type: 'number' as const },
             reasoning: { type: 'string' as const },
@@ -105,10 +144,10 @@ Think step-by-step. Explain your reasoning before deciding.
             },
             next_action: {
                 type: 'string' as const,
-                enum: ['accept', 'crawl_contact', 'reject']
+                enum: ['accept', 'crawl_contact', 'reject', 'manual_review']
             },
         },
-        required: ['isValid', 'confidence', 'reasoning', 'entity_type', 'next_action'] as const,
+        required: ['thought', 'isValid', 'confidence', 'reasoning', 'entity_type', 'next_action'] as const,
         additionalProperties: false as const,
     }
 };
@@ -216,6 +255,34 @@ WEBPAGE CONTENT:
 ${vars.cleanHtml}
 \`\`\`
 
+EXAMPLES (FEW-SHOT LEARNING):
+
+Example 1: B2B Industrial
+Input: Content="Produzione di minuterie metalliche tornite di precisione. Certificazione ISO 9001. Parco macchine CNC..."
+Output:
+{
+  "thought": "The text mentions 'minuterie metalliche' (small metal parts), 'tornite' (turned), and 'CNC'. 'ISO 9001' indicates a structured business. The customers are likely other manufacturers.",
+  "type": "B2B",
+  "primary_sector": "Manufacturing",
+  "specific_niche": "Precision Turning / Machining",
+  "deduced_tags": ["Subcontracting", "Metalworking", "CNC Machining"],
+  "confidence": 0.95,
+  "reasoning": "Technical vocabulary (CNC, ISO 9001) confirms B2B manufacturing role."
+}
+
+Example 2: B2C Service
+Input: Content="Prenota il tuo tavolo online. Scopri il nostro menu degustazione. Vini pregiati e atmosfera romantica."
+Output:
+{
+  "thought": "Terms like 'Prenota' (Book), 'menu', 'vini' (wines) clearly indicate a restaurant. Targeted at end consumers.",
+  "type": "B2C",
+  "primary_sector": "Hospitality",
+  "specific_niche": "Fine Dining Restaurant",
+  "deduced_tags": ["Restaurant", "Food & Beverage", "Reservations"],
+  "confidence": 0.98,
+  "reasoning": "Standard restaurant vocabulary targeting consumers."
+}
+
 🕵️‍♂️ DEDUCTION GUIDELINES:
 
 1. **LOOK FOR IMPLICIT SIGNALS**:
@@ -234,12 +301,13 @@ ${vars.cleanHtml}
 OUTPUT SCHEMA:
 \`\`\`json
 {
+  "thought": "Step-by-step deduction process (REQUIRED)",
   "type": "B2B" | "B2C" | "BOTH" | "UNKNOWN",
   "primary_sector": "Manufacturing" | "Technology" | "Services" | "Retail" | "Healthcare" | "Real Estate" | "Other",
   "specific_niche": "e.g. Precision Machining, SaaS CRM, Luxury Fashion",
   "deduced_tags": ["tag1", "tag2", "tag3"],
   "confidence": 0.0-1.0,
-  "reasoning": "Explain your deduction chain. E.g. 'Mentions CNC and latency, so inferred High-Tech Manufacturing'."
+  "reasoning": "Explain your deduction chain."
 }
 \`\`\`
     `.trim(),
@@ -247,6 +315,7 @@ OUTPUT SCHEMA:
     schema: {
         type: 'object' as const,
         properties: {
+            thought: { type: 'string' as const },
             type: { type: 'string' as const, enum: ['B2B', 'B2C', 'BOTH', 'UNKNOWN'] },
             primary_sector: { type: 'string' as const },
             specific_niche: { type: 'string' as const },
@@ -254,7 +323,7 @@ OUTPUT SCHEMA:
             confidence: { type: 'number' as const },
             reasoning: { type: 'string' as const },
         },
-        required: ['type', 'primary_sector', 'specific_niche', 'confidence', 'reasoning'] as const,
+        required: ['thought', 'type', 'primary_sector', 'specific_niche', 'confidence', 'reasoning'] as const,
         additionalProperties: false as const,
     }
 };
@@ -290,6 +359,38 @@ ${i + 1}. URL: ${u.url}
    Snippet: ${u.snippet}
 `).join('\n')}
 
+EXAMPLES (FEW-SHOT LEARNING):
+
+Example 1: ✅ FOUND OFFICIAL SITE
+Input: Target="Delta Srl" (Milano), Results=[{url: "https://www.deltasrl.it", title: "Delta Srl - Servizi online", snippet: "Benvenuti in Delta Srl a Milano..."}]
+Output:
+{
+  "thought": "The first result 'deltasrl.it' matches the company name exactly and the snippet mentions 'Milano'. This is a high-confidence official site.",
+  "bestUrl": "https://www.deltasrl.it",
+  "confidence": 0.9,
+  "reasoning": "Exact domain match and location confirmation in snippet."
+}
+
+Example 2: ❌ NO OFFICIAL SITE (Directories Only)
+Input: Target="Echo Sas" (Roma), Results=[{url: "https://www.paginegialle.it/echosas", title: "Echo Sas - Roma"}, {url: "https://www.facebook.com/echo", title: "Echo - Home"}]
+Output:
+{
+  "thought": "The results contain only a directory (PagineGialle) and a social media page (Facebook). No dedicated official website detected.",
+  "bestUrl": null,
+  "confidence": 0.1,
+  "reasoning": "Only directory and social media results found."
+}
+
+Example 3: ⚠️ AMBIGUOUS (Generic Name)
+Input: Target="Ristorante Roma" (Firenze), Results=[{url: "https://www.ristoranteroma.com", title: "Ristorante Roma - Cucina Romana"}, {url: "https://www.tripadvisor.it/...", title: "Ristorante Roma Firenze - Recensioni"}]
+Output:
+{
+  "thought": "Result 1 is 'ristoranteroma.com' but the snippet doesn't explicitly mention 'Firenze', giving it a medium probability. Result 2 confirms a 'Ristorante Roma' exists in Firenze on TripAdvisor. It is likely Result 1 is the site, but not 100% certain without city in snippet.",
+  "bestUrl": "https://www.ristoranteroma.com",
+  "confidence": 0.6,
+  "reasoning": "Domain matches, but lack of explicit city in snippet reduces confidence."
+}
+
 DECISION RULES:
 
 ✅ OFFICIAL SITE INDICATORS (confidence ≥ 0.8):
@@ -312,23 +413,23 @@ DECISION RULES:
 OUTPUT SCHEMA:
 \`\`\`json
 {
+  "thought": "Step-by-step analysis of the search results (REQUIRED)",
   "bestUrl": "https://example.com" or null,
   "confidence": 0.0-1.0,
-  "reasoning": "Explain why this URL is (or isn't) the official site"
+  "reasoning": "Final justification for the selection"
 }
 \`\`\`
-
-Think step-by-step. If no official site is found, return null with low confidence.
     `.trim(),
 
     schema: {
         type: 'object' as const,
         properties: {
+            thought: { type: 'string' as const },
             bestUrl: { type: ['string', 'null'] as any },
             confidence: { type: 'number' as const },
             reasoning: { type: 'string' as const },
         },
-        required: ['bestUrl', 'confidence', 'reasoning'] as const,
+        required: ['thought', 'bestUrl', 'confidence', 'reasoning'] as const,
         additionalProperties: false as const,
     }
 };

@@ -143,7 +143,7 @@ const MODE_PROFILES: Record<DiscoveryMode, ModeProfile> = {
 export class UnifiedDiscoveryService {
     private browserFactory: BrowserFactory;
     private rateLimiter: RateLimiter;
-    private validatorLimit = pLimit(5);
+    private validatorLimit = pLimit(20); // Increased from 5 for faster validation
     private nuclearStrategy: NuclearStrategy;
     private identityResolver: IdentityResolver;
     private surgicalSearch: SurgicalSearch;
@@ -386,10 +386,7 @@ export class UnifiedDiscoveryService {
         ];
 
         if (canUseGoogle) {
-            if (proxyDisabled && scrapeDoEnabled) {
-                Logger.info('[Wave1] 🛡️ Proxy disabled, Scrape.do enabled: using Google via gateway + Bing');
-            }
-            // Standard Google Swarm (Puppeteer) or Scrape.do fallback (HTTP) when proxy is disabled.
+            // Standard Google Swarm (now via Serper API)
             // 🧩 VAT MATCH: If we have a resolved VAT (from IdentityResolver), use it for a surgical strike
             if (company.vat_code || company.vat || company.piva) { // Use any available VAT field
                 promises.push(this.googleSearchByVat(company));
@@ -401,14 +398,14 @@ export class UnifiedDiscoveryService {
             // DDG is useful regardless; it might be blocked direct, but Scrape.do can often pass.
             promises.push(this.searchDDG(company));
         } else {
-            Logger.info('[Wave1] 🛡️ Proxy disabled and Scrape.do missing: skipping Google, using Bing + DuckDuckGo');
-            // Add Bing & DDG to Wave 1
+            // Fallback logic if google needed to be disabled (though Serper is API-based so should work)
+            // But we keep this for robust logic if user explicitly disables google
+            Logger.info('[Wave1] 🛡️ Proxy/Google disabled: using Bing + DuckDuckGo + Serper');
             promises.push(this.searchBing(company));
             promises.push(this.searchDDG(company));
 
-            // OPTIMIZATION: If Proxy is disabled, use Serper (Google API) as high-quality fallback
+            // Use Serper explicitly if key present (though google methods above now use Serper too)
             if (process.env.SERPER_API_KEY) {
-                Logger.info('[Wave1] 🚀 Proxy disabled & Serper Key found: Engaging Serper (Google API)');
                 promises.push(this.serperAttack(company));
             }
         }
@@ -1061,6 +1058,14 @@ export class UnifiedDiscoveryService {
                     const geneId = (page as any).__geneId;
                     // if (geneId) this.fingerprinter.reportFailure(geneId);
                 }
+
+                // GUARDRAIL: Coming Soon / Under Construction
+                if (extraction.text.toLowerCase().includes('coming soon') || extraction.text.toLowerCase().includes('sito in costruzione')) {
+                    const result = { confidence: 0, reason: 'Coming Soon / Under Construction' };
+                    this.setCachedVerification(cacheKey, result);
+                    return result;
+                }
+
                 const result = { confidence: 0, reason: filter.reason };
                 this.setCachedVerification(cacheKey, result);
                 return result;
@@ -1535,47 +1540,57 @@ export class UnifiedDiscoveryService {
     // =========================================================================
 
     private async scrapeGoogleDIY(query: string): Promise<Array<{ link: string }>> {
-        const url = `https://www.google.it/search?q=${encodeURIComponent(query)}&hl=it&gl=it`;
-        const proxyDisabled = process.env.DISABLE_PROXY === 'true';
-        const scrapeDoEnabled = ScraperClient.isScrapeDoEnabled();
-
-        if (scrapeDoEnabled) {
-            try {
-                // Use ScraperClient (Scrape.do API) - bypassing browser proxy issues
-                const html = await ScraperClient.fetchText(url, { mode: 'scrape_do', render: true, super: true, timeoutMs: 25000, maxRetries: 2 });
-                const lower = html.toLowerCase();
-                if (lower.includes('unusual traffic') || lower.includes('traffico insolito') || lower.includes('/sorry/')) {
-                    Logger.warn('[ScrapeGoogleDIY] Blocked by CAPTCHA/traffic gate', { query });
-                    return [];
-                }
-                const results = await GoogleSerpAnalyzer.parseSerp(html);
-                return results.map((r: { url: string }) => ({ link: r.url }));
-            } catch (e) {
-                Logger.warn('[ScrapeGoogleDIY] Failed (scrape.do/http)', { error: e as Error, query });
-                // Fallback to browser if API fails? No, browser is broken. Return empty.
-                return [];
-            }
-        }
+        // STRATEGY: 
+        // 1. Try Puppeteer with Proxy (Primary) - lowest cost
+        // 2. If Blocked/Failed -> Fallback to Serper API - higher cost but reliable
 
         let page;
         try {
+            //  Attempt 1: Browser + Proxy
+            const url = `https://www.google.it/search?q=${encodeURIComponent(query)}&hl=it&gl=it`;
             page = await this.browserFactory.newPage();
+
+            // Navigate with timeout
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+
+            // Handle Consent
             await this.acceptGoogleConsentIfPresent(page);
+
+            // Check for Blocks
             const html = await page.content();
             const lower = html.toLowerCase();
-            if (lower.includes('unusual traffic') || lower.includes('traffico insolito') || lower.includes('/sorry/')) {
-                Logger.warn('[ScrapeGoogleDIY] Blocked by CAPTCHA/traffic gate', { query });
-                return [];
+
+            if (lower.includes('unusual traffic') || lower.includes('traffico insolito') || lower.includes('/sorry/') || lower.includes('captcha')) {
+                throw new Error('Google Blocked/CAPTCHA detected');
             }
+
             const results = await GoogleSerpAnalyzer.parseSerp(html);
-            return results.map((r: { url: string }) => ({ link: r.url }));
+            if (results.length > 0) {
+                return results.map((r: { url: string }) => ({ link: r.url }));
+            }
+            // If 0 results but not blocked, maybe just empty. But often it's a soft block. 
+            // We can optionally fall through to Serper here too if strict.
+
         } catch (e) {
-            Logger.warn('[ScrapeGoogleDIY] Failed', { error: e as Error, query });
-            return [];
+            Logger.warn('[ScrapeGoogleDIY] Browser attempt failed, switching to Serper fallback', { error: (e as Error).message });
+            // Fallthrough to Serper
         } finally {
             if (page) await this.browserFactory.closePage(page);
         }
+
+        // Attempt 2: Serper API Fallback
+        if (process.env.SERPER_API_KEY) {
+            try {
+                Logger.info(`[ScrapeGoogleDIY] 🛡️ Engaging Serper Fallback for: "${query}"`);
+                const provider = new SerperSearchProvider();
+                const results = await provider.search(query);
+                return results.map(r => ({ link: r.url }));
+            } catch (e) {
+                Logger.warn('[ScrapeGoogleDIY] Serper fallback also failed', { error: e as Error, query });
+            }
+        }
+
+        return [];
     }
 
     private async scrapeDDGDIY(query: string): Promise<Array<{ link: string }>> {

@@ -144,20 +144,26 @@ export class LLMService {
         // But OpenAI SDK requires valid keys. We'll try standard way, fallback if 400.
         // DeepSeek V3 supports standard tools/json objects usually.
 
+        // DeepSeek supports "json_object" but NOT "json_schema" (Structured Outputs) yet.
+        const isDeepSeek = model.includes('deepseek');
+        const responseFormat = isDeepSeek
+            ? { type: 'json_object' as const }
+            : {
+                type: 'json_schema' as const,
+                json_schema: {
+                    name: 'validation_result',
+                    strict: true,
+                    schema,
+                },
+            };
+
         try {
             const response = await client.chat.completions.create({
                 model,
                 messages: [{ role: 'user', content: prompt }],
                 temperature: config.llm.temperature,
                 max_tokens: config.llm.maxTokens,
-                response_format: {
-                    type: 'json_schema' as const,
-                    json_schema: {
-                        name: 'validation_result',
-                        strict: true,
-                        schema,
-                    },
-                } as any,
+                response_format: responseFormat as any,
             });
 
             const content = response.choices[0]?.message?.content;
