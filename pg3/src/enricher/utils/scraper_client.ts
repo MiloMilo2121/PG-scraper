@@ -65,6 +65,7 @@ function isHardTarget(url: string): boolean {
     'ufficiocamerale.it',
     'registroimprese.it',
     'informazione-aziende.it',
+    'fatturatoitalia.it',
   ];
   return hard.some((h) => host.includes(h));
 }
