@@ -156,10 +156,12 @@ export class HyperGuesser {
         if (!text) return '';
         let norm = text.toLowerCase();
         norm = norm.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        // Only remove mandatory stop words, keep selective ones
+        // Strip dots first so "s.r.l." becomes "srl", then \b works correctly
+        norm = norm.replace(/\./g, ' ');
         for (const stop of this.STOP_WORDS) {
-            const regex = new RegExp(`\\b${stop.replace(/\./g, '\\.')}\\b`, 'gi');
-            norm = norm.replace(regex, '');
+            const plain = stop.replace(/\./g, '');
+            const regex = new RegExp(`(?:^|\\s)${plain}(?:\\s|$)`, 'gi');
+            norm = norm.replace(regex, ' ');
         }
         return norm.replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, ' ').trim();
     }
@@ -168,12 +170,13 @@ export class HyperGuesser {
         if (!text) return '';
         let norm = text.toLowerCase();
         norm = norm.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        // Remove all stop words (mandatory + selective)
+        // Strip dots first so "s.r.l." becomes "srl", then word-boundary matching works
+        norm = norm.replace(/\./g, ' ');
         const allStops = [...this.STOP_WORDS, ...this.SELECTIVE_STOP_WORDS];
         for (const stop of allStops) {
-            const escaped = stop.replace(/\./g, '\\.');
-            const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
-            norm = norm.replace(regex, '');
+            const plain = stop.replace(/\./g, '');
+            const regex = new RegExp(`(?:^|\\s)${plain}(?:\\s|$)`, 'gi');
+            norm = norm.replace(regex, ' ');
         }
         return norm
             .replace(/[^a-z0-9\s-]/g, '')

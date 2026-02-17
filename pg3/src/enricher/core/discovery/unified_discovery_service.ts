@@ -581,9 +581,9 @@ export class UnifiedDiscoveryService {
             const live = await DomainValidator.bulkCheckDNS(topGuesses, 500, 3000);
             Logger.info(`[HyperGuesser] DNS-valid candidates: ${live.length}/${topGuesses.length}`);
 
-            // Parking filter: HEAD request to detect parked domains (async, parallel)
+            // Parking filter: GET request to detect parked domains (all DNS-valid, parallel)
             const parkingChecks = await Promise.all(
-                live.slice(0, 20).map(async (url) => {
+                live.map(async (url) => {
                     const notParked = await DomainValidator.isNotParked(url, 6000);
                     return notParked ? url : null;
                 })
@@ -701,55 +701,53 @@ export class UnifiedDiscoveryService {
     private async executeWave2Net(company: CompanyInput, threshold: number, maxCandidates: number): Promise<DiscoveryResult | null> {
         const allCandidates: Candidate[] = [];
 
-        // Bing search
+        // Wave 2 uses DIFFERENT queries than Wave 1 to avoid wasting rate limiter slots.
+        // Wave 1 uses "sito ufficiale", Wave 2 uses "chi siamo" + "contatti" (contact vector).
+        // This ensures new URLs are discovered rather than re-fetching the same results.
+
+        // Bing: contact vector query (different from Wave 1)
         try {
             await this.rateLimiter.waitForSlot('bing');
-            const query = `${company.company_name} ${company.city || ''} sito ufficiale contatti`;
-            const bingResults = await this.scrapeBingDIY(query);
+            const contactQuery = `"${company.company_name}" ${company.city || ''} "chi siamo" "contatti"`;
+            const bingResults = await this.scrapeBingDIY(contactQuery);
             bingResults.slice(0, 8).forEach(r => {
-                allCandidates.push({ url: r.link, source: 'bing', confidence: 0.65 });
+                allCandidates.push({ url: r.link, source: 'bing_contact', confidence: 0.68 });
             });
             this.rateLimiter.reportSuccess('bing');
         } catch (e) {
             this.rateLimiter.reportFailure('bing');
-            Logger.warn('[Wave2] Bing search failed', { error: e as Error, company_name: company.company_name });
+            Logger.warn('[Wave2] Bing contact search failed', { error: e as Error, company_name: company.company_name });
         }
 
-        // DuckDuckGo search
+        // DuckDuckGo: privacy/legal footer query (different from Wave 1)
         try {
             await this.rateLimiter.waitForSlot('duckduckgo');
-            const query = `${company.company_name} ${company.city || ''} sito ufficiale contatti`;
-            const ddgResults = await this.scrapeDDGDIY(query);
+            const legalQuery = `"${company.company_name}" ${company.city || ''} "privacy policy" OR "note legali"`;
+            const ddgResults = await this.scrapeDDGDIY(legalQuery);
             ddgResults.slice(0, 8).forEach(r => {
-                allCandidates.push({ url: r.link, source: 'duckduckgo', confidence: 0.65 });
+                allCandidates.push({ url: r.link, source: 'duckduckgo_legal', confidence: 0.65 });
             });
             this.rateLimiter.reportSuccess('duckduckgo');
         } catch (e) {
             this.rateLimiter.reportFailure('duckduckgo');
-            Logger.warn('[Wave2] DuckDuckGo search failed', { error: e as Error, company_name: company.company_name });
+            Logger.warn('[Wave2] DuckDuckGo legal search failed', { error: e as Error, company_name: company.company_name });
         }
 
-        // Additional targeted query for ambiguous brands
+        // Bing: site:.it forced TLD query
         try {
             await this.rateLimiter.waitForSlot('bing');
-            const contactQuery = `"${company.company_name}" ${company.city || ''} "chi siamo" "contatti"`;
-            const targeted = await this.scrapeBingDIY(contactQuery);
+            const siteQuery = `site:.it "${company.company_name}" ${company.city || ''}`;
+            const targeted = await this.scrapeBingDIY(siteQuery);
             targeted.slice(0, 6).forEach((r) => {
-                allCandidates.push({ url: r.link, source: 'bing_targeted', confidence: 0.68 });
+                allCandidates.push({ url: r.link, source: 'bing_site_it', confidence: 0.67 });
             });
             this.rateLimiter.reportSuccess('bing');
         } catch (e) {
             this.rateLimiter.reportFailure('bing');
-            Logger.warn('[Wave2] Bing targeted search failed', { error: e as Error, company_name: company.company_name });
+            Logger.warn('[Wave2] Bing site:.it search failed', { error: e as Error, company_name: company.company_name });
         }
 
-        Logger.info(`[Wave2] 🕸️ Collected ${allCandidates.length} candidates from Net`);
-
-        // DEDUPLICATION: Filter out candidates already found in Wave 1
-        // (This is handled naturally by validateAndSelectBest -> seen set, but we can optimize network calls here if needed)
-        // For now, we just proceed as existing logic is robust enough.
-
-        Logger.info(`[Wave2] 🕸️ Collected ${allCandidates.length} candidates from Net`);
+        Logger.info(`[Wave2] Collected ${allCandidates.length} candidates from Net (differentiated queries)`);
 
         return await this.validateAndSelectBest(allCandidates, company, 'WAVE2_NET', threshold, maxCandidates);
     }
@@ -990,8 +988,8 @@ export class UnifiedDiscoveryService {
     }
 
     private computeCandidatePriority(candidate: Candidate, company: CompanyInput): number {
-        const domainCoverage = CompanyMatcher.evaluate(company, candidate.url, '', '').signals.domainCoverage;
-        return candidate.confidence + domainCoverage * 0.25;
+        const domainCov = CompanyMatcher.domainCoverage(company.company_name, candidate.url);
+        return candidate.confidence + domainCov * 0.25;
     }
 
     // =========================================================================
@@ -1250,8 +1248,9 @@ export class UnifiedDiscoveryService {
                 };
             }
 
-            // LLM boost if confidence is borderline
-            if (evaluation.confidence < THRESHOLDS.WAVE3_JUDGE && process.env.OPENAI_API_KEY) {
+            // LLM boost if confidence is borderline (check all LLM provider keys, not just OpenAI)
+            const hasAnyLLMKey = process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.KIMI_API_KEY || process.env.Z_AI_API_KEY;
+            if (evaluation.confidence < THRESHOLDS.WAVE3_JUDGE && hasAnyLLMKey) {
                 try {
                     const llm = await LLMValidator.validateCompany(company, text);
                     if (llm.isValid && llm.confidence > evaluation.confidence) {

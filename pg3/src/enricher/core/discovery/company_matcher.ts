@@ -221,8 +221,8 @@ export class CompanyMatcher {
 
     let matched = 0;
     for (const token of tokens) {
-      // Primary: word-boundary match (highest precision)
-      if (normalizedText.includes(` ${token} `) || normalizedText.startsWith(`${token} `) || normalizedText.endsWith(` ${token}`)) {
+      // Primary: word-boundary match (highest precision). Also handle exact match (text === token)
+      if (normalizedText === token || normalizedText.includes(` ${token} `) || normalizedText.startsWith(`${token} `) || normalizedText.endsWith(` ${token}`)) {
         matched++;
         // Secondary: substring match for tokens >= 4 chars (catches compound words like "rossiimpianti")
       } else if (token.length >= 4 && normalizedText.includes(token)) {
@@ -260,7 +260,7 @@ export class CompanyMatcher {
     return matched / Math.min(tokens.length, 6);
   }
 
-  private static domainCoverage(companyName: string, url: string): number {
+  public static domainCoverage(companyName: string, url: string): number {
     let hostname = '';
     try {
       const normalizedUrl = url.startsWith('http') ? url : `https://${url}`;
