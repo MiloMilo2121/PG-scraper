@@ -12,20 +12,39 @@ import { CompanyInput } from '../../types';
 
 // Sites that pollute SERP results for Italian SME searches
 const EXCLUSION_SITES = [
+    // Social media
     'facebook.com',
     'instagram.com',
-    'paginegialle.it',
     'linkedin.com',
     'twitter.com',
+    'youtube.com',
+    'tiktok.com',
+    // Italian directories & aggregators
+    'paginegialle.it',
     'paginebianche.it',
+    'virgilio.it',
     'yelp.it',
+    'yelp.com',
+    'tripadvisor.it',
     'kompass.com',
     'europages.com',
-    'tripadvisor.it',
-    'subito.it',
+    'prontopro.it',
+    'misterimprese.it',
+    'registroimprese.it',
+    'reteimprese.it',
+    'informazione-aziende.it',
+    'guidatitolari.it',
+    // Job boards
     'infojobs.it',
     'indeed.com',
-    'virgilio.it',
+    'subito.it',
+    'glassdoor.it',
+    // Maps & marketplaces
+    'amazon.it',
+    'ebay.it',
+    'groupon.it',
+    'wikipedia.org',
+    'trustpilot.com',
 ];
 
 export interface GoldenQuery {
@@ -131,8 +150,8 @@ export class QueryBuilder {
     static buildSerperQuery(company: CompanyInput): string {
         const name = company.company_name;
         const city = company.city || '';
-        // Top 5 exclusions for Serper (keep query short to avoid truncation)
-        const exclusions = '-site:facebook.com -site:paginegialle.it -site:linkedin.com -site:instagram.com -site:yelp.it';
+        // Top 7 exclusions for Serper (keep query short to avoid truncation)
+        const exclusions = '-site:facebook.com -site:paginegialle.it -site:linkedin.com -site:instagram.com -site:prontopro.it -site:yelp.it -site:europages.com';
         return `"${name}" "${city}" ${exclusions}`;
     }
 

@@ -1,5 +1,5 @@
 /**
- * 🔮 HYPER GUESSER V3 🔮
+ * HYPER GUESSER V3
  * Strategy-based domain generation engine.
  * Orchestrates multiple generation strategies for maximum coverage.
  */
@@ -63,20 +63,25 @@ export class HyperGuesser {
             }
         }
 
-        // 4. Sort and Limit
+        // Smart ranking: .it first (most likely for Italian SMEs), then by length, then penalize dashes.
         const ranked = Array.from(domains)
             .filter((domain) => domain.length <= 70)
             .sort((a, b) => {
                 const aHost = a.replace(/^https?:\/\//, '').replace(/^www\./, '');
                 const bHost = b.replace(/^https?:\/\//, '').replace(/^www\./, '');
-                // Penalize dashes slightly in sorting to prefer cleaner domains
+                // Prefer .it TLD (most common for Italian companies)
+                const aIsIt = aHost.endsWith('.it') ? 0 : 1;
+                const bIsIt = bHost.endsWith('.it') ? 0 : 1;
+                if (aIsIt !== bIsIt) return aIsIt - bIsIt;
+                // Then by length (shorter = more likely)
+                if (aHost.length !== bHost.length) return aHost.length - bHost.length;
+                // Penalize dashes slightly to prefer cleaner domains
                 const aDashes = (aHost.match(/-/g) || []).length;
                 const bDashes = (bHost.match(/-/g) || []).length;
-                if (aHost.length !== bHost.length) return aHost.length - bHost.length;
                 return aDashes - bDashes;
             });
 
-        return ranked.slice(0, 150); // Increased limit as per v3 specs
+        return ranked.slice(0, 150);
     }
 
     private static buildContext(name: string, city: string, province: string, category: string): GenerationContext {
@@ -101,7 +106,7 @@ export class HyperGuesser {
     }
 
     private static generateBaseVariations(ctx: GenerationContext, domains: Set<string>) {
-        const suffixes = ['.it', '.com'];
+        const suffixes = ['.it', '.com', '.eu'];
         const { cleanName, ultraCleanName } = ctx;
 
         // Exact Match
@@ -113,26 +118,43 @@ export class HyperGuesser {
             this.addVariations(domains, ultraCleanName, suffixes);
         }
 
-        // Selective Stop Words Logic (Recovered)
-        for (const selective of this.SELECTIVE_STOP_WORDS) {
-            if (cleanName.includes(selective)) {
-                this.addVariations(domains, cleanName.replace(/\s/g, ''), suffixes);
-            }
+        // Selective Stop Words Logic: try with selective words kept
+        const nameWithSelective = this.normalizeWithSelectiveStopWords(ctx.companyName);
+        if (nameWithSelective && nameWithSelective !== cleanName.replace(/\s/g, '')) {
+            this.addVariations(domains, nameWithSelective.replace(/\s/g, ''), suffixes);
         }
     }
 
-    /* Helper Methods (Shared with Strategies via Context if needed, or kept internal) */
+    /**
+     * Normalize with selective stop words KEPT (e.g., "Rossi Group" -> "rossigroup")
+     */
+    private static normalizeWithSelectiveStopWords(text: string): string {
+        if (!text) return '';
+        let norm = text.toLowerCase();
+        norm = norm.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        // Strip dots first so "s.r.l." becomes "srl", then matching works
+        norm = norm.replace(/\./g, ' ');
+        for (const stop of this.STOP_WORDS) {
+            const plain = stop.replace(/\./g, '');
+            const regex = new RegExp(`(?:^|\\s)${plain}(?:\\s|$)`, 'gi');
+            norm = norm.replace(regex, ' ');
+        }
+        return norm.replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, ' ').trim();
+    }
+
+    /* Helper Methods */
 
     public static normalize(text: string): string {
         if (!text) return '';
         let norm = text.toLowerCase();
         norm = norm.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-
-        const sortedStop = [...this.STOP_WORDS].sort((a, b) => b.length - a.length);
-        for (const stop of sortedStop) {
-            const escaped = stop.replace(/\./g, '\\.');
-            const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
-            norm = norm.replace(regex, '');
+        // Strip dots first so "s.r.l." becomes "srl", then word-boundary matching works
+        norm = norm.replace(/\./g, ' ');
+        const allStops = [...this.STOP_WORDS, ...this.SELECTIVE_STOP_WORDS];
+        for (const stop of allStops) {
+            const plain = stop.replace(/\./g, '');
+            const regex = new RegExp(`(?:^|\\s)${plain}(?:\\s|$)`, 'gi');
+            norm = norm.replace(regex, ' ');
         }
 
         norm = norm.replace(/\./g, '');

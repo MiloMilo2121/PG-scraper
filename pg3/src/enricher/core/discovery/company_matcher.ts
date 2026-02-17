@@ -140,14 +140,15 @@ export class CompanyMatcher {
 
     if (cityMatch) confidence += 0.08;
 
-    if (addressCoverage >= 0.7) confidence += 0.14;
+    if (addressCoverage >= 0.8) confidence += 0.18;
+    else if (addressCoverage >= 0.65) confidence += 0.14;
     else if (addressCoverage >= 0.45) confidence += 0.08;
 
     if (domainCoverage >= 0.8) confidence += 0.20;
     else if (domainCoverage >= 0.5) confidence += 0.10;
     else if (domainCoverage >= 0.3) confidence += 0.05;
 
-    if (hasContactKeywords) confidence += 0.04;
+    if (hasContactKeywords) confidence += 0.08;
 
     if (ogImageMatch) confidence += 0.05;
 
@@ -167,6 +168,17 @@ export class CompanyMatcher {
 
     // SYNERGY BONUS: domain + name convergence is a very strong signal for Italian SMBs
     if (domainCoverage >= 0.8 && nameCoverage >= 0.4) confidence += 0.06;
+
+    // MULTI-SIGNAL SYNERGY: strong convergence of independent signals
+    const convergenceCount = [
+      addressCoverage >= 0.6 ? 1 : 0,
+      domainCoverage >= 0.7 ? 1 : 0,
+      titleNameMatch ? 1 : 0,
+      cityMatch ? 1 : 0,
+    ].reduce((a, b) => a + b, 0);
+    if (convergenceCount >= 3) {
+      confidence += 0.10;
+    }
 
     if (phoneMatch && nameCoverage < 0.25 && domainCoverage < 0.25) {
       confidence = Math.min(confidence, 0.68);
@@ -228,8 +240,8 @@ export class CompanyMatcher {
 
     let matched = 0;
     for (const token of tokens) {
-      // Primary: word-boundary match (highest precision)
-      if (normalizedText.includes(` ${token} `) || normalizedText.startsWith(`${token} `) || normalizedText.endsWith(` ${token}`)) {
+      // Primary: word-boundary match (highest precision). Also handle exact match (text === token)
+      if (normalizedText === token || normalizedText.includes(` ${token} `) || normalizedText.startsWith(`${token} `) || normalizedText.endsWith(` ${token}`)) {
         matched++;
         // Secondary: substring match for tokens >= 4 chars (catches compound words like "rossiimpianti")
       } else if (token.length >= 4 && normalizedText.includes(token)) {
@@ -267,7 +279,7 @@ export class CompanyMatcher {
     return matched / Math.min(tokens.length, 6);
   }
 
-  private static domainCoverage(companyName: string, url: string): number {
+  public static domainCoverage(companyName: string, url: string): number {
     let hostname = '';
     try {
       const normalizedUrl = url.startsWith('http') ? url : `https://${url}`;
@@ -295,13 +307,13 @@ export class CompanyMatcher {
 
   private static hasContactKeywords(text: string, title: string): boolean {
     const bucket = `${title} ${text}`;
-    return (
-      bucket.includes('contatti') ||
-      bucket.includes('chi siamo') ||
-      bucket.includes('dove siamo') ||
-      bucket.includes('about us') ||
-      bucket.includes('privacy')
-    );
+    const signals = [
+      'contatti', 'contattaci', 'contattami',
+      'chi siamo', 'dove siamo', 'about us',
+      'privacy', 'cookie policy', 'note legali',
+      'impressum', 'mappa del sito', 'sitemap',
+    ];
+    return signals.some(s => bucket.includes(s));
   }
 
   private static extractVatNumbers(text: string): string[] {

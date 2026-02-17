@@ -15,6 +15,8 @@
  */
 
 import pLimit from 'p-limit';
+import * as cheerio from 'cheerio';
+import { Page, HTTPRequest } from 'puppeteer';
 import { BrowserFactory } from '../browser/factory_v2';
 import { CompanyInput } from '../../types';
 import { Logger } from '../../utils/logger';
@@ -35,6 +37,7 @@ import { ScraperClient } from '../../utils/scraper_client';
 import { LLMOracle } from './llm_oracle';
 import { QueryBuilder, GoldenQuery } from './query_builder';
 import { AgentRunner } from '../agent/agent_runner';
+import { HoneyPotDetector } from '../security/honeypot_detector';
 
 // ============================================================================
 // INTERFACES & CONFIG
@@ -115,6 +118,7 @@ export class UnifiedDiscoveryService {
     private validatorLimit = pLimit(20);
     private verificationCache = new Map<string, any>();
     private readonly verificationCacheTtlMs = 15 * 60 * 1000;
+    private readonly verificationCacheMaxSize = 2000;
 
     constructor(
         browserFactory?: BrowserFactory,
@@ -325,20 +329,24 @@ export class UnifiedDiscoveryService {
         // 4. Jina Semantic Search (RESTORED)
         const jinaPromise = this.searchJina(company);
 
-        // 5. Bing & DDG Fallbacks (RESTORED) - Running always for robustness in V3?
-        // Let's run them to ensure we don't miss anything, relying on deduplication.
+        // 5. Bing & DDG Fallbacks
         const bingPromise = this.searchBing(company);
         const ddgPromise = this.searchDDG(company);
 
-        const [guesses, searchResults, pgResults, jinaResults, bingResults, ddgResults] = await Promise.all([
+        // 6. VAT/P.IVA Search (High Precision)
+        const vatPromise = this.googleSearchByVat(company);
+
+        const [guesses, searchResults, pgResults, jinaResults, bingResults, ddgResults, vatResults] = await Promise.all([
             guesserPromise,
             searchPromise,
             pgPromise,
             jinaPromise,
             bingPromise,
-            ddgPromise
+            ddgPromise,
+            vatPromise
         ]);
 
+        if (vatResults) candidates.push(...vatResults); // VAT first (highest confidence)
         if (guesses) candidates.push(...guesses);
         if (searchResults) candidates.push(...searchResults);
         if (pgResults) candidates.push(...pgResults);
@@ -365,12 +373,15 @@ export class UnifiedDiscoveryService {
             // BULK DNS CHECK
             const liveDomains = await DomainValidator.bulkCheckDNS(topDomains, 200);
 
-            // PARKING PAGE FILTER (Check top 15 survivors)
-            const validDomains: string[] = [];
-            for (const domain of liveDomains.slice(0, 15)) {
-                const notParked = await DomainValidator.isNotParked(domain);
-                if (notParked) validDomains.push(domain);
-            }
+            // Parking filter: parallel check of all DNS-valid domains (with timeout)
+            const parkingChecks = await Promise.all(
+                liveDomains.map(async (url) => {
+                    const notParked = await DomainValidator.isNotParked(url, 6000);
+                    return notParked ? url : null;
+                })
+            );
+            const validDomains = parkingChecks.filter((url): url is string => !!url);
+            Logger.info(`[HyperGuesser] After parking filter: ${validDomains.length}/${liveDomains.length}`);
 
             return validDomains.map(url => ({
                 url,
@@ -442,23 +453,15 @@ export class UnifiedDiscoveryService {
         }
     }
 
-    // RESTORED: Bing Search (Fallback)
+    // Bing Search via ScraperClient (Fallback)
     private async searchBing(company: CompanyInput): Promise<Candidate[] | null> {
         try {
             await this.rateLimiter.waitForSlot('bing');
-            // Using ScraperClient to fetch Bing HTML directly (using Scrape.do usually)
-            // Or simple fetch if we had a proper provider. 
-            // In V2 we had scrapeBingDIY, here we lack it.
-            // Let's rely on ScraperClient basic fetch for now, OR better, skip if no reliable provider.
-            // WAIT - In V2 verifyUrl code I see: `this.scrapeBingDIY(query)`.
-            // I will implement a simplified `scrapeBingDIY` using ScraperClient here.
 
             const query = encodeURIComponent(`${company.company_name} ${company.city || ''} sito ufficiale`);
             const url = `https://www.bing.com/search?q=${query}`;
-            const html = await ScraperClient.fetchText(url, { mode: 'scrape_do' }); // Low block rate
+            const html = await ScraperClient.fetchText(url, { mode: 'scrape_do' });
 
-            // Simple regex to extract links from Bing
-            // <li class="b_algo"><h2><a href="...">
             const links: string[] = [];
             const regex = /<li class="b_algo"><h2><a href="([^"]+)"/g;
             let match;
@@ -467,13 +470,36 @@ export class UnifiedDiscoveryService {
                 links.push(match[1]);
             }
 
+            this.rateLimiter.reportSuccess('bing');
             return links.slice(0, 5).map(link => ({
                 url: link,
                 source: 'bing_diy',
                 confidence: 0.65
             }));
         } catch (e) {
-            // Bing often fails/blocks, low log
+            this.rateLimiter.reportFailure('bing');
+            return null;
+        }
+    }
+
+    // VAT/P.IVA Search via Serper (High precision)
+    private async googleSearchByVat(company: CompanyInput): Promise<Candidate[] | null> {
+        const vat = (company as any).vat_code || (company as any).vat || (company as any).piva;
+        if (!vat || vat.length < 5) return null;
+
+        try {
+            await this.rateLimiter.waitForSlot('google');
+            const provider = new SerperSearchProvider();
+            const results = await provider.search(`"${vat}" sito ufficiale`);
+            this.rateLimiter.reportSuccess('google');
+            return results.slice(0, 5).map(r => ({
+                url: r.url,
+                source: 'google_vat',
+                confidence: 0.92
+            }));
+        } catch (e) {
+            this.rateLimiter.reportFailure('google');
+            Logger.warn('[VATSearch] Google VAT search failed', { error: e as Error, company_name: company.company_name });
             return null;
         }
     }
@@ -570,79 +596,7 @@ export class UnifiedDiscoveryService {
         return null;
     }
 
-    // DEEP VERIFY IMPLEMENTATION
-    private async deepVerify(url: string, company: CompanyInput): Promise<any | null> {
-        if (!url || ContentFilter.isDirectoryOrSocial(url)) return null;
-
-        const normalizedUrl = this.normalizeUrl(url);
-        if (!normalizedUrl) return null;
-
-        const cacheKey = this.buildVerificationCacheKey(normalizedUrl, company);
-        const cached = this.getCachedVerification(cacheKey);
-        if (cached) return cached;
-
-        let page = null;
-        try {
-            // Jina Verify First
-            if (ScraperClient.isJinaEnabled()) {
-                const jinaResult = await this.jinaVerify(normalizedUrl, company);
-                if (jinaResult) {
-                    this.setCachedVerification(cacheKey, jinaResult);
-                    return jinaResult;
-                }
-            }
-
-            page = await this.browserFactory.newPage();
-            // Block unnecessary resources
-            await page.setRequestInterception(true);
-            page.on('request', (req) => {
-                if (['image', 'font', 'stylesheet', 'media'].includes(req.resourceType())) {
-                    req.abort();
-                } else {
-                    req.continue();
-                }
-            });
-
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
-
-            const content = await page.content();
-            const title = await page.title();
-            const text = await page.evaluate(() => document.body.innerText);
-
-            // Basic content filter
-            const filter = ContentFilter.isValidContent(text);
-            if (!filter.valid) {
-                const res = { confidence: 0, reason: filter.reason };
-                this.setCachedVerification(cacheKey, res);
-                return res;
-            }
-
-            let match = CompanyMatcher.evaluate(company, url, text, title);
-
-            // Agentic fallback for low confidence but relevant content
-            if (match.confidence < 0.4 && match.confidence > 0.1 && (process.env.OPENAI_API_KEY)) {
-                try {
-                    const goal = `Find the VAT number (P.IVA) for "${company.company_name}" in "${company.city || 'Italy'}". Return ONLY the VAT code.`;
-                    // Simplified agent run
-                    const agentResult = await AgentRunner.run(page, goal);
-                    if (agentResult && (agentResult.includes('IT') || agentResult.match(/\d{11}/))) {
-                        match.scrapedVat = agentResult;
-                        match.confidence = 0.95;
-                        match.reason += "; Agent verified P.IVA";
-                    }
-                } catch (e) { }
-            }
-
-            this.setCachedVerification(cacheKey, match);
-            return match;
-
-        } catch (e: any) {
-            Logger.warn(`[DeepVerify] Verification failed for ${url}:`, { error: e });
-            return null;
-        } finally {
-            if (page) await this.browserFactory.closePage(page);
-        }
-    }
+    // deepVerify is defined below after helper methods
 
     // =========================================================================
     // 🛠️ UTILS
@@ -715,6 +669,538 @@ export class UnifiedDiscoveryService {
         }
     }
 
+    private buildNavigationTargets(normalizedRootUrl: string): string[] {
+        try {
+            const parsed = new URL(normalizedRootUrl);
+            const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
+            const preferHttp = parsed.protocol === 'http:';
+
+            const protocols = preferHttp ? ['http', 'https'] : ['https', 'http'];
+            const hosts = [host, `www.${host}`];
+            const targets: string[] = [];
+
+            for (const protocol of protocols) {
+                for (const h of hosts) {
+                    targets.push(`${protocol}://${h}`);
+                }
+            }
+
+            // De-dupe while preserving order.
+            return [...new Set(targets)];
+        } catch {
+            return [normalizedRootUrl];
+        }
+    }
+
+    private computeCandidatePriority(candidate: Candidate, company: CompanyInput): number {
+        const domainCov = CompanyMatcher.domainCoverage(company.company_name, candidate.url);
+        return candidate.confidence + domainCov * 0.25;
+    }
+
+    // =========================================================================
+    // DEEP VERIFICATION
+    // =========================================================================
+
+    private async deepVerify(url: string, company: CompanyInput): Promise<any | null> {
+        if (!url || ContentFilter.isDirectoryOrSocial(url)) return null;
+
+        const normalizedUrl = this.normalizeUrl(url);
+        if (!normalizedUrl) return null;
+
+        const cacheKey = this.buildVerificationCacheKey(normalizedUrl, company);
+        const cached = this.getCachedVerification(cacheKey);
+        if (cached) return cached;
+
+        const dnsProbe = await HoneyPotDetector.getInstance().checkDNS(normalizedUrl);
+        if (!dnsProbe.safe) {
+            const result = { confidence: 0, reason: dnsProbe.reason || 'DNS check failed' };
+            this.setCachedVerification(cacheKey, result);
+            return result;
+        }
+
+        let page;
+        try {
+            // 🧠 JINA-FIRST: If Jina is enabled, try browser-free verification first
+            if (ScraperClient.isJinaEnabled()) {
+                const jinaResult = await this.jinaVerify(normalizedUrl, company);
+                if (jinaResult) {
+                    this.setCachedVerification(cacheKey, jinaResult);
+                    return jinaResult;
+                }
+                // Jina failed — fall through to browser if available
+            }
+
+            page = await this.browserFactory.newPage();
+
+            // Block unnecessary resources
+            await this.setupFastInterception(page);
+            const navTargets = this.buildNavigationTargets(normalizedUrl);
+            let navigated = false;
+            let lastNavError: unknown = null;
+
+            for (const target of navTargets) {
+                try {
+                    await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 18000 });
+                    navigated = true;
+                    break;
+                } catch (e) {
+                    lastNavError = e;
+                }
+            }
+
+            if (!navigated) {
+                // Browser navigation can fail on some sites due to chromium quirks; fallback to HTTP-only verification.
+                const httpFallback = await this.httpVerify(normalizedUrl, company);
+                if (httpFallback) {
+                    this.setCachedVerification(cacheKey, httpFallback);
+                    return httpFallback;
+                }
+
+                Logger.warn('[DeepVerify] Navigation failed', {
+                    error: lastNavError as Error,
+                    url: normalizedUrl,
+                    company_name: company.company_name,
+                });
+                return null;
+            }
+
+            const currentUrl = this.normalizeUrl(page.url()) || normalizedUrl;
+            if (ContentFilter.isDirectoryOrSocial(currentUrl)) {
+                const result = { confidence: 0, reason: 'Redirected to directory/social' };
+                this.setCachedVerification(cacheKey, result);
+                return result;
+            }
+
+            const extraction = await this.extractPageEvidence(page);
+            if (ContentFilter.isDirectoryLikeTitle(extraction.title)) {
+                const result = { confidence: 0, reason: 'Directory-like title' };
+                this.setCachedVerification(cacheKey, result);
+                return result;
+            }
+
+            // 🛡️ HONEYPOT CHECK
+            const honeyPot = HoneyPotDetector.getInstance();
+            const safety = honeyPot.analyzeContent(extraction.html);
+            if (!safety.safe) {
+                Logger.warn(`[DeepVerify] 🍯 Trap: ${normalizedUrl} -> ${safety.reason}`);
+                const result = { confidence: 0, reason: safety.reason };
+                this.setCachedVerification(cacheKey, result);
+                return result;
+            }
+
+            // Content validation
+            const filter = ContentFilter.isValidContent(extraction.text);
+            if (!filter.valid) {
+                const result = { confidence: 0, reason: filter.reason };
+                this.setCachedVerification(cacheKey, result);
+                return result;
+            }
+
+            let combinedText = extraction.text;
+            let evaluation = CompanyMatcher.evaluate(company, currentUrl, combinedText, extraction.title);
+
+            const candidateLinks = this.collectEvidenceLinks(extraction.links, currentUrl);
+            if (evaluation.confidence < THRESHOLDS.WAVE1_SWARM && candidateLinks.length > 0) {
+                for (const link of candidateLinks.slice(0, 4)) {
+                    const extraText = await this.fetchSupplementalPageText(page, link);
+                    if (extraText) {
+                        combinedText += `\n${extraText}`;
+                    }
+                }
+                evaluation = CompanyMatcher.evaluate(company, currentUrl, combinedText, extraction.title);
+            }
+
+            const appearsItalian = ContentFilter.isItalianLanguage(combinedText);
+            if (!appearsItalian && evaluation.confidence < 0.9) {
+                evaluation = {
+                    ...evaluation,
+                    confidence: Math.max(0, evaluation.confidence - 0.03),
+                    reason: `${evaluation.reason}, foreign language`,
+                };
+            }
+
+            // TITLE BOOST: If the page <title> contains the company name, boost confidence
+            const titleNameCoverage = CompanyMatcher.nameCoverage(company.company_name, extraction.title.toLowerCase());
+            if (titleNameCoverage >= 0.6 && evaluation.confidence < 0.85) {
+                evaluation = {
+                    ...evaluation,
+                    confidence: Math.min(0.99, evaluation.confidence + 0.10),
+                    reason: `${evaluation.reason}, title match boost`,
+                };
+            }
+
+            if (evaluation.confidence < THRESHOLDS.WAVE3_JUDGE && (process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.KIMI_API_KEY || process.env.Z_AI_API_KEY)) {
+                try {
+                    const llm = await LLMValidator.validateCompany(company, combinedText);
+                    if (llm.isValid && llm.confidence > evaluation.confidence) {
+                        evaluation = {
+                            confidence: llm.confidence,
+                            reason: `${evaluation.reason}; ${llm.reason}`,
+                            signals: evaluation.signals,
+                            scrapedVat: evaluation.scrapedVat,
+                            matchedPhone: evaluation.matchedPhone,
+                        };
+                    }
+                } catch (llmError) {
+                    Logger.warn('[DeepVerify] LLM fallback failed', { error: llmError as Error, company_name: company.company_name });
+                }
+            }
+
+            // 🤖 AGENTIC FALLBACK (Phase 3)
+            // If confidence is LOW (< 0.4) and no VAT/Phone matched, the site might be correct but complex or obfuscated.
+            // Unleash the Agent to find the P.IVA.
+            if (evaluation.confidence < 0.4 && evaluation.confidence > 0 && !evaluation.scrapedVat && !evaluation.matchedPhone) {
+                Logger.info(`[DeepVerify] Low confidence (${evaluation.confidence.toFixed(2)}) for ${currentUrl}. Unleashing Agent...`);
+                try {
+                    const goal = `Find the VAT number (P.IVA) for "${company.company_name}" in "${company.city || 'Italy'}". Return ONLY the VAT code.`;
+                    const agentResult = await AgentRunner.run(page, goal);
+
+                    // Basic validation of agent result (it should look like a VAT number)
+                    if (agentResult && (agentResult.includes('IT') || agentResult.match(/\d{11}/))) {
+                        Logger.info(`[DeepVerify] 🤖 Agent salvaged session! Found: ${agentResult}`);
+                        evaluation.scrapedVat = agentResult;
+                        evaluation.confidence = 0.95; // Boost to high confidence if agent finds VAT
+                        evaluation.reason += "; Agent verified P.IVA";
+                    }
+                } catch (agentError) {
+                    Logger.warn('[DeepVerify] Agent fallback failed', { error: agentError as Error });
+                }
+            }
+
+            const result = {
+                confidence: evaluation.confidence,
+                reason: evaluation.reason,
+                level: evaluation.confidence >= 0.85 ? 'RULE_STRONG' : 'RULE_HEURISTIC',
+                scraped_piva: evaluation.scrapedVat,
+                matched_phone: evaluation.matchedPhone,
+                signals: evaluation.signals,
+                final_url: currentUrl,
+            };
+            this.setCachedVerification(cacheKey, result);
+            return result;
+
+        } catch (e) {
+            // Last-resort: HTTP fallback (no browser). Helps with flaky chromium sessions.
+            try {
+                const httpFallback = await this.httpVerify(normalizedUrl, company);
+                if (httpFallback) {
+                    this.setCachedVerification(cacheKey, httpFallback);
+                    return httpFallback;
+                }
+            } catch {
+                // ignore
+            }
+
+            Logger.warn('[DeepVerify] Verification failed', { error: e as Error, url: normalizedUrl, company_name: company.company_name });
+            return null;
+        } finally {
+            if (page) {
+                page.removeAllListeners('request');
+                await this.browserFactory.closePage(page);
+            }
+        }
+    }
+
+    // =========================================================================
+    // 🧠 JINA READER VERIFICATION (No browser needed)
+    // =========================================================================
+    private async jinaVerify(normalizedUrl: string, company: CompanyInput): Promise<any | null> {
+        try {
+            const response = await ScraperClient.fetchJinaReader(normalizedUrl, { timeoutMs: 15000, maxRetries: 1 });
+
+            if (response.status !== 200 || !response.data || response.data.length < 100) {
+                Logger.warn('[JinaVerify] Insufficient content', { url: normalizedUrl, status: response.status, length: response.data?.length || 0 });
+                return null;
+            }
+
+            const text = response.data;
+
+            // Check for directory/social redirects in the markdown content
+            if (ContentFilter.isDirectoryOrSocial(normalizedUrl)) {
+                return { confidence: 0, reason: 'Directory/social URL', final_url: normalizedUrl };
+            }
+
+            const filter = ContentFilter.isValidContent(text);
+            if (!filter.valid) {
+                return { confidence: 0, reason: filter.reason, final_url: normalizedUrl };
+            }
+
+            // Extract a pseudo-title from the first line of markdown
+            const firstLine = text.split('\n').find(l => l.trim().length > 0) || '';
+            const title = firstLine.replace(/^#+\s*/, '').trim();
+
+            if (ContentFilter.isDirectoryLikeTitle(title)) {
+                return { confidence: 0, reason: 'Directory-like title', final_url: normalizedUrl };
+            }
+
+            let evaluation = CompanyMatcher.evaluate(company, normalizedUrl, text, title);
+
+            const appearsItalian = ContentFilter.isItalianLanguage(text);
+            if (!appearsItalian && evaluation.confidence < 0.9) {
+                evaluation = {
+                    ...evaluation,
+                    confidence: Math.max(0, evaluation.confidence - 0.03),
+                    reason: `${evaluation.reason}, foreign language`,
+                };
+            }
+
+            // LLM boost if confidence is borderline (check all LLM provider keys, not just OpenAI)
+            const hasAnyLLMKey = process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.KIMI_API_KEY || process.env.Z_AI_API_KEY;
+            if (evaluation.confidence < THRESHOLDS.WAVE3_JUDGE && hasAnyLLMKey) {
+                try {
+                    const llm = await LLMValidator.validateCompany(company, text);
+                    if (llm.isValid && llm.confidence > evaluation.confidence) {
+                        evaluation = {
+                            confidence: llm.confidence,
+                            reason: `${evaluation.reason}; ${llm.reason}`,
+                            signals: evaluation.signals,
+                            scrapedVat: evaluation.scrapedVat,
+                            matchedPhone: evaluation.matchedPhone,
+                        };
+                    }
+                } catch (llmError) {
+                    Logger.warn('[JinaVerify] LLM fallback failed', { error: llmError as Error });
+                }
+            }
+
+            Logger.info(`[JinaVerify] ✅ Verified ${normalizedUrl} -> confidence: ${evaluation.confidence.toFixed(2)}`);
+
+            return {
+                confidence: evaluation.confidence,
+                reason: evaluation.reason,
+                level: evaluation.confidence >= 0.85 ? 'RULE_STRONG' : 'RULE_HEURISTIC',
+                scraped_piva: evaluation.scrapedVat,
+                matched_phone: evaluation.matchedPhone,
+                signals: evaluation.signals,
+                final_url: normalizedUrl,
+            };
+        } catch (e) {
+            Logger.warn('[JinaVerify] Failed, falling back to browser', { error: e as Error, url: normalizedUrl });
+            return null;
+        }
+    }
+
+    private async httpVerify(normalizedUrl: string, company: CompanyInput): Promise<any | null> {
+        if (!normalizedUrl) return null;
+
+        const navTargets = this.buildNavigationTargets(normalizedUrl);
+        for (const target of navTargets) {
+            try {
+                const resp = await ScraperClient.fetchHtml(target, { mode: 'auto', timeoutMs: 12000, maxRetries: 1, render: false });
+                if (resp.via === 'direct' && (resp.status < 200 || resp.status >= 400)) {
+                    continue;
+                }
+
+                const html = typeof resp.data === 'string' ? resp.data : '';
+                if (html.length < 200) {
+                    continue;
+                }
+
+                const responseUrl = resp.finalUrl || target;
+                const currentUrl = this.normalizeUrl(responseUrl) || this.normalizeUrl(target) || normalizedUrl;
+                if (ContentFilter.isDirectoryOrSocial(currentUrl)) {
+                    continue;
+                }
+
+                const $ = cheerio.load(html);
+                const title = ($('title').first().text() || '').trim();
+                if (ContentFilter.isDirectoryLikeTitle(title)) {
+                    return { confidence: 0, reason: 'Directory-like title', final_url: currentUrl };
+                }
+
+                const safety = HoneyPotDetector.getInstance().analyzeContent(html);
+                if (!safety.safe) {
+                    return { confidence: 0, reason: safety.reason, final_url: currentUrl };
+                }
+
+                const text = ($('body').text() || '').replace(/\s+/g, ' ').trim().slice(0, 20000);
+                const filter = ContentFilter.isValidContent(text);
+                if (!filter.valid) {
+                    return { confidence: 0, reason: filter.reason, final_url: currentUrl };
+                }
+
+                let evaluation = CompanyMatcher.evaluate(company, currentUrl, text, title);
+                const appearsItalian = ContentFilter.isItalianLanguage(text);
+                if (!appearsItalian && evaluation.confidence < 0.9) {
+                    evaluation = {
+                        ...evaluation,
+                        confidence: Math.max(0, evaluation.confidence - 0.03),
+                        reason: `${evaluation.reason}, foreign language`,
+                    };
+                }
+
+                return {
+                    confidence: evaluation.confidence,
+                    reason: evaluation.reason,
+                    level: evaluation.confidence >= 0.85 ? 'RULE_STRONG' : 'RULE_HEURISTIC',
+                    scraped_piva: evaluation.scrapedVat,
+                    matched_phone: evaluation.matchedPhone,
+                    signals: evaluation.signals,
+                    final_url: currentUrl,
+                };
+            } catch {
+                continue;
+            }
+        }
+
+        return null;
+    }
+
+    private async deepVerifyWithAI(url: string, company: CompanyInput): Promise<any | null> {
+        if (!process.env.OPENAI_API_KEY && !process.env.DEEPSEEK_API_KEY && !process.env.KIMI_API_KEY && !process.env.Z_AI_API_KEY) return null;
+        const normalizedUrl = this.normalizeUrl(url);
+        if (!normalizedUrl || ContentFilter.isDirectoryOrSocial(normalizedUrl)) return null;
+
+        let page;
+        try {
+            page = await this.browserFactory.newPage();
+            await this.setupFastInterception(page);
+
+            const navTargets = this.buildNavigationTargets(normalizedUrl);
+            for (const target of navTargets) {
+                try {
+                    await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 15000 });
+                    break;
+                } catch {
+                    // try next
+                }
+            }
+
+            const extraction = await this.extractPageEvidence(page);
+            if (!extraction.text || extraction.text.length < 80) {
+                return null;
+            }
+
+            // Use LLM for final validation
+            const llmResult = await LLMValidator.validateCompany(company, extraction.text);
+            if (llmResult.isValid) {
+                return {
+                    confidence: llmResult.confidence,
+                    reason: llmResult.reason,
+                    level: 'AI_Verified'
+                };
+            }
+
+            return null;
+        } catch (e) {
+            Logger.warn('[DeepVerifyWithAI] Verification failed', { error: e as Error, url: normalizedUrl, company_name: company.company_name });
+            return null;
+        } finally {
+            if (page) {
+                page.removeAllListeners('request');
+                await this.browserFactory.closePage(page);
+            }
+        }
+    }
+
+    private async setupFastInterception(page: Page): Promise<void> {
+        await page.setRequestInterception(true);
+        const requestHandler = (req: HTTPRequest) => {
+            if (['image', 'media', 'font', 'stylesheet', 'other'].includes(req.resourceType())) {
+                req.abort();
+            } else {
+                req.continue();
+            }
+        };
+        page.on('request', requestHandler);
+    }
+
+    private async extractPageEvidence(page: Page): Promise<{
+        text: string;
+        html: string;
+        title: string;
+        links: Array<{ href: string; text: string }>;
+    }> {
+        return page.evaluate(() => {
+            const text = document.body?.innerText || '';
+            const html = document.body?.innerHTML || '';
+            const title = document.title || '';
+            const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a'))
+                .slice(0, 220)
+                .map((anchor) => ({
+                    href: anchor.href || '',
+                    text: anchor.textContent?.trim().toLowerCase() || '',
+                }))
+                .filter((link) => !!link.href);
+            return { text, html, title, links };
+        });
+    }
+
+    private collectEvidenceLinks(
+        links: Array<{ href: string; text: string }>,
+        baseUrl: string
+    ): string[] {
+        try {
+            const stripWww = (host: string) => host.replace(/^www\./, '').toLowerCase();
+            const baseHost = stripWww(new URL(baseUrl).hostname);
+
+            const textKeywords = ['contatt', 'chi siamo', 'about', 'dove siamo', 'impressum', 'privacy', 'cookie'];
+            const hrefKeywords = [
+                'contatt',
+                'contact',
+                'chi-siamo',
+                'chisiamo',
+                'about',
+                'azienda',
+                'dove-siamo',
+                'dovesiamo',
+                'impressum',
+                'privacy',
+                'cookie',
+                'note-legali',
+                'legal',
+            ];
+            const selected = new Set<string>();
+
+            for (const link of links) {
+                let urlObj: URL;
+                try {
+                    urlObj = new URL(link.href);
+                } catch {
+                    continue;
+                }
+
+                const host = stripWww(urlObj.hostname);
+                if (host !== baseHost) continue;
+
+                const text = (link.text || '').toLowerCase();
+                const hrefPath = `${urlObj.pathname}${urlObj.search}`.toLowerCase();
+                if (textKeywords.some((keyword) => text.includes(keyword)) || hrefKeywords.some((keyword) => hrefPath.includes(keyword))) {
+                    selected.add(link.href);
+                }
+            }
+
+            return [...selected];
+        } catch {
+            return [];
+        }
+    }
+
+    private async fetchSupplementalPageText(page: Page, url: string): Promise<string | null> {
+        try {
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 12000 });
+            const text = await page.evaluate(() => document.body?.innerText || '');
+            return text.length > 0 ? text.slice(0, 12000) : null;
+        } catch {
+            return null;
+        }
+    }
+
+    private buildPhoneQueries(company: CompanyInput): string[] {
+        const queries: string[] = [];
+        const rawPhone = company.phone || '';
+        const normalized = CompanyMatcher.normalizePhone(rawPhone);
+        if (!normalized || normalized.length < 7) return queries;
+
+        queries.push(`"${rawPhone}" "${company.company_name}"`);
+        queries.push(`"${normalized}" ${company.city || ''} sito`);
+        if (normalized.startsWith('39') && normalized.length > 10) {
+            const noPrefix = normalized.slice(2);
+            queries.push(`"${noPrefix}" ${company.city || ''} "${company.company_name}"`);
+        }
+        return [...new Set(queries)];
+    }
+
     private buildVerificationCacheKey(url: string, company: CompanyInput): string {
         return `${url}|${company.company_name}|${company.vat_code || ''}`;
     }
@@ -727,20 +1213,27 @@ export class UnifiedDiscoveryService {
         return null;
     }
 
-    private setCachedVerification(key: string, data: any) {
+    private setCachedVerification(key: string, data: any): void {
+        // Evict expired entries when approaching the size limit
+        if (this.verificationCache.size >= this.verificationCacheMaxSize) {
+            const now = Date.now();
+            for (const [k, v] of this.verificationCache) {
+                if (now - v.timestamp > this.verificationCacheTtlMs) {
+                    this.verificationCache.delete(k);
+                }
+            }
+            // If still over limit, drop the oldest half (FIFO via Map insertion order)
+            if (this.verificationCache.size >= this.verificationCacheMaxSize) {
+                const toDelete = Math.floor(this.verificationCache.size / 2);
+                let deleted = 0;
+                for (const k of this.verificationCache.keys()) {
+                    if (deleted >= toDelete) break;
+                    this.verificationCache.delete(k);
+                    deleted++;
+                }
+            }
+        }
         this.verificationCache.set(key, { data, timestamp: Date.now() });
     }
 
-    private async jinaVerify(url: string, company: CompanyInput): Promise<any | null> {
-        try {
-            const response = await ScraperClient.fetchJinaReader(url);
-            if (response.status === 200 && response.data) {
-                const text = response.data;
-                return CompanyMatcher.evaluate(company, url, text, '');
-            }
-        } catch (e) {
-            // Ignore jina errors
-        }
-        return null;
-    }
 }

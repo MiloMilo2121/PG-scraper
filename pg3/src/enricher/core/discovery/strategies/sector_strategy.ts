@@ -95,8 +95,12 @@ export class SectorStrategy implements DomainGenerationStrategy {
             return SectorStrategy.SECTOR_SUFFIXES[category];
         }
 
-        // Partial match (category contains a known key)
+        // Partial match — require at least 4 chars to avoid false positives
+        // (e.g. category "e" or "co" would match everything)
+        if (category.length < 4) return [];
+
         for (const [key, suffixes] of Object.entries(SectorStrategy.SECTOR_SUFFIXES)) {
+            if (key.length < 4) continue;
             if (category.includes(key) || key.includes(category)) {
                 return suffixes;
             }

@@ -84,8 +84,8 @@ export class PhoneticStrategy implements DomainGenerationStrategy {
     private applyPhoneticRules(name: string): string[] {
         const results: string[] = [];
 
-        // Double consonants simplification (sometimes domains drop doubles)
-        const simplified = name.replace(/(.)\1/g, '$1');
+        // Double letter simplification — only for alphabetic chars, not digits
+        const simplified = name.replace(/([a-z])\1/g, '$1');
         if (simplified !== name) {
             results.push(simplified);
         }
