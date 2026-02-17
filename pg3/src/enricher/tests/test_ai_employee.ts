@@ -1,8 +1,8 @@
 
 import { IdentityResolver } from '../core/discovery/identity_resolver';
-import { CompanyInput } from '../../types';
-import { Logger } from '../../utils/logger';
-import { ScraperClient } from '../../utils/scraper_client';
+import { CompanyInput } from '../types';
+import { Logger } from '../utils/logger';
+import { ScraperClient } from '../utils/scraper_client';
 
 async function test() {
     console.log('🧪 Testing AI Employee Estimation...');

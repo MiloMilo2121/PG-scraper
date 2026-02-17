@@ -101,7 +101,7 @@ export class RequestInterceptor {
             if (state.geneId && (status === 403 || status === 429 || status === 503)) {
                 try {
                     const domain = new URL(url).hostname.replace(/^www\./, '');
-                    GeneticFingerprinter.getInstance().reportFailure(state.geneId, domain);
+                    GeneticFingerprinter.getInstance().reportFailure(state.geneId);
                 } catch {
                     // Invalid URL, skip
                 }

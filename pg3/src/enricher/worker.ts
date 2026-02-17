@@ -25,6 +25,7 @@ import {
     QUEUE_NAMES,
     moveToDeadLetter,
 } from './queue';
+import { ViesService } from './core/financial/vies';
 import { FinancialService } from './core/financial/service';
 import { UnifiedDiscoveryService } from './core/discovery/unified_discovery_service';
 import { BrowserFactory } from './core/browser/factory_v2';

@@ -10,7 +10,12 @@ export class HyperGuesser {
     private static STOP_WORDS = [
         'srl', 's.r.l.', 'spa', 's.p.a.', 'snc', 's.n.c.', 'sas', 's.a.s.',
         'societa', 'ditta', 'impresa', 'studio', 'officina', 'di', 'e', '&',
-        'ltd', 'gmbh', 'co', 'group', 'gruppo'
+        'ltd', 'gmbh', 'co'
+    ];
+
+    // Selective Stop Words: Removed only in normalization, but kept for variation generation if meaningful
+    private static SELECTIVE_STOP_WORDS = [
+        'group', 'gruppo', 'solutions', 'service', 'servizi', 'systems', 'sistemi'
     ];
 
     private static GENERIC_WORDS = new Set([
@@ -55,15 +60,24 @@ export class HyperGuesser {
             this.addVariations(domains, ultraCleanNameAnd, suffixes); // marioefigli.it
         }
 
-        // 3. Ultra Clean (Aggressive)
+        // 3. Ultra Clean (Aggressive - Removing ALL stop words including selective)
         if (ultraCleanName.length > 3) {
             this.addVariations(domains, ultraCleanName, suffixes);
+        }
+
+        const ultraCleanFully = this.normalizeFully(cleanName).replace(/[^a-z0-9]/g, '');
+        if (ultraCleanFully.length > 3 && ultraCleanFully !== ultraCleanName) {
+            this.addVariations(domains, ultraCleanFully, suffixes);
         }
 
         // 4. City/Province Combinations
         if (cleanCity) {
             this.addVariations(domains, `${ultraCleanName}${cleanCity}`, suffixes);
             this.addVariations(domains, `${ultraCleanName}-${cleanCity}`, suffixes);
+            // Also try with fully normalized name
+            if (ultraCleanFully !== ultraCleanName) {
+                this.addVariations(domains, `${ultraCleanFully}${cleanCity}`, suffixes);
+            }
             this.addVariations(domains, `${ultraCleanName}${cleanProvince}`, suffixes);
             this.addVariations(domains, `${cleanCity}${ultraCleanName}`, suffixes);
         }
@@ -86,7 +100,6 @@ export class HyperGuesser {
             this.addVariations(domains, `${firstWord}-${secondWord}`, ['.it', '.com']);
             if (cleanCity) {
                 this.addVariations(domains, `${firstWord}${secondWord}${cleanCity}`, ['.it', '.com']);
-                this.addVariations(domains, `${firstWord}-${secondWord}-${cleanCity}`, ['.it', '.com']);
             }
         }
 
@@ -98,6 +111,14 @@ export class HyperGuesser {
         if (cleanCategory.length >= 3) {
             this.addVariations(domains, `${ultraCleanName}${cleanCategory}`, ['.it', '.com']);
             // e.g. "startuplab" -> "startup" + "lab"
+        }
+
+        // 9. Selective Stop Words as Suffixes (Recovered Logic)
+        // e.g. "Rossi Group" -> "rossigroup.it" (kept by normalize) vs "rossi.it" (handled by normalizeFully)
+        for (const selective of this.SELECTIVE_STOP_WORDS) {
+            if (cleanName.includes(selective)) {
+                this.addVariations(domains, cleanName.replace(/\s/g, ''), suffixes);
+            }
         }
 
         // 9. Acronym Strategy (NEW)
@@ -141,26 +162,34 @@ export class HyperGuesser {
             .normalize('NFD')
             .replace(/[\u0300-\u036f]/g, '');
 
-        // Remove dots for acronyms like "A.B.C." -> "abc"
-        // But keep spaces intact for word splitting
-        norm = norm.replace(/\./g, '');
-
-        // Remove stop words
-        // Use a more aggressive word boundary check
+        // Remove mandatory stop words (e.g. srl, spa)
         // Sort stop words by length desc to handle "s.r.l." before "srl"
         const sortedStop = [...this.STOP_WORDS].sort((a, b) => b.length - a.length);
         for (const stop of sortedStop) {
-            // Remove stop word if it's a whole word
-            // Escaping dots is important for regex
             const escaped = stop.replace(/\./g, '\\.');
             const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
             norm = norm.replace(regex, '');
         }
 
+        // Remove dots but keep spaces
+        norm = norm.replace(/\./g, '');
+
         return norm
             .replace(/[^a-z0-9\s-]/g, '')
             .replace(/\s+/g, ' ')
             .trim();
+    }
+
+    /**
+     * Aggressive normalization including Selective Stop Words (for pure domain generation)
+     */
+    private static normalizeFully(text: string): string {
+        let norm = this.normalize(text);
+        for (const stop of this.SELECTIVE_STOP_WORDS) {
+            const regex = new RegExp(`\\b${stop}\\b`, 'gi');
+            norm = norm.replace(regex, '');
+        }
+        return norm.replace(/\s+/g, '').trim();
     }
 
     private static addVariations(set: Set<string>, base: string, suffixes: string[]) {

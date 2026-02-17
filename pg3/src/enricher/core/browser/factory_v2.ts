@@ -259,7 +259,7 @@ export class BrowserFactory {
         // 🧬 GENETIC EVOLUTION v3: Full trait-consistent fingerprinting
         const fingerprinter = GeneticFingerprinter.getInstance();
         const gene = fingerprinter.getBestGene();
-        const geneConfig = fingerprinter.geneToConfig(gene);
+        const geneConfig = GeneticFingerprinter.getInstance().geneToConfig(gene);
 
         // Attach gene ID to page for feedback loop
         (page as any).__geneId = gene.id;
