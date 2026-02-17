@@ -3,6 +3,7 @@ import { GoogleSerpAnalyzer, SerpResult } from './serp_analyzer';
 import { DuckDuckGoSerpAnalyzer } from './ddg_analyzer';
 import { TorBrowser } from '../browser/tor_browser';
 import { Retry } from '../../../utils/decorators';
+import { TorError } from '../../../utils/errors';
 
 export interface SearchProvider {
     search(query: string): Promise<SerpResult[]>;
@@ -26,9 +27,16 @@ export class DDGSearchProvider implements SearchProvider {
 
     @Retry({ attempts: 3, delay: 5000, backoff: 'exponential' })
     async search(query: string): Promise<SerpResult[]> {
+        const torBrowser = TorBrowser.getInstance();
+
+        // Fail-fast: check if Tor ControlPort is reachable before wasting time
+        const torReady = await torBrowser.isControlPortAvailable();
+        if (!torReady) {
+            throw new TorError('Tor ControlPort 9051 is not reachable. DDG search unavailable.', false);
+        }
+
         let page;
         try {
-            const torBrowser = TorBrowser.getInstance();
             page = await torBrowser.getPage();
 
             const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
@@ -54,7 +62,7 @@ export class DDGSearchProvider implements SearchProvider {
 
         } catch (e: unknown) {
             Logger.warn(`[DDGProvider] Search Error: ${(e as Error).message}`);
-            throw e; // Re-throw to trigger retry
+            throw e; // Re-throw to trigger retry (or fail-fast if TorError with canRetry=false)
         } finally {
             if (page) await page.close().catch(() => { });
         }

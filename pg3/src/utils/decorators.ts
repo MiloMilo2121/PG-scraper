@@ -1,4 +1,5 @@
 import { Logger } from '../enricher/utils/logger';
+import { TorError } from './errors';
 
 export interface RetryOptions {
     attempts?: number;
@@ -11,7 +12,8 @@ export interface RetryOptions {
 /**
  * 🔁 RETRY DECORATOR
  * Wraps a class method with retry logic.
- * 
+ * Non-retryable errors (TorError with canRetry=false) are thrown immediately.
+ *
  * Usage:
  * @Retry({ attempts: 3, delay: 1000, backoff: 'exponential' })
  * async myMethod() { ... }
@@ -33,6 +35,12 @@ export function Retry(options: RetryOptions = {}) {
                     return await originalMethod.apply(this, args);
                 } catch (error: any) {
                     lastError = error;
+
+                    // Fail-fast: non-retryable TorError (e.g. ControlPort unreachable)
+                    if (error instanceof TorError && !error.canRetry) {
+                        Logger.warn(`[Retry] Method ${propertyKey} failed with non-retryable TorError. Skipping remaining retries.`);
+                        throw error;
+                    }
 
                     // Check if we should retry based on custom condition
                     if (options.retryCondition && !options.retryCondition(error)) {
