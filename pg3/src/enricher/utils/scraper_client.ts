@@ -1,7 +1,13 @@
 import axios, { AxiosResponse } from 'axios';
+import * as http from 'http';
+import * as https from 'https';
 
 import { config } from '../config';
 import { Logger } from './logger';
+
+// Connection pooling - reuse TCP connections for massive speedup
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 25, maxFreeSockets: 10 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 25, maxFreeSockets: 10, rejectUnauthorized: false });
 
 export type ScraperClientMode = 'auto' | 'direct' | 'scrape_do' | 'jina_reader' | 'jina_search';
 
@@ -103,10 +109,11 @@ export class ScraperClient {
       timeout: timeoutMs,
       headers: { ...this.defaultHeaders(), ...(options.headers || {}) },
       maxRedirects: 5,
-      // Always capture status/body: we need to detect anti-bot pages and fallback.
       validateStatus: () => true,
       responseType: 'text',
       decompress: true,
+      httpAgent,
+      httpsAgent,
     });
 
     const body = typeof resp.data === 'string' ? resp.data : String(resp.data);
@@ -145,6 +152,8 @@ export class ScraperClient {
       validateStatus: () => true,
       responseType: 'text',
       decompress: true,
+      httpAgent,
+      httpsAgent,
     });
 
     const body = typeof resp.data === 'string' ? resp.data : String(resp.data);
