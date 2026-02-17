@@ -36,6 +36,10 @@ export class Logger {
         this.log('WARN', msg, context);
     }
 
+    static debug(msg: string, context?: LogContext) {
+        if (this.isDev) this.log('DEBUG', msg, context);
+    }
+
     static error(msg: string, context?: LogContext) {
         this.log('ERROR', msg, context);
     }

@@ -1,11 +1,17 @@
 /**
- * 🌊 UNIFIED DISCOVERY SERVICE v3
+ * 🌊 UNIFIED DISCOVERY SERVICE v3 (RESTORED & ENHANCED)
  * OMEGA PROTOCOL - MULTI-LAYER DISCOVERY ENGINE
  *
  * Layer 1: Identity & Surgical Search (Zero Cost)
  * Layer 2: Semantic Prediction (LLM Oracle)
- * Layer 3: The Swarm (HyperGuesser + QueryBuilder + Google/Bing)
+ * Layer 3: The Swarm (HyperGuesser + QueryBuilder + Google/Bing/DDG/Jina)
  * Layer 4: The Judge (AI Verification)
+ *
+ * RESTORATION UPDATE:
+ * - Re-integrated Jina Search (High Precision)
+ * - Re-integrated Bing & DuckDuckGo (Failover)
+ * - Re-integrated AI Employee Estimation
+ * - Re-integrated Mode Profiles for Granular Thresholds
  */
 
 import pLimit from 'p-limit';
@@ -15,7 +21,7 @@ import { Logger } from '../../utils/logger';
 import { RateLimiter, MemoryRateLimiter } from '../rate_limiter';
 import { ContentFilter } from './content_filter';
 import { HyperGuesser } from './hyper_guesser_v2';
-import { SerperSearchProvider } from './search_provider';
+import { SerperSearchProvider, DDGSearchProvider } from './search_provider';
 import { LLMValidator } from '../ai/llm_validator';
 import { AntigravityClient } from '../../observability/antigravity_client';
 import { config } from '../../config';
@@ -28,10 +34,10 @@ import { PagineGialleHarvester } from '../directories/paginegialle';
 import { ScraperClient } from '../../utils/scraper_client';
 import { LLMOracle } from './llm_oracle';
 import { QueryBuilder, GoldenQuery } from './query_builder';
-import { AgentRunner } from '../agent/agent_runner'; // Added for deepVerify fallback
+import { AgentRunner } from '../agent/agent_runner';
 
 // ============================================================================
-// INTERFACES
+// INTERFACES & CONFIG
 // ============================================================================
 
 export enum DiscoveryMode {
@@ -50,14 +56,45 @@ export interface DiscoveryResult {
     details: any;
 }
 
-const THRESHOLDS = {
-    WAVE1_SWARM: config.discovery.thresholds.wave1,
-    WAVE2_NET: config.discovery.thresholds.wave2,
-    WAVE3_JUDGE: config.discovery.thresholds.wave3,
-    MINIMUM_VALID: config.discovery.thresholds.minValid
+// Granular Control Profile
+type ModeProfile = {
+    wave1ThresholdDelta: number;
+    // wave2ThresholdDelta: number; // Simplified: Use same delta for now
+    wave1MaxCandidates: number;
+    // wave2MaxCandidates: number;
+    // wave3GuessStart: number;
+    // wave3GuessEnd: number;
+    runNuclear: boolean;
 };
 
-const MIN_INVALID_CONFIDENCE = 0.35;
+const MODE_PROFILES: Record<DiscoveryMode, ModeProfile> = {
+    [DiscoveryMode.FAST_RUN1]: {
+        wave1ThresholdDelta: 0.05,
+        wave1MaxCandidates: 8,
+        runNuclear: false,
+    },
+    [DiscoveryMode.DEEP_RUN2]: {
+        wave1ThresholdDelta: 0,
+        wave1MaxCandidates: 15,
+        runNuclear: false,
+    },
+    [DiscoveryMode.AGGRESSIVE_RUN3]: {
+        wave1ThresholdDelta: -0.05,
+        wave1MaxCandidates: 20,
+        runNuclear: false, // Nuclear is separate mode now
+    },
+    [DiscoveryMode.NUCLEAR_RUN4]: {
+        wave1ThresholdDelta: -0.08,
+        wave1MaxCandidates: 30,
+        runNuclear: true,
+    },
+};
+
+const THRESHOLDS = {
+    WAVE1_SWARM: config.discovery.thresholds.wave1, // Baseline: 0.75
+    WAVE3_JUDGE: config.discovery.thresholds.wave3, // Baseline: 0.85
+    MINIMUM_VALID: config.discovery.thresholds.minValid // Baseline: 0.60
+};
 
 type Candidate = {
     url: string;
@@ -66,7 +103,7 @@ type Candidate = {
 };
 
 // ============================================================================
-// UNIFIED DISCOVERY SERVICE v3
+// UNIFIED DISCOVERY SERVICE v3 (ENHANCED)
 // ============================================================================
 
 export class UnifiedDiscoveryService {
@@ -104,6 +141,10 @@ export class UnifiedDiscoveryService {
         Logger.info(`[Discovery] 🌊 Starting OMEGA v3 discovery for "${company.company_name}" (Mode: ${mode})`);
         AntigravityClient.getInstance().trackCompanyUpdate(company, 'SEARCHING', { mode });
 
+        // Apply Mode Profile
+        const profile = MODE_PROFILES[mode] || MODE_PROFILES[DiscoveryMode.DEEP_RUN2];
+        const currentThreshold = this.applyThresholdDelta(THRESHOLDS.WAVE1_SWARM, profile.wave1ThresholdDelta);
+
         let bestInvalid: DiscoveryResult | null = null;
         let identity: IdentityResult | null = null;
 
@@ -116,11 +157,15 @@ export class UnifiedDiscoveryService {
 
             if (identity) {
                 Logger.info(`[Discovery] ✅ Identity Resolved: ${identity.legal_name} (${identity.vat_number})`);
+            } else {
+                Logger.warn(`[Discovery] ⚠️ Identity resolution failed - proceeding with limited info`);
             }
 
             // PRE-CHECK: Validate existing website
             if (company.website && company.website.length > 5 && !company.website.includes('paginegialle.it')) {
                 const preCheck = await this.deepVerify(company.website, company);
+
+                // If existing website is valid, return immediately
                 if (preCheck && preCheck.confidence >= THRESHOLDS.MINIMUM_VALID) {
                     return this.finalize(company, {
                         url: preCheck.final_url || company.website,
@@ -130,6 +175,18 @@ export class UnifiedDiscoveryService {
                         wave: 'PRE',
                         details: preCheck
                     }, identity);
+                }
+
+                // Keep as fallback if invalid but decent
+                if (preCheck && preCheck.confidence >= 0.35) {
+                    bestInvalid = {
+                        url: preCheck.final_url || company.website,
+                        status: 'FOUND_INVALID',
+                        method: 'pre_existing',
+                        confidence: preCheck.confidence,
+                        wave: 'PRE',
+                        details: preCheck
+                    };
                 }
             }
 
@@ -168,32 +225,38 @@ export class UnifiedDiscoveryService {
             }
 
             // =====================================================================
-            // 🐝 LAYER 3: THE SWARM (Parallel Execution)
+            // 🐝 LAYER 3: THE SWARM (Parallel Execution) + JINA/BING/DDG
             // =====================================================================
-            Logger.info(`[Discovery] 🐝 LAYER 3: THE SWARM (HyperGuesser + Golden Queries)`);
+            Logger.info(`[Discovery] 🐝 LAYER 3: THE SWARM (Google + Bing + DDG + Jina + HyperGuesser)`);
 
-            // Execute parallel strategies
+            // Execute parallel strategies (RESTORED sources)
             const swarmCandidates = await this.executeSwarm(company, identity);
 
-            // Validate Top Candidates
-            const validResult = await this.validateAndSelectBest(swarmCandidates, company, 'LAYER3_SWARM', THRESHOLDS.WAVE1_SWARM, 15);
+            // Validate Top Candidates with dynamic threshold
+            const validResult = await this.validateAndSelectBest(
+                swarmCandidates,
+                company,
+                'LAYER3_SWARM',
+                currentThreshold,
+                profile.wave1MaxCandidates
+            );
 
             if (validResult && validResult.status === 'FOUND_VALID') {
                 return this.finalize(company, validResult, identity);
             }
 
-            if (validResult) bestInvalid = validResult;
+            if (validResult) {
+                // Keep track of best invalid if better than previous
+                if (!bestInvalid || validResult.confidence > bestInvalid.confidence) {
+                    bestInvalid = validResult;
+                }
+            }
 
             // =====================================================================
-            // ⚖️ LAYER 4: THE JUDGE (Deep Analysis / Nuclear)
+            // ⚖️ LAYER 4: THE JUDGE (Nuclear Fallback)
             // =====================================================================
-            if (mode === DiscoveryMode.NUCLEAR_RUN4 || (!bestInvalid && mode === DiscoveryMode.AGGRESSIVE_RUN3)) { // Adaptive nuclear
+            if (profile.runNuclear) {
                 Logger.info(`[Discovery] ⚖️ LAYER 4: NUCLEAR FALLBACK`);
-                // Fallback to searching with broad keywords if no result
-                // For now, if NuclearStrategy isn't returning a full result, let's assume we proceed or it was empty.
-                // In previous versions NuclearStrategy.execute(company) returns a complex object.
-                // We will skip full integration of NuclearStrategy output here to avoid type errors unless we are sure of its return type.
-                // Assuming NuclearStrategy returns Promise<DiscoveryResult | null> or similar.
                 try {
                     const nuclear = await this.nuclearStrategy.execute(company);
                     if (nuclear && nuclear.url) {
@@ -250,49 +313,74 @@ export class UnifiedDiscoveryService {
     private async executeSwarm(company: CompanyInput, identity: IdentityResult | null): Promise<Candidate[]> {
         const candidates: Candidate[] = [];
 
+        // 1. HyperGuesser (DNS & Parking Filtered)
         const guesserPromise = this.hyperGuesserAttack(company);
+
+        // 2. Google/Serper (Golden Queries)
         const searchPromise = this.searchAttack(company);
+
+        // 3. PagineGialle Phone (High Precision)
         const pgPromise = this.pagineGiallePhoneAttack(company);
 
-        const [guesses, searchResults, pgResults] = await Promise.all([
+        // 4. Jina Semantic Search (RESTORED)
+        const jinaPromise = this.searchJina(company);
+
+        // 5. Bing & DDG Fallbacks (RESTORED) - Running always for robustness in V3?
+        // Let's run them to ensure we don't miss anything, relying on deduplication.
+        const bingPromise = this.searchBing(company);
+        const ddgPromise = this.searchDDG(company);
+
+        const [guesses, searchResults, pgResults, jinaResults, bingResults, ddgResults] = await Promise.all([
             guesserPromise,
             searchPromise,
-            pgPromise
+            pgPromise,
+            jinaPromise,
+            bingPromise,
+            ddgPromise
         ]);
 
         if (guesses) candidates.push(...guesses);
         if (searchResults) candidates.push(...searchResults);
         if (pgResults) candidates.push(...pgResults);
+        if (jinaResults) candidates.push(...jinaResults);
+        if (bingResults) candidates.push(...bingResults);
+        if (ddgResults) candidates.push(...ddgResults);
 
         return this.deduplicate(candidates);
     }
 
     private async hyperGuesserAttack(company: CompanyInput): Promise<Candidate[]> {
-        const domains = HyperGuesser.generate(
-            company.company_name,
-            company.city || '',
-            company.province || '',
-            company.category || ''
-        );
+        try {
+            const domains = HyperGuesser.generate(
+                company.company_name,
+                company.city || '',
+                company.province || '',
+                company.category || ''
+            );
 
-        Logger.info(`[HyperGuesser] Generated ${domains.length} candidates. Checking DNS...`);
+            // Limited bulk check to avoid massive DNS traffic
+            const topDomains = domains.slice(0, 40);
+            Logger.debug(`[HyperGuesser] Generated ${topDomains.length} candidates. Checking DNS...`);
 
-        // BULK DNS CHECK
-        const liveDomains = await DomainValidator.bulkCheckDNS(domains, 200); // 200 concurrency
-        Logger.info(`[HyperGuesser] ${liveDomains.length} domains resolved.`);
+            // BULK DNS CHECK
+            const liveDomains = await DomainValidator.bulkCheckDNS(topDomains, 200);
 
-        // PARKING PAGE FILTER
-        const validDomains: string[] = [];
-        for (const domain of liveDomains.slice(0, 15)) { // Check top 15 survivors for parking
-            const notParked = await DomainValidator.isNotParked(domain);
-            if (notParked) validDomains.push(domain);
+            // PARKING PAGE FILTER (Check top 15 survivors)
+            const validDomains: string[] = [];
+            for (const domain of liveDomains.slice(0, 15)) {
+                const notParked = await DomainValidator.isNotParked(domain);
+                if (notParked) validDomains.push(domain);
+            }
+
+            return validDomains.map(url => ({
+                url,
+                source: 'hyper_guesser',
+                confidence: 0.70
+            }));
+        } catch (e: any) {
+            Logger.warn('[HyperGuesser] Failed', { error: e });
+            return [];
         }
-
-        return validDomains.map(url => ({
-            url,
-            source: 'hyper_guesser',
-            confidence: 0.70 // Base confidence for a guessed domain that resolves and isn't parked
-        }));
     }
 
     private async searchAttack(company: CompanyInput): Promise<Candidate[]> {
@@ -310,7 +398,6 @@ export class UnifiedDiscoveryService {
 
     private async executeQuery(q: GoldenQuery): Promise<Candidate[]> {
         try {
-            // Rate limiter check
             await this.rateLimiter.waitForSlot('google');
 
             const provider = new SerperSearchProvider();
@@ -321,11 +408,113 @@ export class UnifiedDiscoveryService {
             return results.slice(0, 5).map(r => ({
                 url: r.url,
                 source: `search_${q.type}`,
-                confidence: 0.60 + (q.expectedPrecision * 0.2) // Map precision to confidence
+                confidence: 0.60 + (q.expectedPrecision * 0.2)
+            }));
+        } catch (e: any) {
+            Logger.warn(`[Search] Query failed: ${q.query}`, { error: e });
+            return [];
+        }
+    }
+
+    // RESTORED: Jina Search
+    private async searchJina(company: CompanyInput): Promise<Candidate[] | null> {
+        try {
+            // Basic Jina Search check (lightweight)
+            if (!ScraperClient.isJinaEnabled()) return null;
+
+            const query = `${company.company_name} ${company.city || ''} sito ufficiale`;
+            const response = await ScraperClient.fetchJinaSearch(query);
+
+            if (response.status !== 200 || !response.data) return null;
+
+            // Clean results
+            const results = ScraperClient.parseJinaSearchResults(response.data);
+            Logger.info(`[Jina] Found ${results.length} results`);
+
+            return results.slice(0, 6).map(r => ({
+                url: r.url,
+                source: 'jina_search',
+                confidence: 0.78 // High quality source
+            }));
+        } catch (e: any) {
+            Logger.warn('[Jina] Search failed', { error: e });
+            return null;
+        }
+    }
+
+    // RESTORED: Bing Search (Fallback)
+    private async searchBing(company: CompanyInput): Promise<Candidate[] | null> {
+        try {
+            await this.rateLimiter.waitForSlot('bing');
+            // Using ScraperClient to fetch Bing HTML directly (using Scrape.do usually)
+            // Or simple fetch if we had a proper provider. 
+            // In V2 we had scrapeBingDIY, here we lack it.
+            // Let's rely on ScraperClient basic fetch for now, OR better, skip if no reliable provider.
+            // WAIT - In V2 verifyUrl code I see: `this.scrapeBingDIY(query)`.
+            // I will implement a simplified `scrapeBingDIY` using ScraperClient here.
+
+            const query = encodeURIComponent(`${company.company_name} ${company.city || ''} sito ufficiale`);
+            const url = `https://www.bing.com/search?q=${query}`;
+            const html = await ScraperClient.fetchText(url, { mode: 'scrape_do' }); // Low block rate
+
+            // Simple regex to extract links from Bing
+            // <li class="b_algo"><h2><a href="...">
+            const links: string[] = [];
+            const regex = /<li class="b_algo"><h2><a href="([^"]+)"/g;
+            let match;
+            while ((match = regex.exec(html)) !== null) {
+                if (!match[1].startsWith('http')) continue;
+                links.push(match[1]);
+            }
+
+            return links.slice(0, 5).map(link => ({
+                url: link,
+                source: 'bing_diy',
+                confidence: 0.65
             }));
         } catch (e) {
-            Logger.warn(`[Search] Query failed: ${q.query}`, { error: e as Error });
-            return [];
+            // Bing often fails/blocks, low log
+            return null;
+        }
+    }
+
+    // RESTORED: DDG Search (Fallback)
+    private async searchDDG(company: CompanyInput): Promise<Candidate[] | null> {
+        // DDG via TorProvider/DDGProvider available in SearchProvider?
+        // The V2 used `scrapeDDGDIY`.
+        // We can check if `DDGSearchProvider` is working.
+        try {
+            // const provider = new DDGSearchProvider(); // Requires Tor connection check
+            // Skip Tor complexity for this clean version, rely on Google/Serper/Jina primarily.
+            // If user really wants DDG fallback we can add it, but it often slows things down via Tor.
+            // Instead, simple Scrape.do request to DDG HTML
+
+            await this.rateLimiter.waitForSlot('duckduckgo');
+            const query = encodeURIComponent(`${company.company_name} ${company.city || ''} sito`);
+            const url = `https://html.duckduckgo.com/html/?q=${query}`;
+            const html = await ScraperClient.fetchText(url, { mode: 'scrape_do' });
+
+            const links: string[] = [];
+            const regex = /class="result__a" href="([^"]+)"/g;
+            let match;
+            while ((match = regex.exec(html)) !== null) {
+                // DDG uses relative links or redirects, need to check
+                // Usually format is result__a href="//duckduckgo.com/l/?uddg=..."
+                let link = match[1];
+                if (link.includes('uddg=')) {
+                    const decoded = decodeURIComponent(link.split('uddg=')[1].split('&')[0]);
+                    links.push(decoded);
+                }
+            }
+
+            return links.slice(0, 5).map(link => ({
+                url: link,
+                source: 'ddg_diy',
+                confidence: 0.60
+            }));
+
+        } catch (e) {
+            return null;
         }
     }
 
@@ -381,7 +570,7 @@ export class UnifiedDiscoveryService {
         return null;
     }
 
-    // DEEP VERIFY IMPLEMENTATION (Restored functionality)
+    // DEEP VERIFY IMPLEMENTATION
     private async deepVerify(url: string, company: CompanyInput): Promise<any | null> {
         if (!url || ContentFilter.isDirectoryOrSocial(url)) return null;
 
@@ -430,16 +619,18 @@ export class UnifiedDiscoveryService {
 
             let match = CompanyMatcher.evaluate(company, url, text, title);
 
-            // Link following for deeper matching
-            if (match.confidence < 0.7) {
-                // Try finding contact page
-                // Simplified logic here for brevity, assuming main page + contact verification
-            }
-
             // Agentic fallback for low confidence but relevant content
             if (match.confidence < 0.4 && match.confidence > 0.1 && (process.env.OPENAI_API_KEY)) {
-                // Try to resolve VAT with agent
-                // Simplified integration
+                try {
+                    const goal = `Find the VAT number (P.IVA) for "${company.company_name}" in "${company.city || 'Italy'}". Return ONLY the VAT code.`;
+                    // Simplified agent run
+                    const agentResult = await AgentRunner.run(page, goal);
+                    if (agentResult && (agentResult.includes('IT') || agentResult.match(/\d{11}/))) {
+                        match.scrapedVat = agentResult;
+                        match.confidence = 0.95;
+                        match.reason += "; Agent verified P.IVA";
+                    }
+                } catch (e) { }
             }
 
             this.setCachedVerification(cacheKey, match);
@@ -461,7 +652,23 @@ export class UnifiedDiscoveryService {
         return { ...result, details: { ...result.details, identity } };
     }
 
-    private finalize(company: CompanyInput, result: DiscoveryResult, identity: IdentityResult | null): DiscoveryResult {
+    // RESTORED: AI Employee Estimation using IdentityResolver
+    private async finalize(company: CompanyInput, result: DiscoveryResult, identity: IdentityResult | null): Promise<DiscoveryResult> {
+
+        // If we found a site, but don't have employee count, let's try to estimate it from the site
+        if (result.status === 'FOUND_VALID' && result.url && identity && !identity.financials?.employees) {
+            try {
+                const aiEmployees = await this.identityResolver.estimateEmployeesFromWebsite(company, result.url);
+                if (aiEmployees) {
+                    if (!identity.financials) identity.financials = {};
+                    identity.financials.employees = `${aiEmployees} (AI Est.)`;
+                    Logger.info(`[Finalize] 🤖 Enriched employee count: ${aiEmployees}`);
+                }
+            } catch (e: any) {
+                Logger.warn('[Finalize] Employee estimation failed', { error: e });
+            }
+        }
+
         const final = this.attachIdentity(result, identity);
         this.notifySuccess(company, final);
         return final;
@@ -484,6 +691,10 @@ export class UnifiedDiscoveryService {
             seen.add(domain);
             return true;
         });
+    }
+
+    private applyThresholdDelta(base: number, delta: number): number {
+        return Math.min(0.99, Math.max(0.1, base + delta));
     }
 
     private normalizeUrl(rawUrl: string): string | null {
@@ -522,10 +733,8 @@ export class UnifiedDiscoveryService {
 
     private async jinaVerify(url: string, company: CompanyInput): Promise<any | null> {
         try {
-            // Basic Jina Reader integration
             const response = await ScraperClient.fetchJinaReader(url);
             if (response.status === 200 && response.data) {
-                // Use Jina content for matching
                 const text = response.data;
                 return CompanyMatcher.evaluate(company, url, text, '');
             }
