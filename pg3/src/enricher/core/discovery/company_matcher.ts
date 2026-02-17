@@ -8,6 +8,7 @@ export interface MatchSignals {
   addressCoverage: number;
   domainCoverage: number;
   hasContactKeywords: boolean;
+  ogImageMatch?: boolean;
 }
 
 export interface MatchEvaluation {
@@ -110,6 +111,7 @@ export class CompanyMatcher {
           addressCoverage: 0,
           domainCoverage: this.domainCoverage(company.company_name, url),
           hasContactKeywords: this.hasContactKeywords(normalizedText, normalizedTitle),
+          ogImageMatch: false,
         },
       };
     }
@@ -124,6 +126,10 @@ export class CompanyMatcher {
     const addressCoverage = this.addressCoverage(company.address, normalizedText);
     const domainCoverage = this.domainCoverage(company.company_name, url);
     const hasContactKeywords = this.hasContactKeywords(normalizedText, normalizedTitle);
+
+    // 🖼️ VISUAL SIGNAL: OG:IMAGE
+    // If the site has an OpenGraph image that matches the company name, it's a good sign.
+    const ogImageMatch = this.checkOgImage(text, company.company_name);
 
     let confidence = 0.05;
     if (phoneMatch) confidence += 0.65; // BOOSTED: Was 0.55
@@ -142,6 +148,8 @@ export class CompanyMatcher {
     else if (domainCoverage >= 0.3) confidence += 0.05;
 
     if (hasContactKeywords) confidence += 0.04;
+
+    if (ogImageMatch) confidence += 0.05;
 
     // Only penalize short text if we don't have strong signals
     // FIX: Do not penalize if we have a very strong Title match (often landing pages are just an image + title)
@@ -171,6 +179,7 @@ export class CompanyMatcher {
     if (cityMatch) reasonParts.push('city match');
     if (addressCoverage >= 0.45) reasonParts.push('address match');
     if (domainCoverage >= 0.5) reasonParts.push('domain match');
+    if (ogImageMatch) reasonParts.push('og:image match');
     if (reasonParts.length === 0) reasonParts.push('weak evidence');
 
     return {
@@ -185,8 +194,18 @@ export class CompanyMatcher {
         addressCoverage,
         domainCoverage,
         hasContactKeywords,
+        ogImageMatch,
       },
     };
+  }
+
+  private static checkOgImage(html: string, companyName: string): boolean {
+    const ogImageRegex = /<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i;
+    const match = html.match(ogImageRegex);
+    if (!match) return false;
+    const url = match[1].toLowerCase();
+    const simplifiedName = companyName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return url.includes(simplifiedName);
   }
 
   public static normalizePhone(phone?: string): string {

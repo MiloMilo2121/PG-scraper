@@ -1,9 +1,15 @@
-
 /**
- * 🔮 HYPER GUESSER V2 🔮
- * Generates high-probability domain variations.
- * Enhanced with "Clean Name" logic and International TLDs.
+ * 🔮 HYPER GUESSER V3 🔮
+ * Strategy-based domain generation engine.
+ * Orchestrates multiple generation strategies for maximum coverage.
  */
+
+import { DomainGenerationStrategy, GenerationContext } from './strategies/strategy_types';
+import { PhoneticStrategy } from './strategies/phonetic_strategy';
+import { AcronymStrategy } from './strategies/acronym_strategy';
+import { SectorStrategy } from './strategies/sector_strategy';
+import { LocationStrategy } from './strategies/location_strategy';
+
 export class HyperGuesser {
 
     // Common Italian corporate suffixes to strip
@@ -27,119 +33,37 @@ export class HyperGuesser {
         'official',
     ]);
 
+    private static strategies: DomainGenerationStrategy[] = [
+        new PhoneticStrategy(),
+        new AcronymStrategy(),
+        new SectorStrategy(),
+        new LocationStrategy()
+    ];
+
     /**
-     * Generates a list of potential domains for a company.
+     * Generates a list of potential domains for a company using all registered strategies.
      */
     static generate(companyName: string, city: string, province: string, category: string): string[] {
         const domains = new Set<string>();
-        const suffixes = ['.it', '.com', '.eu', '.net'];
 
-        // 1. Normalize Inputs
-        const cleanName = this.normalize(companyName);
+        // 1. Prepare Context
+        const ctx: GenerationContext = this.buildContext(companyName, city, province, category);
 
-        // Strategy: Handle "&" -> "e"
-        const nameWithAnd = companyName.toLowerCase().replace(/&/g, 'e');
-        const cleanNameAnd = this.normalize(nameWithAnd);
+        // 2. Base Variations (Legacy Core Logic - kept for stability)
+        this.generateBaseVariations(ctx, domains);
 
-        const ultraCleanName = cleanName.replace(/[^a-z0-9]/g, ''); // No spaces/dashes
-        const ultraCleanNameAnd = cleanNameAnd.replace(/[^a-z0-9]/g, '');
-
-        const cleanCity = this.normalize(city).replace(/\s/g, '');
-        const cleanProvince = province.toLowerCase().trim();
-        const cleanCategory = this.normalize(category).replace(/\s/g, '');
-        const words = cleanName.split(' ').filter((word) => word.length >= 2 && !this.GENERIC_WORDS.has(word)); // Allow 2-char words (e.g. "2M")
-        const firstWord = words[0] || cleanName.split(' ')[0];
-        const secondWord = words.length > 1 ? words[1] : '';
-
-        // 2. Exact Match Variations (Standard)
-        this.addVariations(domains, cleanName.replace(/\s/g, ''), suffixes); // pavireflex.it
-        this.addVariations(domains, cleanName.replace(/\s/g, '-'), suffixes); // pavi-reflex.it
-
-        // 2b. Phonetic "&" -> "e" variation
-        if (companyName.includes('&')) {
-            this.addVariations(domains, ultraCleanNameAnd, suffixes); // marioefigli.it
-        }
-
-        // 3. Ultra Clean (Aggressive - Removing ALL stop words including selective)
-        if (ultraCleanName.length > 3) {
-            this.addVariations(domains, ultraCleanName, suffixes);
-        }
-
-        const ultraCleanFully = this.normalizeFully(cleanName).replace(/[^a-z0-9]/g, '');
-        if (ultraCleanFully.length > 3 && ultraCleanFully !== ultraCleanName) {
-            this.addVariations(domains, ultraCleanFully, suffixes);
-        }
-
-        // 4. City/Province Combinations
-        if (cleanCity) {
-            this.addVariations(domains, `${ultraCleanName}${cleanCity}`, suffixes);
-            this.addVariations(domains, `${ultraCleanName}-${cleanCity}`, suffixes);
-            // Also try with fully normalized name
-            if (ultraCleanFully !== ultraCleanName) {
-                this.addVariations(domains, `${ultraCleanFully}${cleanCity}`, suffixes);
-            }
-            this.addVariations(domains, `${ultraCleanName}${cleanProvince}`, suffixes);
-            this.addVariations(domains, `${cleanCity}${ultraCleanName}`, suffixes);
-        }
-
-        // 5. First Word Strategy (Riskier but high recall if the first token is meaningful)
-        if (firstWord.length >= 3) {
-            this.addVariations(domains, firstWord, ['.it', '.com']);
-            if (cleanCity) {
-                this.addVariations(domains, `${firstWord}${cleanCity}`, suffixes);
-                this.addVariations(domains, `${firstWord}-${cleanCity}`, suffixes);
-            }
-            if (cleanCategory.length >= 4) {
-                this.addVariations(domains, `${firstWord}${cleanCategory}`, ['.it', '.com']);
+        // 3. Execute Strategies
+        for (const strategy of this.strategies) {
+            try {
+                const candidates = strategy.generate(ctx);
+                candidates.forEach(d => domains.add(d));
+            } catch (e) {
+                // Strategy failure shouldn't crash the whole guesser
+                console.warn(`[HyperGuesser] Strategy ${strategy.name} failed:`, e);
             }
         }
 
-        // 6. Multi-word combinations (Artisan SMBs)
-        if (firstWord && secondWord) {
-            this.addVariations(domains, `${firstWord}${secondWord}`, ['.it', '.com']);
-            this.addVariations(domains, `${firstWord}-${secondWord}`, ['.it', '.com']);
-            if (cleanCity) {
-                this.addVariations(domains, `${firstWord}${secondWord}${cleanCity}`, ['.it', '.com']);
-            }
-        }
-
-        // 7. "Italia" Suffix
-        this.addVariations(domains, `${ultraCleanName}italia`, suffixes);
-        this.addVariations(domains, `${firstWord}italia`, suffixes);
-
-        // 8. Category & Generic Suffixes (NEW)
-        if (cleanCategory.length >= 3) {
-            this.addVariations(domains, `${ultraCleanName}${cleanCategory}`, ['.it', '.com']);
-            // e.g. "startuplab" -> "startup" + "lab"
-        }
-
-        // 9. Selective Stop Words as Suffixes (Recovered Logic)
-        // e.g. "Rossi Group" -> "rossigroup.it" (kept by normalize) vs "rossi.it" (handled by normalizeFully)
-        for (const selective of this.SELECTIVE_STOP_WORDS) {
-            if (cleanName.includes(selective)) {
-                this.addVariations(domains, cleanName.replace(/\s/g, ''), suffixes);
-            }
-        }
-
-        // 9. Acronym Strategy (NEW)
-        // "Officine Meccaniche Rossi" -> "OMR"
-        if (words.length >= 2) {
-            const acronym = words.map(w => w[0]).join('');
-            if (acronym.length >= 3) {
-                this.addVariations(domains, acronym, ['.it', '.com']); // omr.it
-                if (cleanCity) {
-                    this.addVariations(domains, `${acronym}${cleanCity}`, ['.it', '.com']); // omrmilano.it
-                    this.addVariations(domains, `${acronym}-${cleanCity}`, ['.it', '.com']); // omr-milano.it
-                }
-                this.addVariations(domains, `${acronym}srl`, ['.it']); // omrsrl.it
-            }
-        }
-
-        // 10. Common Corporate Suffixes (NEW)
-        // sometimes they include "srl" in the domain
-        this.addVariations(domains, `${ultraCleanName}srl`, ['.it', '.com']);
-
-        // Stable ranking: shorter and cleaner domains first.
+        // 4. Sort and Limit
         const ranked = Array.from(domains)
             .filter((domain) => domain.length <= 70)
             .sort((a, b) => {
@@ -152,18 +76,58 @@ export class HyperGuesser {
                 return aDashes - bDashes;
             });
 
-        return ranked.slice(0, 150); // Increased limit from 80 to 150 to accommodate new strategies
+        return ranked.slice(0, 150); // Increased limit as per v3 specs
     }
 
-    private static normalize(text: string): string {
+    private static buildContext(name: string, city: string, province: string, category: string): GenerationContext {
+        const cleanName = this.normalize(name);
+        const ultraCleanName = cleanName.replace(/[^a-z0-9]/g, '');
+        const words = cleanName.split(' ').filter((word) => word.length >= 2 && !this.GENERIC_WORDS.has(word));
+
+        return {
+            companyName: name,
+            cleanName,
+            ultraCleanName,
+            city: this.normalize(city),
+            cleanCity: this.normalize(city).replace(/\s/g, ''),
+            province: province.toLowerCase().trim(),
+            cleanProvince: province.toLowerCase().trim(),
+            category: this.normalize(category),
+            cleanCategory: this.normalize(category).replace(/\s/g, ''),
+            words,
+            firstWord: words[0] || cleanName.split(' ')[0],
+            secondWord: words.length > 1 ? words[1] : ''
+        };
+    }
+
+    private static generateBaseVariations(ctx: GenerationContext, domains: Set<string>) {
+        const suffixes = ['.it', '.com'];
+        const { cleanName, ultraCleanName } = ctx;
+
+        // Exact Match
+        this.addVariations(domains, cleanName.replace(/\s/g, ''), suffixes);
+        this.addVariations(domains, cleanName.replace(/\s/g, '-'), suffixes);
+
+        // Ultra Clean
+        if (ultraCleanName.length > 3) {
+            this.addVariations(domains, ultraCleanName, suffixes);
+        }
+
+        // Selective Stop Words Logic (Recovered)
+        for (const selective of this.SELECTIVE_STOP_WORDS) {
+            if (cleanName.includes(selective)) {
+                this.addVariations(domains, cleanName.replace(/\s/g, ''), suffixes);
+            }
+        }
+    }
+
+    /* Helper Methods (Shared with Strategies via Context if needed, or kept internal) */
+
+    public static normalize(text: string): string {
         if (!text) return '';
         let norm = text.toLowerCase();
-        norm = norm
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '');
+        norm = norm.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-        // Remove mandatory stop words (e.g. srl, spa)
-        // Sort stop words by length desc to handle "s.r.l." before "srl"
         const sortedStop = [...this.STOP_WORDS].sort((a, b) => b.length - a.length);
         for (const stop of sortedStop) {
             const escaped = stop.replace(/\./g, '\\.');
@@ -171,19 +135,11 @@ export class HyperGuesser {
             norm = norm.replace(regex, '');
         }
 
-        // Remove dots but keep spaces
         norm = norm.replace(/\./g, '');
-
-        return norm
-            .replace(/[^a-z0-9\s-]/g, '')
-            .replace(/\s+/g, ' ')
-            .trim();
+        return norm.replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, ' ').trim();
     }
 
-    /**
-     * Aggressive normalization including Selective Stop Words (for pure domain generation)
-     */
-    private static normalizeFully(text: string): string {
+    public static normalizeFully(text: string): string {
         let norm = this.normalize(text);
         for (const stop of this.SELECTIVE_STOP_WORDS) {
             const regex = new RegExp(`\\b${stop}\\b`, 'gi');
@@ -194,10 +150,7 @@ export class HyperGuesser {
 
     private static addVariations(set: Set<string>, base: string, suffixes: string[]) {
         if (!base || base.length < 3) return;
-        const safeBase = base
-            .replace(/[^a-z0-9-]/g, '')
-            .replace(/-+/g, '-')
-            .replace(/^-|-$/g, '');
+        const safeBase = base.replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
         if (safeBase.length < 3) return;
         suffixes.forEach(s => {
             set.add(`https://www.${safeBase}${s}`);
