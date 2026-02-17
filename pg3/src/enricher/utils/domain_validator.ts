@@ -114,8 +114,15 @@ export class DomainValidator {
             }
 
             return true;
-        } catch {
-            // Connection errors might mean the site exists but is down. We allow it through.
+        } catch (err: any) {
+            // Timeouts and DNS failures → domain is unreachable, don't waste a browser slot
+            const code = err?.code || '';
+            const msg = (err?.message || '').toLowerCase();
+            if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ENOTFOUND' ||
+                code === 'ECONNREFUSED' || msg.includes('timeout')) {
+                return false;
+            }
+            // Other transient errors (e.g. SSL handshake) — allow through cautiously
             return true;
         }
     }

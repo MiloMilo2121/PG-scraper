@@ -155,6 +155,7 @@ export class UnifiedDiscoveryService {
     private surgicalSearch: SurgicalSearch;
     private verificationCache = new Map<string, any>();
     private readonly verificationCacheTtlMs = 15 * 60 * 1000;
+    private readonly verificationCacheMaxSize = 2000;
 
     constructor(
         browserFactory?: BrowserFactory,
@@ -1534,6 +1535,25 @@ export class UnifiedDiscoveryService {
     }
 
     private setCachedVerification(key: string, result: any): void {
+        // Evict expired entries when approaching the size limit
+        if (this.verificationCache.size >= this.verificationCacheMaxSize) {
+            const now = Date.now();
+            for (const [k, v] of this.verificationCache) {
+                if (now - v.cachedAt > this.verificationCacheTtlMs) {
+                    this.verificationCache.delete(k);
+                }
+            }
+            // If still over limit, drop the oldest half (FIFO via Map insertion order)
+            if (this.verificationCache.size >= this.verificationCacheMaxSize) {
+                const toDelete = Math.floor(this.verificationCache.size / 2);
+                let deleted = 0;
+                for (const k of this.verificationCache.keys()) {
+                    if (deleted >= toDelete) break;
+                    this.verificationCache.delete(k);
+                    deleted++;
+                }
+            }
+        }
         this.verificationCache.set(key, { result, cachedAt: Date.now() });
     }
 

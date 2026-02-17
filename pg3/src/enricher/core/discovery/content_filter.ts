@@ -71,7 +71,10 @@ export class ContentFilter {
             'directory imprese',
             'imprese in',
             'recensioni di',
-            'scheda azienda',
+            'scheda azienda -',
+            'professionisti nella tua zona',
+            'preventivo gratuito',
+            'richiedi preventivo online',
         ];
         return badSignals.some((signal) => t.includes(signal));
     }

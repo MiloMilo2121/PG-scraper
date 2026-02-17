@@ -45,7 +45,7 @@ export class HyperGuesser {
      */
     static generate(companyName: string, city: string, province: string, category: string): string[] {
         const domains = new Set<string>();
-        const suffixes = ['.it', '.com', '.eu', '.net'];
+        const suffixes = ['.it', '.com', '.eu', '.net', '.info'];
 
         // 1. Normalize Inputs
         const cleanName = this.normalize(companyName);
@@ -137,12 +137,16 @@ export class HyperGuesser {
             }
         }
 
-        // Stable ranking: shorter and cleaner domains first.
+        // Smart ranking: .it first (most likely for Italian SMEs), then by length.
         const ranked = Array.from(domains)
             .filter((domain) => domain.length <= 70)
             .sort((a, b) => {
                 const aHost = a.replace(/^https?:\/\//, '').replace(/^www\./, '');
                 const bHost = b.replace(/^https?:\/\//, '').replace(/^www\./, '');
+                // Prefer .it TLD (most common for Italian companies)
+                const aIsIt = aHost.endsWith('.it') ? 0 : 1;
+                const bIsIt = bHost.endsWith('.it') ? 0 : 1;
+                if (aIsIt !== bIsIt) return aIsIt - bIsIt;
                 return aHost.length - bHost.length;
             });
 

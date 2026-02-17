@@ -113,20 +113,28 @@ export class LLMOracle {
         const province = company.province || '';
         const category = company.category || 'unknown sector';
 
-        return `You are a domain name inference engine for Italian companies.
+        return `You are an expert on Italian SME web domains. Your job is to predict the official website URL.
 
-Analyze the company "${name}" located in "${city}" (${province}), sector: "${category}".
+Company: "${name}"
+City: "${city}" (${province})
+Sector: "${category}"
 
-Your task:
-1. Is this a well-known local entity? If yes, recall the URL from your training data.
-2. If not well-known, construct the most likely domain based on Italian SME naming conventions:
-   - Most Italian SMEs use {companyname}.it
-   - Legal suffixes (SRL, SPA, SNC) are usually stripped from domains
-   - Some use {name}{city}.it or {name}{sector}.it
-3. Consider common patterns: {brand}.it, {brand}.com, {firstname}{lastname}.it
+Rules for Italian SME domains:
+- Legal suffixes (SRL, SPA, SNC, SAS) are ALWAYS stripped from domains
+- Most common pattern: {cleanname}.it (e.g. "Rossi Costruzioni Srl" → rossicostruzioni.it)
+- Sector suffix pattern: {name}{sector}.it (e.g. "Bianchi" in edilizia → bianchiedilizia.it)
+- City suffix pattern: {name}{city}.it (e.g. "Rossi" in Milano → rossimilano.it)
+- Accented chars → ASCII: è→e, à→a, ù→u, ò→o
+- Apostrophes stripped: "L'Angolo" → langolo.it
+- Some use .com or .info when .it is taken
+- Multi-word: try both joined and hyphenated ({first}{second}.it, {first}-{second}.it)
 
-Output a JSON with candidate URLs and confidence scores (0.0-1.0).
-Higher confidence = more certain. Only include candidates you believe actually exist.
+Tasks:
+1. If you recognize this company, recall the exact URL from training data (confidence 0.8+)
+2. If unknown, generate 3-5 most probable domains using the rules above
+3. Set confidence 0.5-0.7 for constructed guesses, 0.8+ only if you are sure it exists
+
+Output JSON with candidate URLs and confidence scores (0.0-1.0).
 If you have no idea, return an empty candidates array.`;
     }
 
