@@ -316,12 +316,19 @@ export class CompanyMatcher {
     return signals.some(s => bucket.includes(s));
   }
 
+  private static isValidItalianVat(digits: string): boolean {
+    if (digits.length !== 11) return false;
+    // First 2 digits = province code (001-100) or special codes (120, 121, 888, 999)
+    const province = parseInt(digits.substring(0, 3), 10);
+    return (province >= 1 && province <= 100) || [120, 121, 888, 999].includes(province);
+  }
+
   private static extractVatNumbers(text: string): string[] {
     const results = new Set<string>();
 
-    // Pattern 1: Standalone 11-digit numbers
+    // Pattern 1: Standalone 11-digit numbers (validate as Italian VAT)
     const standalone = text.match(/\b\d{11}\b/g) || [];
-    standalone.forEach(m => results.add(m));
+    standalone.filter(m => this.isValidItalianVat(m)).forEach(m => results.add(m));
 
     // Pattern 2: P.IVA / Partita IVA followed by IT prefix + 11 digits
     const labeled = text.match(/(?:P\.?\s*I\.?\s*V\.?\s*A\.?|Partita\s*Iva|C\.?\s*F\.?\s*(?:\/|\s*e\s*)\s*P\.?\s*I\.?\s*V\.?\s*A\.?)[:\s]*(?:IT)?[\s]?(\d{11})/gi) || [];
@@ -344,7 +351,18 @@ export class CompanyMatcher {
     const matches = text.match(/(?:\+?\d[\d\s()./-]{5,}\d)/g) || [];
     const phones = matches
       .map((raw) => this.normalizePhone(raw))
-      .filter((digits) => digits.length >= 7 && digits.length <= 15);
+      .filter((digits) => {
+        // Italian phone numbers: landlines start with 0 (9+ digits), mobiles start with 3 (10 digits)
+        // With country code 39: 11-13 digits
+        if (digits.length < 9 || digits.length > 15) return false;
+        // Filter out common false positives (years, prices, codes)
+        if (/^(19|20)\d{2}/.test(digits) && digits.length <= 10) return false; // Year-like
+        if (/^0{3,}/.test(digits)) return false; // Leading zeros (e.g., 0000...)
+        // Italian numbers should start with 0, 3, or 39
+        if (digits.startsWith('39')) return true; // International format
+        if (digits.startsWith('0') || digits.startsWith('3')) return true; // Domestic
+        return false;
+      });
     return [...new Set(phones)];
   }
 

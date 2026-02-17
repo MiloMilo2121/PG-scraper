@@ -130,12 +130,45 @@ export class QueryBuilder {
             expectedPrecision: 0.65,
         });
 
-        // 8. Standard fallback
+        // 8. Sector-based query (Italian SMEs often indexed by sector)
+        const category = company.category || '';
+        if (category && category.length > 2) {
+            queries.push({
+                query: `"${name}" "${category}" ${city} sito`,
+                type: 'standard',
+                expectedPrecision: 0.62,
+            });
+        }
+
+        // 9. Province-level search (broader geographic reach)
+        const province = company.province || '';
+        if (province && province.length >= 2 && province !== city) {
+            queries.push({
+                query: `"${name}" "${province}" sito ufficiale`,
+                type: 'standard',
+                expectedPrecision: 0.58,
+            });
+        }
+
+        // 10. Standard fallback
         queries.push({
             query: `"${name}" ${city} sito ufficiale`,
             type: 'standard',
             expectedPrecision: 0.55,
         });
+
+        // 11. Reverse email domain search (if email available)
+        const email = (company as any).email || '';
+        if (email && email.includes('@')) {
+            const domain = email.split('@')[1];
+            if (domain && !domain.includes('gmail') && !domain.includes('yahoo') && !domain.includes('hotmail') && !domain.includes('pec.it')) {
+                queries.push({
+                    query: `site:${domain}`,
+                    type: 'domain_probe',
+                    expectedPrecision: 0.88,
+                });
+            }
+        }
 
         // Sort by precision (highest first)
         queries.sort((a, b) => b.expectedPrecision - a.expectedPrecision);

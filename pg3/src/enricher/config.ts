@@ -62,10 +62,10 @@ const EnvSchema = z.object({
   PROXY_FAILURE_COOLDOWN_MS: z.coerce.number().min(1000).default(300000), // 5 min
 
   // 📍 DISCOVERY THRESHOLDS
-  DISCOVERY_THRESHOLD_WAVE1: z.coerce.number().min(0).max(1).default(0.85),
-  DISCOVERY_THRESHOLD_WAVE2: z.coerce.number().min(0).max(1).default(0.75),
-  DISCOVERY_THRESHOLD_WAVE3: z.coerce.number().min(0).max(1).default(0.70),
-  DISCOVERY_THRESHOLD_MIN_VALID: z.coerce.number().min(0).max(1).default(0.60),
+  DISCOVERY_THRESHOLD_WAVE1: z.coerce.number().min(0).max(1).default(0.70), // Swarm: lower = more candidates pass
+  DISCOVERY_THRESHOLD_WAVE2: z.coerce.number().min(0).max(1).default(0.65), // Net: Bing/DDG (lower reliability)
+  DISCOVERY_THRESHOLD_WAVE3: z.coerce.number().min(0).max(1).default(0.80), // Judge: AI final validation (higher)
+  DISCOVERY_THRESHOLD_MIN_VALID: z.coerce.number().min(0).max(1).default(0.55), // Absolute minimum to accept
 
   // ⚡ PERFORMANCE & QUEUE
   CONCURRENCY_LIMIT: z.coerce.number().min(1).max(100).default(10),

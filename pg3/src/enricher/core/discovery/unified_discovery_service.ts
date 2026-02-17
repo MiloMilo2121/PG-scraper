@@ -336,7 +336,8 @@ export class UnifiedDiscoveryService {
         // 6. VAT/P.IVA Search (High Precision)
         const vatPromise = this.googleSearchByVat(company);
 
-        const [guesses, searchResults, pgResults, jinaResults, bingResults, ddgResults, vatResults] = await Promise.all([
+        // Use allSettled to prevent one failing source from killing the entire swarm
+        const settled = await Promise.allSettled([
             guesserPromise,
             searchPromise,
             pgPromise,
@@ -345,6 +346,15 @@ export class UnifiedDiscoveryService {
             ddgPromise,
             vatPromise
         ]);
+
+        const labels = ['HyperGuesser', 'Serper', 'PagineGialle', 'Jina', 'Bing', 'DDG', 'VAT'];
+        const results: (Candidate[] | null)[] = settled.map((r, i) => {
+            if (r.status === 'fulfilled') return r.value;
+            Logger.warn(`[Swarm] ${labels[i]} strategy rejected: ${(r.reason as Error)?.message || r.reason}`);
+            return null;
+        });
+
+        const [guesses, searchResults, pgResults, jinaResults, bingResults, ddgResults, vatResults] = results;
 
         if (vatResults) candidates.push(...vatResults); // VAT first (highest confidence)
         if (guesses) candidates.push(...guesses);
@@ -398,8 +408,8 @@ export class UnifiedDiscoveryService {
         const candidates: Candidate[] = [];
         const queries = QueryBuilder.buildGoldenQueries(company);
 
-        // Execute top 3 queries parallely
-        const topQueries = queries.slice(0, 3);
+        // Execute top 5 queries in parallel (more coverage with sector/location variants)
+        const topQueries = queries.slice(0, 5);
 
         const results = await Promise.all(topQueries.map(q => this.executeQuery(q)));
 
@@ -551,7 +561,9 @@ export class UnifiedDiscoveryService {
             if (harvest?.officialWebsite) {
                 return [{ url: harvest.officialWebsite, source: 'pg_phone', confidence: 0.9 }];
             }
-        } catch (e) { /* ignore */ }
+        } catch (e: any) {
+            Logger.warn('[PagineGiallePhone] Harvest failed', { error: e, company_name: company.company_name });
+        }
         return null;
     }
 
@@ -595,8 +607,6 @@ export class UnifiedDiscoveryService {
 
         return null;
     }
-
-    // deepVerify is defined below after helper methods
 
     // =========================================================================
     // 🛠️ UTILS
@@ -1044,53 +1054,6 @@ export class UnifiedDiscoveryService {
         }
 
         return null;
-    }
-
-    private async deepVerifyWithAI(url: string, company: CompanyInput): Promise<any | null> {
-        if (!process.env.OPENAI_API_KEY && !process.env.DEEPSEEK_API_KEY && !process.env.KIMI_API_KEY && !process.env.Z_AI_API_KEY) return null;
-        const normalizedUrl = this.normalizeUrl(url);
-        if (!normalizedUrl || ContentFilter.isDirectoryOrSocial(normalizedUrl)) return null;
-
-        let page;
-        try {
-            page = await this.browserFactory.newPage();
-            await this.setupFastInterception(page);
-
-            const navTargets = this.buildNavigationTargets(normalizedUrl);
-            for (const target of navTargets) {
-                try {
-                    await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 15000 });
-                    break;
-                } catch {
-                    // try next
-                }
-            }
-
-            const extraction = await this.extractPageEvidence(page);
-            if (!extraction.text || extraction.text.length < 80) {
-                return null;
-            }
-
-            // Use LLM for final validation
-            const llmResult = await LLMValidator.validateCompany(company, extraction.text);
-            if (llmResult.isValid) {
-                return {
-                    confidence: llmResult.confidence,
-                    reason: llmResult.reason,
-                    level: 'AI_Verified'
-                };
-            }
-
-            return null;
-        } catch (e) {
-            Logger.warn('[DeepVerifyWithAI] Verification failed', { error: e as Error, url: normalizedUrl, company_name: company.company_name });
-            return null;
-        } finally {
-            if (page) {
-                page.removeAllListeners('request');
-                await this.browserFactory.closePage(page);
-            }
-        }
     }
 
     private async setupFastInterception(page: Page): Promise<void> {
