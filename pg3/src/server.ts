@@ -57,11 +57,27 @@ export async function startServer() {
                 allLocations: location_raw
             });
 
-            // Spawn runner.ts as detached process
-            const runnerPath = path.join(process.cwd(), 'src/scraper/runner.ts');
-            const args = ['ts-node', runnerPath, `--category=${category}`, `--city=${city}`];
+            // Determine execution mode
+            const isProduction = process.env.NODE_ENV === 'production';
 
-            const job = spawn('npx', args, {
+            let command = 'npx';
+            let args: string[] = [];
+
+            if (isProduction) {
+                // Production: Run compiled JS
+                command = 'node';
+                const runnerPath = path.join(__dirname, 'scraper/runner.js'); // dist/src/server.js -> dist/src/scraper/runner.js
+                args = [runnerPath, `--category=${category}`, `--city=${city}`];
+                Logger.info('   🔧 Mode: PRODUCTION (node dist/...)');
+            } else {
+                // Development: Run TS via ts-node
+                command = 'npx';
+                const runnerPath = path.join(process.cwd(), 'src/scraper/runner.ts');
+                args = ['ts-node', runnerPath, `--category=${category}`, `--city=${city}`];
+                Logger.info('   🔧 Mode: DEVELOPMENT (ts-node)');
+            }
+
+            const job = spawn(command, args, {
                 cwd: process.cwd(),
                 detached: true,
                 stdio: ['ignore', 'pipe', 'pipe'],
