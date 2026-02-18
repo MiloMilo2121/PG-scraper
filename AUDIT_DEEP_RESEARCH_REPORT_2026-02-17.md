@@ -4,6 +4,12 @@ Data audit: 2026-02-17
 Documento analizzato: `/Users/marcomilanello/Downloads/deep-research-report.md`  
 Codebase verificata: `/Users/marcomilanello/Documents/PG scraper ecc/PG`
 
+## Baseline GitHub verificata
+- Remote: `origin` (`https://github.com/MiloMilo2121/PG-scraper.git`)
+- Branch baseline: `origin/main`
+- Commit baseline verificato: `24ad8e5f6ae9fdf10e2dc796e2b102cce8b589d4`
+- Esito controllo: i file inclusi nello scope audit non presentano differenze locali rispetto a `origin/main` al momento della verifica.
+
 ## Executive verdict
 Affidabilita` complessiva del report: **MEDIA**.
 
@@ -106,4 +112,3 @@ Etichettare ogni voce con uno stato: `implemented`, `partial`, `planned`.
 3. I claim "Parzialmente confermato" separano esplicitamente parte vera e parte non supportata/obsoleta.
 4. La roadmap e` stata verificata rispetto allo stato attuale del codice (idempotenza queue, multi-pass, cache).
 5. Le citazioni non risolte sono censite come difetto editoriale bloccante.
-
