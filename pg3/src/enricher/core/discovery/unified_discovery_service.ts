@@ -118,7 +118,7 @@ export class UnifiedDiscoveryService {
     private validatorLimit = pLimit(20);
     private verificationCache = new Map<string, any>();
     private readonly verificationCacheTtlMs = 15 * 60 * 1000;
-    private readonly verificationCacheMaxSize = 2000;
+    private readonly verificationCacheMaxEntries = config.discovery.verificationCacheMaxEntries;
 
     constructor(
         browserFactory?: BrowserFactory,
@@ -1178,7 +1178,7 @@ export class UnifiedDiscoveryService {
 
     private setCachedVerification(key: string, data: any): void {
         // Evict expired entries when approaching the size limit
-        if (this.verificationCache.size >= this.verificationCacheMaxSize) {
+        if (this.verificationCache.size >= this.verificationCacheMaxEntries) {
             const now = Date.now();
             for (const [k, v] of this.verificationCache) {
                 if (now - v.timestamp > this.verificationCacheTtlMs) {
@@ -1186,7 +1186,7 @@ export class UnifiedDiscoveryService {
                 }
             }
             // If still over limit, drop the oldest half (FIFO via Map insertion order)
-            if (this.verificationCache.size >= this.verificationCacheMaxSize) {
+            if (this.verificationCache.size >= this.verificationCacheMaxEntries) {
                 const toDelete = Math.floor(this.verificationCache.size / 2);
                 let deleted = 0;
                 for (const k of this.verificationCache.keys()) {

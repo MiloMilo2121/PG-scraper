@@ -4,31 +4,6 @@ version: '3.8'
 # Run with: docker-compose up -d
 
 services:
-  # 🌐 ANTIGRAVITY APP - Main Server & Worker
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: antigravity-app:latest
-    container_name: antigravity-app
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - REDIS_URL=redis://redis:6379
-      - HETZNER_MODE=true
-    env_file:
-      - .env
-    volumes:
-      - ./data:/app/data
-      - ./output:/app/output
-      - ./src/LANDING:/app/dist/src/LANDING # Hot-reload for UI dev if needed
-    depends_on:
-      - redis
-    command: [ "node", "dist/src/index.js", "server" ]
-
   # 🗄️ REDIS - Job Queue & Cache
   redis:
     image: redis:7-alpine
@@ -57,6 +32,18 @@ services:
       REDIS_PORT: 6379
     depends_on:
       - redis
+  # 🌐 ENRICHER - Main Worker (to be containerized in Task 10)
+  # enricher:
+  #   build: .
+  #   container_name: antigravity-worker
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - redis
+  #   environment:
+  #     REDIS_URL: redis://redis:6379
+  #   volumes:
+  #     - ./data:/app/data
+  #     - ./output:/app/output
 
 volumes:
   redis_data:

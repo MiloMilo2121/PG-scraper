@@ -25,19 +25,36 @@ const InputRowSchema = z.object({
     country: z.string().optional(),
 }).passthrough();
 
-export async function* ingestCSV(filePath: string): AsyncGenerator<IngestResult, void, unknown> {
-    const fileContent = fs.readFileSync(filePath, 'utf8'); // Read full file to auto-detect? Or stream?
-    // Stream is better for memory, but auto-detect delimiter is easier with sample.
-    // We'll trust csv-parse's slightly better auto-detect or default to comma/semicolon loop.
+const DELIMITER_SAMPLE_BYTES = 64 * 1024;
 
-    // Actually, we'll try to read the first line to detect delimiter.
-    const firstLine = fs.readFileSync(filePath, { encoding: 'utf8', flag: 'r' }).split('\n')[0];
-    let delimiter = ',';
-    if ((firstLine.match(/;/g) || []).length > (firstLine.match(/,/g) || []).length) {
-        delimiter = ';';
-    } else if ((firstLine.match(/\t/g) || []).length > (firstLine.match(/,/g) || []).length) {
-        delimiter = '\t';
+function detectDelimiter(filePath: string): string {
+    let fd: number | null = null;
+    try {
+        fd = fs.openSync(filePath, 'r');
+        const buffer = Buffer.alloc(DELIMITER_SAMPLE_BYTES);
+        const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+        if (bytesRead <= 0) return ',';
+
+        const sample = buffer.toString('utf8', 0, bytesRead);
+        const firstLine = sample.split(/\r?\n/)[0] || '';
+        const commas = (firstLine.match(/,/g) || []).length;
+        const semicolons = (firstLine.match(/;/g) || []).length;
+        const tabs = (firstLine.match(/\t/g) || []).length;
+
+        if (semicolons > commas && semicolons >= tabs) return ';';
+        if (tabs > commas && tabs > semicolons) return '\t';
+        return ',';
+    } catch {
+        return ',';
+    } finally {
+        if (fd !== null) {
+            try { fs.closeSync(fd); } catch { }
+        }
     }
+}
+
+export async function* ingestCSV(filePath: string): AsyncGenerator<IngestResult, void, unknown> {
+    const delimiter = detectDelimiter(filePath);
 
     const parser = fs.createReadStream(filePath).pipe(parse({
         columns: (header) => mapHeaders(header),

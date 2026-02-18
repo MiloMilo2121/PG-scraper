@@ -29,6 +29,7 @@ db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
 db.pragma('cache_size = 10000');
 db.pragma('temp_store = MEMORY');
+db.pragma('busy_timeout = 5000');
 
 Logger.info(`🗄️ SQLite connected: ${SQLITE_PATH} (WAL mode)`);
 let schemaInitialized = false;
