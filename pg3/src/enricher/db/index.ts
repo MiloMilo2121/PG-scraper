@@ -23,12 +23,15 @@ if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
 }
 
-// Initialize database with WAL mode
+// Initialize database with WAL mode + production-safe pragmas
 const db = new Database(SQLITE_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
 db.pragma('cache_size = 10000');
 db.pragma('temp_store = MEMORY');
+db.pragma('busy_timeout = 30000');          // 30s wait on lock instead of immediate SQLITE_BUSY
+db.pragma('wal_autocheckpoint = 1000');     // Checkpoint every 1000 pages to bound WAL growth
+db.pragma('journal_size_limit = 16777216'); // 16MB max WAL size
 
 Logger.info(`🗄️ SQLite connected: ${SQLITE_PATH} (WAL mode)`);
 let schemaInitialized = false;
@@ -76,6 +79,9 @@ export function initializeDatabase(): void {
             website_validated TEXT,
             lead_score INTEGER,
             data_source TEXT,
+            discovery_method TEXT,
+            discovery_confidence REAL,
+            reason_code TEXT,
             enriched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (company_id) REFERENCES companies(id)
         );
@@ -87,6 +93,8 @@ export function initializeDatabase(): void {
             status TEXT NOT NULL,
             error_message TEXT,
             error_category TEXT,
+            reason_code TEXT,
+            run_id TEXT,
             duration_ms INTEGER,
             attempt INTEGER DEFAULT 1,
             processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -116,6 +124,25 @@ export function initializeDatabase(): void {
         addIfMissing('vat_code', `ALTER TABLE companies ADD COLUMN vat_code TEXT`);
         addIfMissing('pg_url', `ALTER TABLE companies ADD COLUMN pg_url TEXT`);
         addIfMissing('email', `ALTER TABLE companies ADD COLUMN email TEXT`);
+
+        // Enrichment results migrations
+        const erCols = db.prepare(`PRAGMA table_info(enrichment_results)`).all() as Array<{ name: string }>;
+        const erNames = new Set(erCols.map((c) => c.name));
+        const addErIfMissing = (name: string, ddl: string) => {
+            if (!erNames.has(name)) db.exec(ddl);
+        };
+        addErIfMissing('discovery_method', `ALTER TABLE enrichment_results ADD COLUMN discovery_method TEXT`);
+        addErIfMissing('discovery_confidence', `ALTER TABLE enrichment_results ADD COLUMN discovery_confidence REAL`);
+        addErIfMissing('reason_code', `ALTER TABLE enrichment_results ADD COLUMN reason_code TEXT`);
+
+        // Job log migrations
+        const jlCols = db.prepare(`PRAGMA table_info(job_log)`).all() as Array<{ name: string }>;
+        const jlNames = new Set(jlCols.map((c) => c.name));
+        const addJlIfMissing = (name: string, ddl: string) => {
+            if (!jlNames.has(name)) db.exec(ddl);
+        };
+        addJlIfMissing('reason_code', `ALTER TABLE job_log ADD COLUMN reason_code TEXT`);
+        addJlIfMissing('run_id', `ALTER TABLE job_log ADD COLUMN run_id TEXT`);
     } catch (e) {
         Logger.warn('DB migration check failed (continuing)', { error: e as Error });
     }
@@ -155,6 +182,9 @@ export interface EnrichmentResult {
     website_validated?: string;
     lead_score?: number;
     data_source?: string;
+    discovery_method?: string;
+    discovery_confidence?: number;
+    reason_code?: string;
 }
 
 let insertCompanyStmt: any;
@@ -186,16 +216,16 @@ function initializeStatements(): void {
     `);
 
     insertResultStmt = db.prepare(`
-        INSERT OR REPLACE INTO enrichment_results 
-        (id, company_id, vat, revenue, revenue_year, employees, is_estimated_employees, pec, website_validated, lead_score, data_source, enriched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT OR REPLACE INTO enrichment_results
+        (id, company_id, vat, revenue, revenue_year, employees, is_estimated_employees, pec, website_validated, lead_score, data_source, discovery_method, discovery_confidence, reason_code, enriched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `);
 
     getResultByCompanyStmt = db.prepare('SELECT * FROM enrichment_results WHERE company_id = ?');
 
     insertJobLogStmt = db.prepare(`
-        INSERT INTO job_log (company_id, status, error_message, error_category, duration_ms, attempt)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO job_log (company_id, status, error_message, error_category, reason_code, run_id, duration_ms, attempt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     statementsInitialized = true;
@@ -279,7 +309,10 @@ export function insertEnrichmentResult(result: EnrichmentResult): void {
         result.pec,
         result.website_validated,
         result.lead_score,
-        result.data_source
+        result.data_source,
+        result.discovery_method,
+        result.discovery_confidence,
+        result.reason_code
     );
 }
 
@@ -294,10 +327,12 @@ export function logJobResult(
     durationMs: number,
     attempt: number,
     errorMessage?: string,
-    errorCategory?: string
+    errorCategory?: string,
+    reasonCode?: string,
+    runId?: string
 ): void {
     ensureReady();
-    insertJobLogStmt.run(companyId, status, errorMessage, errorCategory, durationMs, attempt);
+    insertJobLogStmt.run(companyId, status, errorMessage, errorCategory, reasonCode, runId, durationMs, attempt);
 }
 
 // 📊 Statistics

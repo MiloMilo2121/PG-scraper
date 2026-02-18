@@ -3,7 +3,6 @@ import { ClusterManager } from '../modules/browser';
 import { Normalizer } from '../modules/normalizer';
 import { SeedProcessor } from '../modules/seed-processor';
 import { CandidateMiner } from '../modules/miner';
-import { DummyProvider, GoogleCustomSearchProvider } from '../modules/miner/provider';
 import { CandidateDeduper } from '../modules/deduper';
 import { ValidityChecker } from '../modules/validity';
 import { fetcher } from '../modules/fetcher';
@@ -17,7 +16,8 @@ import { logger, metrics } from '../modules/observability';
 import { getConfig } from '../config';
 import * as fastcsv from 'fast-csv';
 import fs from 'fs';
-import { OutputResult, Candidate, Evidence, NormalizedEntity, ScoreBreakdown, DecisionStatus } from '../types';
+import { once } from 'events';
+import { OutputResult, Candidate, Evidence, ScoreBreakdown, DecisionStatus } from '../types';
 
 import { SearchFactory } from '../modules/miner/provider';
 
@@ -26,39 +26,34 @@ export class Pipeline {
     static async run(inputPath: string, outputPath: string) {
         const config = getConfig();
         const miner = new CandidateMiner(SearchFactory.create());
+        const runId = 'run-' + Date.now();
+        const maxConcurrency = Math.max(1, Number(config.system.concurrency) || 1);
 
         const writeStream = fs.createWriteStream(outputPath);
         const csvStream = fastcsv.format({ headers: true });
         csvStream.pipe(writeStream);
 
         const iterator = ingestCSV(inputPath);
+        const activeTasks = new Set<Promise<void>>();
+        let writeChain = Promise.resolve();
 
-        // Batch processing could go here, but for simplicity we do sequential or semi-parallel
-        // Let's do simple sequential or p-map limit. 
-        // Since ingestCSV is a generator, we iterate.
+        const enqueueCsvWrite = (row: OutputResult): Promise<void> => {
+            writeChain = writeChain.then(async () => {
+                const canContinue = csvStream.write(row);
+                if (!canContinue) {
+                    await once(csvStream, 'drain');
+                }
+            });
+            return writeChain;
+        };
 
-        // Collect all rows first (for 200 items it's fine)
-        const rows: { row: any, line_number: number }[] = [];
-        for await (const item of iterator) {
-            rows.push(item);
-        }
-
-        const { default: pMap } = await import('p-map'); // Dynamic import if ESM, or require if CommonJS. 
-        // p-map might be ESM only in recent versions. 
-        // Our project seems CJS (ts-node default) or ESM? 
-        // Let's assume standard import if typescript handles it, or use require.
-        // Actually best to try standard import at top of file, but previous attempts failed with require vs import?
-        // Let's use standard import at top.
-
-        await pMap(rows, async ({ row, line_number }) => {
+        const processRow = async ({ row, line_number }: { row: any, line_number: number }): Promise<void> => {
             const start = Date.now();
             let output: Partial<OutputResult> = {};
 
             try {
                 // 1. Normalize
                 const entity = Normalizer.normalize(row);
-                // phoneTracker is global singleton, might have race conditions if not thread safe? 
-                // It just adds to a Map. Map is generally safe-ish in JS event loop (single threaded).
                 phoneTracker.track(entity.phones);
                 const freq = phoneTracker.getFrequency(entity.phones);
 
@@ -74,7 +69,7 @@ export class Pipeline {
                         candidates.push({
                             root_domain: new URL(url).hostname.replace(/^www\./, ''),
                             source_url: url,
-                            rank: 1, // High priority but scraped
+                            rank: 1,
                             provider: 'seed_scraping',
                             snippet: 'From source URL',
                             title: 'Seed Link'
@@ -88,7 +83,7 @@ export class Pipeline {
                         candidates.push({
                             root_domain: new URL(row.initial_website).hostname.replace(/^www\./, ''),
                             source_url: row.initial_website,
-                            rank: 0, // Highest Priority
+                            rank: 0,
                             provider: 'input_csv',
                             snippet: 'Direct from Input',
                             title: 'Input Website'
@@ -103,47 +98,32 @@ export class Pipeline {
                 const evaluatedCandidates: { candidate: Candidate, score: ScoreBreakdown, evidence: Evidence }[] = [];
 
                 for (const cand of candidates) {
-                    // 5. Validity
                     const validity = await ValidityChecker.check(cand.root_domain);
-                    if (!validity.dns_ok) continue; // Hard reject
+                    if (!validity.dns_ok) continue;
 
-                    // 6. Fetch Content
-                    // Use final URL from validity check if available
                     const targetUrl = validity.final_url || cand.source_url;
                     let fetched;
                     try {
-                        fetched = await fetcher.fetch(targetUrl); // We might want to fetch planned URLs (contact, etc) too.
-                        // Impl note: For MVP we fetch just the main page found.
+                        fetched = await fetcher.fetch(targetUrl);
                     } catch (e) {
                         continue;
                     }
 
                     if (fetched.status >= 400) continue;
 
-                    // 7. Extract
                     const content = ContentExtractor.extract(fetched.data, fetched.finalUrl);
-
-                    // 8. Classify
                     const classification = SiteClassifier.classify(cand.root_domain, content);
-
-                    // Update validity info with classification result
-                    // (Need to map Classification result to Evidence structure)
-
-                    // 9. Signal
                     const evidence = SignalExtractor.extract(content, entity, {
                         dns_ok: validity.dns_ok,
                         http_ok: validity.http_ok,
                         is_https: targetUrl.startsWith('https') || fetched.finalUrl.startsWith('https'),
                         site_type: classification.type
                     });
-
-                    // 10. Score
                     const score = Scorer.score(evidence, entity, freq);
 
                     evaluatedCandidates.push({ candidate: cand, score, evidence });
                 }
 
-                // 11. Decide (async for OpenAI fallback)
                 output = await Decider.decide(evaluatedCandidates, entity, freq);
 
             } catch (e: any) {
@@ -154,32 +134,49 @@ export class Pipeline {
                 };
             }
 
-            // Finalize output row
             const result: OutputResult = {
                 ...row,
                 ...output
             } as any;
 
-            // Add metadata
-            result.run_id = 'run-' + Date.now();
+            // Run metadata is stable per run; timestamp remains per-record.
+            result.run_id = runId;
             result.timestamp_utc = new Date().toISOString();
 
-            // Writing to CSV stream is concurrent? 
-            // fast-csv stream.write is sync? 
-            // It should be fine to call write from async (order in file will be random though).
-            csvStream.write(result);
+            await enqueueCsvWrite(result);
 
             const duration = Date.now() - start;
             metrics.record(result, duration);
-
             logger.log('info', `Processed ${row.company_name} -> ${result.status} (${duration}ms)`);
-        }, { concurrency: config.system.concurrency }); // Use config value
+        };
 
-        csvStream.end();
-        console.log('Pipeline finished.');
-        console.log(metrics.getSummary());
+        try {
+            for await (const item of iterator) {
+                let task: Promise<void>;
+                task = processRow(item)
+                    .catch((e: any) => {
+                        logger.log('error', `Unhandled processing error for row ${item.line_number}`, e);
+                    })
+                    .finally(() => {
+                        activeTasks.delete(task);
+                    });
+                activeTasks.add(task);
 
-        // Clean up browser cluster to allow process exit
-        await ClusterManager.close();
+                if (activeTasks.size >= maxConcurrency) {
+                    await Promise.race(activeTasks);
+                }
+            }
+
+            await Promise.all(activeTasks);
+            await writeChain;
+            csvStream.end();
+            await once(writeStream, 'finish');
+
+            console.log('Pipeline finished.');
+            console.log(metrics.getSummary());
+        } finally {
+            // Clean up browser cluster to allow process exit
+            await ClusterManager.close();
+        }
     }
 }

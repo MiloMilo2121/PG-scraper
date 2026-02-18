@@ -309,7 +309,26 @@ async function scrapePG(
                     return Array.from(document.querySelectorAll('.search-itm')).map(item => {
                         const name = item.querySelector('.search-itm__rag')?.textContent?.trim();
                         const tel = item.querySelector('.search-itm__phone')?.textContent?.trim();
-                        const web = item.querySelector('.search-itm__url')?.getAttribute('href');
+
+                        // Enhanced Website Extraction
+                        // 1. Standard web icon/link
+                        let web = item.querySelector('.search-itm__url')?.getAttribute('href');
+
+                        // 2. Action buttons (often "Sito Web" is a button)
+                        if (!web) {
+                            const webBtn = Array.from(item.querySelectorAll('a')).find(a =>
+                                a.textContent?.toLowerCase().includes('sito web') ||
+                                a.className.includes('web') ||
+                                a.href.includes('http') && !a.href.includes('paginegialle.it') // crude check
+                            );
+                            if (webBtn) web = webBtn.getAttribute('href');
+                        }
+
+                        // 3. Data attributes (sometimes hidden)
+                        if (!web) {
+                            web = item.getAttribute('data-url');
+                        }
+
                         const pgUrl = (item.querySelector('a.remove_blank_for_app') as HTMLAnchorElement | null)?.href;
 
                         const adr = item.querySelector('.search-itm__adr') as HTMLElement | null;

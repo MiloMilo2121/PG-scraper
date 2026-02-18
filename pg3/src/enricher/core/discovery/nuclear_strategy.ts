@@ -55,21 +55,21 @@ export class NuclearStrategy {
         } else {
             // 3. SMART AI SELECTION (Only if we have results)
             Logger.info(`[Nuclear] Analyzing ${serpResults.length} SERP results with AI...`);
-            const aiDecision = await LLMValidator.selectBestUrl(company, serpResults);
+            try {
+                const aiDecision = await LLMValidator.selectBestUrl(company, serpResults);
 
-            if (aiDecision.bestUrl && aiDecision.confidence > 0.6) {
-                Logger.info(`[Nuclear] 🧠 AI selected: ${aiDecision.bestUrl} (Conf: ${aiDecision.confidence})`);
-                Logger.info(`[Nuclear] 💡 Reasoning: ${aiDecision.reasoning}`);
-
-                return {
-                    url: aiDecision.bestUrl,
-                    method: 'nuclear_smart_ai',
-                    confidence: aiDecision.confidence
-                };
+                if (aiDecision.bestUrl && aiDecision.confidence > 0.6) {
+                    Logger.info(`[Nuclear] AI selected: ${aiDecision.bestUrl} (Conf: ${aiDecision.confidence})`);
+                    return {
+                        url: aiDecision.bestUrl,
+                        method: 'nuclear_smart_ai',
+                        confidence: aiDecision.confidence
+                    };
+                }
+                Logger.info(`[Nuclear] AI unsure (Conf: ${aiDecision.confidence}). Falling back to heuristics.`);
+            } catch (aiError: any) {
+                Logger.warn(`[Nuclear] AI selection failed: ${aiError.message}. Falling back to heuristics.`);
             }
-
-            Logger.info(`[Nuclear] AI unsure (Conf: ${aiDecision.confidence}). Falling back to heuristics.`);
-            Logger.info(`[Nuclear] 💡 AI Reasoning: ${aiDecision.reasoning}`);
         }
 
         const queries = this.generateNuclearQueries(company);
@@ -128,12 +128,6 @@ export class NuclearStrategy {
         };
     }
 
-    private async performSearch(query: string, engine: 'google' | 'ddg' | 'serper'): Promise<string[]> {
-        // Redundant method now that logic is inlined for clarity in executeLegacy, 
-        // but keeping it if needed for other methods, or we can just remove it.
-        // Actually, executeLegacy now inlines the logic to fix the scope issues.
-        return [];
-    }
 
     /**
      * Generates 20+ distinct query permutations

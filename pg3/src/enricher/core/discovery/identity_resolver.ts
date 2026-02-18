@@ -45,28 +45,42 @@ export class IdentityResolver {
      * Step 0: Find the "Official Identity" via fatturatoitalia.it
      * Uses Serper.dev (Google API) to find the specific profile page, then fetches it via ScraperClient.
      */
-    public async resolveIdentity(company: CompanyInput): Promise<IdentityResult | null> {
-        Logger.info(`[IdentityResolver] 🕵️ Resolving identity for: ${company.company_name}`);
+    private static readonly IDENTITY_TIMEOUT_MS = 20000; // 20s max for identity resolution
 
-        // 1. Generate Identity Queries
-        // Strategy: Use site:fatturatoitalia.it to find the official record
-        // We prioritize Serper for high accuracy here.
+    public async resolveIdentity(company: CompanyInput): Promise<IdentityResult | null> {
+        Logger.info(`[IdentityResolver] Resolving identity for: ${company.company_name}`);
+
+        try {
+            return await Promise.race([
+                this._resolveIdentityInner(company),
+                new Promise<null>((resolve) =>
+                    setTimeout(() => {
+                        Logger.warn(`[IdentityResolver] Timeout after ${IdentityResolver.IDENTITY_TIMEOUT_MS}ms for ${company.company_name}`);
+                        resolve(null);
+                    }, IdentityResolver.IDENTITY_TIMEOUT_MS)
+                )
+            ]);
+        } catch (e: any) {
+            Logger.warn(`[IdentityResolver] Error: ${e.message}`, { company_name: company.company_name });
+            return null;
+        }
+    }
+
+    private async _resolveIdentityInner(company: CompanyInput): Promise<IdentityResult | null> {
         const queries = [
             `site:fatturatoitalia.it "${company.company_name}" "${company.city || ''}"`,
         ];
 
-        // Add ATECO/Sector hint if Name is generic
         if (company.company_name.split(' ').length < 2 && company.category) {
             queries.push(`site:fatturatoitalia.it "${company.company_name}" "${company.category}" "${company.city || ''}"`);
         } else if (company.province) {
             queries.push(`site:fatturatoitalia.it "${company.company_name}" "${company.province}"`);
         }
 
-        // 2. Execute Queries (Waterfall)
         for (const query of queries) {
             const profileUrl = await this.findProfileUrl(query);
             if (profileUrl) {
-                Logger.info(`[IdentityResolver] 🎯 Profile found: ${profileUrl}`);
+                Logger.info(`[IdentityResolver] Profile found: ${profileUrl}`);
                 const identity = await this.scrapeProfile(profileUrl, company);
                 if (identity) {
                     return identity;
@@ -74,8 +88,8 @@ export class IdentityResolver {
             }
         }
 
-        Logger.warn(`[IdentityResolver] ⚠️ Identity resolution failed for ${company.company_name}`);
-        return null; // Fallback to Broad Search
+        Logger.warn(`[IdentityResolver] Identity resolution failed for ${company.company_name}`);
+        return null;
     }
 
     private async findProfileUrl(query: string): Promise<string | null> {
