@@ -56,13 +56,9 @@ RUN addgroup -g 1001 antigravity && \
   adduser -S -u 1001 -G antigravity antigravity
 
 # Copy built files from builder
-# Copy built files from builder
 COPY --from=builder --chown=antigravity:antigravity /app/node_modules ./node_modules
 COPY --from=builder --chown=antigravity:antigravity /app/dist ./dist
 COPY --from=builder --chown=antigravity:antigravity /app/package.json ./
-
-# Ensure LANDING page is available
-COPY --from=builder --chown=antigravity:antigravity /app/src/LANDING ./dist/src/LANDING
 
 # Create data directories
 RUN mkdir -p /app/data /app/output && chown -R antigravity:antigravity /app
@@ -71,11 +67,12 @@ RUN mkdir -p /app/data /app/output && chown -R antigravity:antigravity /app
 USER antigravity
 
 # Health check - verify process is running
+# Note: Worker doesn't expose HTTP, so we just check if node process exists
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD pgrep -f "node" > /dev/null || exit 1
 
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 
-# Default command: run server
-CMD ["node", "dist/src/index.js", "server"]
+# Default command: run worker
+CMD ["node", "dist/src/enricher/worker.js"]
