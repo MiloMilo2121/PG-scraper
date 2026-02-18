@@ -140,14 +140,15 @@ export class CompanyMatcher {
 
     if (cityMatch) confidence += 0.08;
 
-    if (addressCoverage >= 0.7) confidence += 0.14;
+    if (addressCoverage >= 0.8) confidence += 0.18;
+    else if (addressCoverage >= 0.65) confidence += 0.14;
     else if (addressCoverage >= 0.45) confidence += 0.08;
 
     if (domainCoverage >= 0.8) confidence += 0.20;
     else if (domainCoverage >= 0.5) confidence += 0.10;
     else if (domainCoverage >= 0.3) confidence += 0.05;
 
-    if (hasContactKeywords) confidence += 0.04;
+    if (hasContactKeywords) confidence += 0.08;
 
     if (ogImageMatch) confidence += 0.05;
 
@@ -167,6 +168,17 @@ export class CompanyMatcher {
 
     // SYNERGY BONUS: domain + name convergence is a very strong signal for Italian SMBs
     if (domainCoverage >= 0.8 && nameCoverage >= 0.4) confidence += 0.06;
+
+    // MULTI-SIGNAL SYNERGY: strong convergence of independent signals
+    const convergenceCount = [
+      addressCoverage >= 0.6 ? 1 : 0,
+      domainCoverage >= 0.7 ? 1 : 0,
+      titleNameMatch ? 1 : 0,
+      cityMatch ? 1 : 0,
+    ].reduce((a, b) => a + b, 0);
+    if (convergenceCount >= 3) {
+      confidence += 0.10;
+    }
 
     if (phoneMatch && nameCoverage < 0.25 && domainCoverage < 0.25) {
       confidence = Math.min(confidence, 0.68);
@@ -228,8 +240,8 @@ export class CompanyMatcher {
 
     let matched = 0;
     for (const token of tokens) {
-      // Primary: word-boundary match (highest precision)
-      if (normalizedText.includes(` ${token} `) || normalizedText.startsWith(`${token} `) || normalizedText.endsWith(` ${token}`)) {
+      // Primary: word-boundary match (highest precision). Also handle exact match (text === token)
+      if (normalizedText === token || normalizedText.includes(` ${token} `) || normalizedText.startsWith(`${token} `) || normalizedText.endsWith(` ${token}`)) {
         matched++;
         // Secondary: substring match for tokens >= 4 chars (catches compound words like "rossiimpianti")
       } else if (token.length >= 4 && normalizedText.includes(token)) {
@@ -267,7 +279,7 @@ export class CompanyMatcher {
     return matched / Math.min(tokens.length, 6);
   }
 
-  private static domainCoverage(companyName: string, url: string): number {
+  public static domainCoverage(companyName: string, url: string): number {
     let hostname = '';
     try {
       const normalizedUrl = url.startsWith('http') ? url : `https://${url}`;
@@ -295,21 +307,28 @@ export class CompanyMatcher {
 
   private static hasContactKeywords(text: string, title: string): boolean {
     const bucket = `${title} ${text}`;
-    return (
-      bucket.includes('contatti') ||
-      bucket.includes('chi siamo') ||
-      bucket.includes('dove siamo') ||
-      bucket.includes('about us') ||
-      bucket.includes('privacy')
-    );
+    const signals = [
+      'contatti', 'contattaci', 'contattami',
+      'chi siamo', 'dove siamo', 'about us',
+      'privacy', 'cookie policy', 'note legali',
+      'impressum', 'mappa del sito', 'sitemap',
+    ];
+    return signals.some(s => bucket.includes(s));
+  }
+
+  private static isValidItalianVat(digits: string): boolean {
+    if (digits.length !== 11) return false;
+    // First 2 digits = province code (001-100) or special codes (120, 121, 888, 999)
+    const province = parseInt(digits.substring(0, 3), 10);
+    return (province >= 1 && province <= 100) || [120, 121, 888, 999].includes(province);
   }
 
   private static extractVatNumbers(text: string): string[] {
     const results = new Set<string>();
 
-    // Pattern 1: Standalone 11-digit numbers
+    // Pattern 1: Standalone 11-digit numbers (validate as Italian VAT)
     const standalone = text.match(/\b\d{11}\b/g) || [];
-    standalone.forEach(m => results.add(m));
+    standalone.filter(m => this.isValidItalianVat(m)).forEach(m => results.add(m));
 
     // Pattern 2: P.IVA / Partita IVA followed by IT prefix + 11 digits
     const labeled = text.match(/(?:P\.?\s*I\.?\s*V\.?\s*A\.?|Partita\s*Iva|C\.?\s*F\.?\s*(?:\/|\s*e\s*)\s*P\.?\s*I\.?\s*V\.?\s*A\.?)[:\s]*(?:IT)?[\s]?(\d{11})/gi) || [];
@@ -332,7 +351,18 @@ export class CompanyMatcher {
     const matches = text.match(/(?:\+?\d[\d\s()./-]{5,}\d)/g) || [];
     const phones = matches
       .map((raw) => this.normalizePhone(raw))
-      .filter((digits) => digits.length >= 7 && digits.length <= 15);
+      .filter((digits) => {
+        // Italian phone numbers: landlines start with 0 (9+ digits), mobiles start with 3 (10 digits)
+        // With country code 39: 11-13 digits
+        if (digits.length < 9 || digits.length > 15) return false;
+        // Filter out common false positives (years, prices, codes)
+        if (/^(19|20)\d{2}/.test(digits) && digits.length <= 10) return false; // Year-like
+        if (/^0{3,}/.test(digits)) return false; // Leading zeros (e.g., 0000...)
+        // Italian numbers should start with 0, 3, or 39
+        if (digits.startsWith('39')) return true; // International format
+        if (digits.startsWith('0') || digits.startsWith('3')) return true; // Domestic
+        return false;
+      });
     return [...new Set(phones)];
   }
 

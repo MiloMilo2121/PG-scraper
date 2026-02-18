@@ -71,7 +71,10 @@ export class ContentFilter {
             'directory imprese',
             'imprese in',
             'recensioni di',
-            'scheda azienda',
+            'scheda azienda -',
+            'professionisti nella tua zona',
+            'preventivo gratuito',
+            'richiedi preventivo online',
         ];
         return badSignals.some((signal) => t.includes(signal));
     }
@@ -108,8 +111,8 @@ export class ContentFilter {
     static isItalianLanguage(text: string): boolean {
         const lowerText = text.toLowerCase();
         if (lowerText.length < 120) {
-            // Too short to classify reliably
-            return true;
+            // Too short to classify - check for .it TLD or obvious Italian
+            return lowerText.includes('.it') || lowerText.includes('italia') || true;
         }
         let score = 0;
 
@@ -118,8 +121,8 @@ export class ContentFilter {
             if (lowerText.includes(word)) score++;
         }
 
-        // HEURISTIC: If we find at least 3 distinct Italian common words, we accept.
-        // This is very permissive to verify "Multilingual" sites where Italian is present.
-        return score >= 2;
+        // Need at least 4 distinct Italian words for medium text, 3 for long text
+        const threshold = lowerText.length > 2000 ? 3 : 4;
+        return score >= threshold;
     }
 }
