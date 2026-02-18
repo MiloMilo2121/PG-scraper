@@ -66,6 +66,7 @@ const EnvSchema = z.object({
   DISCOVERY_THRESHOLD_WAVE2: z.coerce.number().min(0).max(1).default(0.75),
   DISCOVERY_THRESHOLD_WAVE3: z.coerce.number().min(0).max(1).default(0.70),
   DISCOVERY_THRESHOLD_MIN_VALID: z.coerce.number().min(0).max(1).default(0.60),
+  DISCOVERY_VERIFICATION_CACHE_MAX_ENTRIES: z.coerce.number().min(100).default(5000),
 
   // ⚡ PERFORMANCE & QUEUE
   CONCURRENCY_LIMIT: z.coerce.number().min(1).max(100).default(10),
@@ -223,6 +224,7 @@ export const config = {
       wave3: env.DISCOVERY_THRESHOLD_WAVE3,
       minValid: env.DISCOVERY_THRESHOLD_MIN_VALID,
     },
+    verificationCacheMaxEntries: env.DISCOVERY_VERIFICATION_CACHE_MAX_ENTRIES,
   },
   ai: {
     cacheMaxEntries: env.AI_CACHE_MAX_ENTRIES,

@@ -115,6 +115,7 @@ export class UnifiedDiscoveryService {
     private validatorLimit = pLimit(20);
     private verificationCache = new Map<string, any>();
     private readonly verificationCacheTtlMs = 15 * 60 * 1000;
+    private readonly verificationCacheMaxEntries = config.discovery.verificationCacheMaxEntries;
 
     constructor(
         browserFactory?: BrowserFactory,
@@ -411,6 +412,7 @@ export class UnifiedDiscoveryService {
                 confidence: 0.60 + (q.expectedPrecision * 0.2)
             }));
         } catch (e: any) {
+            this.rateLimiter.reportFailure('google');
             Logger.warn(`[Search] Query failed: ${q.query}`, { error: e });
             return [];
         }
@@ -603,21 +605,24 @@ export class UnifiedDiscoveryService {
                 }
             });
 
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+            await page.goto(normalizedUrl, { waitUntil: 'domcontentloaded', timeout: 25000 });
 
             const content = await page.content();
             const title = await page.title();
             const text = await page.evaluate(() => document.body.innerText);
+            const finalUrl = page.url();
+            const canonicalFinalUrl = this.normalizeUrl(finalUrl) || finalUrl;
 
             // Basic content filter
             const filter = ContentFilter.isValidContent(text);
             if (!filter.valid) {
-                const res = { confidence: 0, reason: filter.reason };
+                const res = { confidence: 0, reason: filter.reason, final_url: canonicalFinalUrl };
                 this.setCachedVerification(cacheKey, res);
                 return res;
             }
 
-            let match = CompanyMatcher.evaluate(company, url, text, title);
+            let match = CompanyMatcher.evaluate(company, finalUrl, text, title) as any;
+            match.final_url = canonicalFinalUrl;
 
             // Agentic fallback for low confidence but relevant content
             if (match.confidence < 0.4 && match.confidence > 0.1 && (process.env.OPENAI_API_KEY)) {
@@ -724,10 +729,19 @@ export class UnifiedDiscoveryService {
         if (cached && Date.now() - cached.timestamp < this.verificationCacheTtlMs) {
             return cached.data;
         }
+        if (cached) {
+            this.verificationCache.delete(key);
+        }
         return null;
     }
 
     private setCachedVerification(key: string, data: any) {
+        if (this.verificationCache.size >= this.verificationCacheMaxEntries) {
+            const oldestKey = this.verificationCache.keys().next().value;
+            if (oldestKey) {
+                this.verificationCache.delete(oldestKey);
+            }
+        }
         this.verificationCache.set(key, { data, timestamp: Date.now() });
     }
 
@@ -736,7 +750,9 @@ export class UnifiedDiscoveryService {
             const response = await ScraperClient.fetchJinaReader(url);
             if (response.status === 200 && response.data) {
                 const text = response.data;
-                return CompanyMatcher.evaluate(company, url, text, '');
+                const match = CompanyMatcher.evaluate(company, url, text, '') as any;
+                match.final_url = this.normalizeUrl(url) || url;
+                return match;
             }
         } catch (e) {
             // Ignore jina errors
