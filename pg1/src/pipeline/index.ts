@@ -17,9 +17,42 @@ import { logger, metrics } from '../modules/observability';
 import { getConfig } from '../config';
 import * as fastcsv from 'fast-csv';
 import fs from 'fs';
+import { once } from 'events';
+import crypto from 'crypto';
 import { OutputResult, Candidate, Evidence, NormalizedEntity, ScoreBreakdown, DecisionStatus } from '../types';
 
 import { SearchFactory } from '../modules/miner/provider';
+
+/**
+ * Backpressure-safe CSV writer.
+ * Serializes writes and respects stream drain to prevent OOM.
+ */
+class AsyncCsvWriter {
+    private queue: any[] = [];
+    private writing = false;
+
+    constructor(private stream: NodeJS.WritableStream) {}
+
+    async write(row: any): Promise<void> {
+        this.queue.push(row);
+        if (!this.writing) await this.drainLoop();
+    }
+
+    private async drainLoop(): Promise<void> {
+        this.writing = true;
+        while (this.queue.length) {
+            const row = this.queue.shift()!;
+            const ok = this.stream.write(row);
+            if (!ok) await once(this.stream, 'drain');
+        }
+        this.writing = false;
+    }
+
+    async end(): Promise<void> {
+        await this.drainLoop();
+        return new Promise((resolve) => this.stream.end(resolve));
+    }
+}
 
 export class Pipeline {
 
@@ -27,15 +60,19 @@ export class Pipeline {
         const config = getConfig();
         const miner = new CandidateMiner(SearchFactory.create());
 
+        // PR 4: Single run_id for the entire run (not per-row)
+        const runId = `run-${crypto.randomUUID()}`;
+        const runStart = new Date().toISOString();
+        logger.log('info', `Pipeline run started: ${runId}`);
+
         const writeStream = fs.createWriteStream(outputPath);
         const csvStream = fastcsv.format({ headers: true });
         csvStream.pipe(writeStream);
 
-        const iterator = ingestCSV(inputPath);
+        // PR 3: Backpressure-safe writer
+        const writer = new AsyncCsvWriter(csvStream);
 
-        // Batch processing could go here, but for simplicity we do sequential or semi-parallel
-        // Let's do simple sequential or p-map limit. 
-        // Since ingestCSV is a generator, we iterate.
+        const iterator = ingestCSV(inputPath);
 
         // Collect all rows first (for 200 items it's fine)
         const rows: { row: any, line_number: number }[] = [];
@@ -43,22 +80,16 @@ export class Pipeline {
             rows.push(item);
         }
 
-        const { default: pMap } = await import('p-map'); // Dynamic import if ESM, or require if CommonJS. 
-        // p-map might be ESM only in recent versions. 
-        // Our project seems CJS (ts-node default) or ESM? 
-        // Let's assume standard import if typescript handles it, or use require.
-        // Actually best to try standard import at top of file, but previous attempts failed with require vs import?
-        // Let's use standard import at top.
+        const { default: pMap } = await import('p-map');
 
         await pMap(rows, async ({ row, line_number }) => {
             const start = Date.now();
             let output: Partial<OutputResult> = {};
+            let reasonCode = '';
 
             try {
                 // 1. Normalize
                 const entity = Normalizer.normalize(row);
-                // phoneTracker is global singleton, might have race conditions if not thread safe? 
-                // It just adds to a Map. Map is generally safe-ish in JS event loop (single threaded).
                 phoneTracker.track(entity.phones);
                 const freq = phoneTracker.getFrequency(entity.phones);
 
@@ -74,12 +105,15 @@ export class Pipeline {
                         candidates.push({
                             root_domain: new URL(url).hostname.replace(/^www\./, ''),
                             source_url: url,
-                            rank: 1, // High priority but scraped
+                            rank: 1,
                             provider: 'seed_scraping',
                             snippet: 'From source URL',
                             title: 'Seed Link'
                         });
-                    } catch (e) { }
+                    } catch (e: any) {
+                        // PR 1: Log instead of silent drop
+                        logger.log('warn', `Row ${line_number}: Invalid seed URL "${url}": ${e.message}`);
+                    }
                 });
 
                 // Add Input Website (from CSV)
@@ -88,12 +122,15 @@ export class Pipeline {
                         candidates.push({
                             root_domain: new URL(row.initial_website).hostname.replace(/^www\./, ''),
                             source_url: row.initial_website,
-                            rank: 0, // Highest Priority
+                            rank: 0,
                             provider: 'input_csv',
                             snippet: 'Direct from Input',
                             title: 'Input Website'
                         });
-                    } catch (e) { }
+                    } catch (e: any) {
+                        // PR 1: Log instead of silent drop
+                        logger.log('warn', `Row ${line_number}: Invalid input website "${row.initial_website}": ${e.message}`);
+                    }
                 }
 
                 // 4. Dedupe
@@ -108,13 +145,13 @@ export class Pipeline {
                     if (!validity.dns_ok) continue; // Hard reject
 
                     // 6. Fetch Content
-                    // Use final URL from validity check if available
                     const targetUrl = validity.final_url || cand.source_url;
                     let fetched;
                     try {
-                        fetched = await fetcher.fetch(targetUrl); // We might want to fetch planned URLs (contact, etc) too.
-                        // Impl note: For MVP we fetch just the main page found.
-                    } catch (e) {
+                        fetched = await fetcher.fetch(targetUrl);
+                    } catch (e: any) {
+                        // PR 1: Log fetch failure instead of silent continue
+                        logger.log('warn', `Row ${line_number}: Fetch failed for ${targetUrl}: ${e.message}`);
                         continue;
                     }
 
@@ -125,9 +162,6 @@ export class Pipeline {
 
                     // 8. Classify
                     const classification = SiteClassifier.classify(cand.root_domain, content);
-
-                    // Update validity info with classification result
-                    // (Need to map Classification result to Evidence structure)
 
                     // 9. Signal
                     const evidence = SignalExtractor.extract(content, entity, {
@@ -145,37 +179,43 @@ export class Pipeline {
 
                 // 11. Decide (async for OpenAI fallback)
                 output = await Decider.decide(evaluatedCandidates, entity, freq);
+                reasonCode = output.status === DecisionStatus.OK ? 'OK_CONFIRMED' : 'NOT_FOUND_NO_CANDIDATES';
 
             } catch (e: any) {
-                logger.log('error', `Row ${line_number} failed`, e);
+                logger.log('error', `Row ${line_number} failed: ${e.message}`);
+                const isTimeout = e.message?.includes('timeout') || e.message?.includes('ETIMEDOUT');
+                const isBlocked = e.message?.includes('403') || e.message?.includes('blocked');
                 output = {
-                    status: DecisionStatus.ERROR,
+                    status: isTimeout ? DecisionStatus.ERROR_TIMEOUT
+                         : isBlocked ? DecisionStatus.ERROR_BLOCKED
+                         : DecisionStatus.ERROR,
                     error_message: e.message
                 };
+                reasonCode = isTimeout ? 'ERROR_TIMEOUT' : isBlocked ? 'ERROR_BLOCKED' : 'ERROR_INTERNAL';
             }
 
-            // Finalize output row
+            // PR 1: Every record ALWAYS produces an output row (never dropped)
             const result: OutputResult = {
                 ...row,
-                ...output
+                ...output,
+                reason_code: reasonCode || output.status || 'UNKNOWN',
             } as any;
 
-            // Add metadata
-            result.run_id = 'run-' + Date.now();
+            // PR 4: Consistent run_id for the entire run
+            result.run_id = runId;
             result.timestamp_utc = new Date().toISOString();
 
-            // Writing to CSV stream is concurrent? 
-            // fast-csv stream.write is sync? 
-            // It should be fine to call write from async (order in file will be random though).
-            csvStream.write(result);
+            // PR 3: Backpressure-safe write
+            await writer.write(result);
 
             const duration = Date.now() - start;
             metrics.record(result, duration);
 
-            logger.log('info', `Processed ${row.company_name} -> ${result.status} (${duration}ms)`);
-        }, { concurrency: config.system.concurrency }); // Use config value
+            logger.log('info', `Processed ${row.company_name} -> ${result.status} [${reasonCode}] (${duration}ms)`);
+        }, { concurrency: config.system.concurrency });
 
-        csvStream.end();
+        await writer.end();
+        logger.log('info', `Pipeline run completed: ${runId} (started: ${runStart})`);
         console.log('Pipeline finished.');
         console.log(metrics.getSummary());
 

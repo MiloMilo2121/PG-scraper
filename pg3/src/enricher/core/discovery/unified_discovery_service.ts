@@ -47,12 +47,34 @@ export enum DiscoveryMode {
     NUCLEAR_RUN4 = 'NUCLEAR_RUN4'
 }
 
+export type DiscoveryReasonCode =
+    // Success
+    | 'OK_CONFIRMED_PRE_EXISTING'
+    | 'OK_CONFIRMED_SURGICAL'
+    | 'OK_CONFIRMED_ORACLE'
+    | 'OK_CONFIRMED_SWARM'
+    | 'OK_CONFIRMED_NUCLEAR'
+    // Found but rejected
+    | 'FOUND_BLACKLISTED_DOMAIN'
+    | 'FOUND_CONTENT_MISMATCH'
+    | 'FOUND_LOW_CONFIDENCE'
+    // Not found
+    | 'NOT_FOUND_NO_CANDIDATES'
+    | 'NOT_FOUND_WAVES_EXHAUSTED'
+    // Errors
+    | 'ERROR_NETWORK'
+    | 'ERROR_BROWSER_CRASH'
+    | 'ERROR_LLM_FAILURE'
+    | 'ERROR_SEARCH_PROVIDER'
+    | 'ERROR_INTERNAL';
+
 export interface DiscoveryResult {
     url: string | null;
     status: 'FOUND_VALID' | 'FOUND_INVALID' | 'NOT_FOUND' | 'ERROR';
     method: string;
     confidence: number;
     wave: string;
+    reason_code: DiscoveryReasonCode;
     details: any;
 }
 
@@ -113,8 +135,10 @@ export class UnifiedDiscoveryService {
     private surgicalSearch: SurgicalSearch;
     private nuclearStrategy: NuclearStrategy;
     private validatorLimit = pLimit(20);
-    private verificationCache = new Map<string, any>();
+    private verificationCache = new Map<string, { data: any; timestamp: number }>();
     private readonly verificationCacheTtlMs = 15 * 60 * 1000;
+    private static readonly CACHE_MAX_ENTRIES = 5000;
+    private cacheAccessOrder: string[] = []; // LRU tracking
 
     constructor(
         browserFactory?: BrowserFactory,
@@ -173,6 +197,7 @@ export class UnifiedDiscoveryService {
                         method: 'pre_existing',
                         confidence: preCheck.confidence,
                         wave: 'PRE',
+                        reason_code: 'OK_CONFIRMED_PRE_EXISTING',
                         details: preCheck
                     }, identity);
                 }
@@ -185,6 +210,7 @@ export class UnifiedDiscoveryService {
                         method: 'pre_existing',
                         confidence: preCheck.confidence,
                         wave: 'PRE',
+                        reason_code: 'FOUND_LOW_CONFIDENCE',
                         details: preCheck
                     };
                 }
@@ -200,6 +226,7 @@ export class UnifiedDiscoveryService {
                         method: surgicalResult.method,
                         confidence: surgicalResult.confidence,
                         wave: 'LAYER1_SURGICAL',
+                        reason_code: 'OK_CONFIRMED_SURGICAL',
                         details: surgicalResult
                     }, identity);
                 }
@@ -219,6 +246,7 @@ export class UnifiedDiscoveryService {
                         method: 'llm_oracle',
                         confidence: oracleVerification.confidence,
                         wave: 'LAYER2_ORACLE',
+                        reason_code: 'OK_CONFIRMED_ORACLE',
                         details: oracleVerification
                     }, identity);
                 }
@@ -268,6 +296,7 @@ export class UnifiedDiscoveryService {
                                 method: 'nuclear',
                                 confidence: ver.confidence,
                                 wave: 'LAYER4_NUCLEAR',
+                                reason_code: 'OK_CONFIRMED_NUCLEAR',
                                 details: ver
                             }, identity);
                         }
@@ -281,6 +310,7 @@ export class UnifiedDiscoveryService {
             if (bestInvalid) {
                 Logger.warn(`[Discovery] ⚠️ Best candidate invalid: ${bestInvalid.url} (${bestInvalid.confidence.toFixed(2)})`);
                 AntigravityClient.getInstance().trackCompanyUpdate(company, 'FAILED', { reason: 'Low confidence' });
+                if (!bestInvalid.reason_code) bestInvalid.reason_code = 'FOUND_LOW_CONFIDENCE';
                 return this.attachIdentity(bestInvalid, identity);
             }
 
@@ -291,17 +321,24 @@ export class UnifiedDiscoveryService {
                 method: 'waves_exhausted',
                 confidence: 0,
                 wave: 'ALL',
+                reason_code: 'NOT_FOUND_WAVES_EXHAUSTED',
                 details: {}
             }, identity);
 
         } catch (error: any) {
             Logger.error(`[Discovery] Error:`, { error });
+            const reasonCode: DiscoveryReasonCode = error.message?.includes('net::')
+                ? 'ERROR_NETWORK'
+                : error.message?.includes('browser') || error.message?.includes('Protocol')
+                ? 'ERROR_BROWSER_CRASH'
+                : 'ERROR_INTERNAL';
             return this.attachIdentity({
                 url: null,
                 status: 'ERROR',
                 method: 'exception',
                 confidence: 0,
                 wave: 'ERROR',
+                reason_code: reasonCode,
                 details: { error: error.message }
             }, identity);
         }
@@ -472,8 +509,8 @@ export class UnifiedDiscoveryService {
                 source: 'bing_diy',
                 confidence: 0.65
             }));
-        } catch (e) {
-            // Bing often fails/blocks, low log
+        } catch (e: any) {
+            Logger.debug('[Bing] Search failed (expected: often blocked)', { error: e.message || e });
             return null;
         }
     }
@@ -513,7 +550,8 @@ export class UnifiedDiscoveryService {
                 confidence: 0.60
             }));
 
-        } catch (e) {
+        } catch (e: any) {
+            Logger.debug('[DDG] Search failed', { error: e.message || e });
             return null;
         }
     }
@@ -525,7 +563,9 @@ export class UnifiedDiscoveryService {
             if (harvest?.officialWebsite) {
                 return [{ url: harvest.officialWebsite, source: 'pg_phone', confidence: 0.9 }];
             }
-        } catch (e) { /* ignore */ }
+        } catch (e: any) {
+            Logger.warn('[PagineGialle] Phone attack failed', { error: e.message || e, company_name: company.company_name });
+        }
         return null;
     }
 
@@ -546,12 +586,14 @@ export class UnifiedDiscoveryService {
             const verification = await this.deepVerify(c.url, company);
             if (!verification) return null;
 
+            const isValid = verification.confidence >= threshold;
             return {
                 url: c.url,
-                status: verification.confidence >= threshold ? 'FOUND_VALID' : 'FOUND_INVALID',
+                status: isValid ? 'FOUND_VALID' : 'FOUND_INVALID',
                 method: c.source,
                 confidence: verification.confidence,
                 wave,
+                reason_code: isValid ? 'OK_CONFIRMED_SWARM' : 'FOUND_LOW_CONFIDENCE',
                 details: verification
             } as DiscoveryResult;
         }));
@@ -630,7 +672,9 @@ export class UnifiedDiscoveryService {
                         match.confidence = 0.95;
                         match.reason += "; Agent verified P.IVA";
                     }
-                } catch (e) { }
+                } catch (e: any) {
+                    Logger.warn('[DeepVerify] Agent VAT lookup failed', { error: e.message || e, url });
+                }
             }
 
             this.setCachedVerification(cacheKey, match);
@@ -722,13 +766,29 @@ export class UnifiedDiscoveryService {
     private getCachedVerification(key: string): any | null {
         const cached = this.verificationCache.get(key);
         if (cached && Date.now() - cached.timestamp < this.verificationCacheTtlMs) {
+            // Move to end of access order (most recently used)
+            const idx = this.cacheAccessOrder.indexOf(key);
+            if (idx !== -1) this.cacheAccessOrder.splice(idx, 1);
+            this.cacheAccessOrder.push(key);
             return cached.data;
+        }
+        // Remove expired entry
+        if (cached) {
+            this.verificationCache.delete(key);
+            const idx = this.cacheAccessOrder.indexOf(key);
+            if (idx !== -1) this.cacheAccessOrder.splice(idx, 1);
         }
         return null;
     }
 
     private setCachedVerification(key: string, data: any) {
+        // Evict LRU entries if at capacity
+        while (this.verificationCache.size >= UnifiedDiscoveryService.CACHE_MAX_ENTRIES && this.cacheAccessOrder.length > 0) {
+            const oldest = this.cacheAccessOrder.shift()!;
+            this.verificationCache.delete(oldest);
+        }
         this.verificationCache.set(key, { data, timestamp: Date.now() });
+        this.cacheAccessOrder.push(key);
     }
 
     private async jinaVerify(url: string, company: CompanyInput): Promise<any | null> {
@@ -738,8 +798,8 @@ export class UnifiedDiscoveryService {
                 const text = response.data;
                 return CompanyMatcher.evaluate(company, url, text, '');
             }
-        } catch (e) {
-            // Ignore jina errors
+        } catch (e: any) {
+            Logger.debug('[Jina] Verify failed', { error: e.message || e, url });
         }
         return null;
     }

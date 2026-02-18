@@ -110,19 +110,27 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
         }
 
         // 1B) If missing (or rejected), launch discovery waves.
+        let discoveryMethod: string | undefined;
+        let discoveryConfidence: number | undefined;
+        let discoveryReasonCode: string | undefined;
+
         if (!website || website.trim() === '' || website === 'null') {
             Logger.info(`[Worker] 🔍 Website missing for "${company_name}". Launching Discovery Waves...`);
             const discoveryResult = await discoveryService.discover(discoveryInput);
 
+            discoveryMethod = discoveryResult.method;
+            discoveryConfidence = discoveryResult.confidence;
+            discoveryReasonCode = discoveryResult.reason_code;
+
             if (discoveryResult.url && discoveryResult.status === 'FOUND_VALID') {
                 website = discoveryResult.url;
-                Logger.info(`[Worker] ✅ Discovery VALID: ${company_name} -> ${website} (${discoveryResult.confidence.toFixed(2)})`);
+                Logger.info(`[Worker] ✅ Discovery VALID: ${company_name} -> ${website} (${discoveryResult.confidence.toFixed(2)}) [${discoveryResult.reason_code}]`);
             } else if (discoveryResult.url) {
                 Logger.warn(
-                    `[Worker] ⚠️ Discovery candidate rejected for ${company_name}: ${discoveryResult.url} (Status: ${discoveryResult.status}, Confidence: ${discoveryResult.confidence.toFixed(2)})`
+                    `[Worker] ⚠️ Discovery candidate rejected for ${company_name}: ${discoveryResult.url} (Status: ${discoveryResult.status}, Confidence: ${discoveryResult.confidence.toFixed(2)}, Reason: ${discoveryResult.reason_code})`
                 );
             } else {
-                Logger.warn(`[Worker] ⚠️ Discovery failed for ${company_name} (Status: ${discoveryResult.status})`);
+                Logger.warn(`[Worker] ⚠️ Discovery failed for ${company_name} (Status: ${discoveryResult.status}, Reason: ${discoveryResult.reason_code})`);
             }
         }
 
@@ -164,6 +172,9 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             pec: result.pec,
             website_validated: website || undefined,
             data_source: result.source || undefined,
+            discovery_method: discoveryMethod,
+            discovery_confidence: discoveryConfidence,
+            reason_code: discoveryReasonCode,
         });
         logJobResult(company_id, 'SUCCESS', duration, job.attemptsMade + 1);
 
@@ -174,7 +185,10 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             revenue: result.revenue,
             employees: result.employees,
             website_found: website ? 'Yes' : 'No',
-            website_url: website || undefined
+            website_url: website || undefined,
+            reason_code: discoveryReasonCode,
+            discovery_method: discoveryMethod,
+            discovery_confidence: discoveryConfidence,
         };
 
     } catch (error) {

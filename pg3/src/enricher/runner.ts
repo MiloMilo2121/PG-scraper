@@ -5,6 +5,7 @@ import { parse } from 'fast-csv';
 import { createObjectCsvWriter } from 'csv-writer';
 import pLimit from 'p-limit';
 import { z } from 'zod';
+import crypto from 'crypto';
 import { UnifiedDiscoveryService, DiscoveryMode, DiscoveryResult } from './core/discovery/unified_discovery_service';
 import { BrowserFactory } from './core/browser/factory_v2';
 import { Logger } from './utils/logger';
@@ -47,8 +48,11 @@ if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 }
 
+// Pipeline-level run correlation ID
+const PIPELINE_RUN_ID = `pipeline-${crypto.randomUUID()}`;
+
 async function main() {
-    Logger.info('🚀 STARTING BULLETPROOF DISCOVERY PIPELINE');
+    Logger.info(`🚀 STARTING BULLETPROOF DISCOVERY PIPELINE [${PIPELINE_RUN_ID}]`);
     EnvValidator.validate();
 
     // 1. RUN 1: FAST (Process Everything)
@@ -197,6 +201,17 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
             }
         } catch (error) {
             Logger.error(`Error processing ${company.company_name}`, { error: error as Error });
+            // PR 1: Never silently drop - write error record to not_found
+            const errorRecord = {
+                ...company,
+                website_found: 'Error',
+                discovery_method: 'error',
+                discovery_confidence: 0,
+                reason_code: 'ERROR_INTERNAL',
+                validation_reason: (error as Error).message || 'Unknown error',
+            };
+            notFoundBuffer.push(errorRecord);
+            if (notFoundBuffer.length >= BATCH_SIZE) await flushBuffer(notFoundBuffer, notFoundWriter);
         } finally {
             processedCount++;
             if (processedCount % RUNNER_PROGRESS_LOG_EVERY === 0) {
@@ -236,6 +251,7 @@ function getHeaders() {
         { id: 'website_found', title: 'website_found' },
         { id: 'discovery_method', title: 'discovery_method' },
         { id: 'discovery_confidence', title: 'discovery_confidence' },
+        { id: 'reason_code', title: 'reason_code' },
         { id: 'scraped_piva', title: 'scraped_piva' },
         { id: 'validation_level', title: 'validation_level' },
         { id: 'validation_reason', title: 'validation_reason' },
@@ -263,6 +279,7 @@ function enrichCompanyWithResult(company: CompanyInput, res: DiscoveryResult): a
         website_found: res.status === 'FOUND_VALID' ? 'Yes' : (res.status === 'FOUND_INVALID' ? 'Invalid' : 'No'),
         discovery_method: res.method,
         discovery_confidence: res.confidence,
+        reason_code: res.reason_code || res.status,
         scraped_piva: res.details?.scraped_piva || '',
         validation_level: res.details?.level || '',
         validation_reason: res.details?.reason || '',
