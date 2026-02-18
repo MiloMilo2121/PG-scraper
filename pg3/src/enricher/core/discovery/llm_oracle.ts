@@ -63,6 +63,8 @@ JSON:
         } catch (e) {
             Logger.warn(`[LLMOracle] Prediction failed: ${(e as Error).message}`);
         }
+
+        return null;
     }
 
     private static buildPrompt(company: CompanyInput): string {

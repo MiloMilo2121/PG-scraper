@@ -49,6 +49,7 @@ const WEBGL_MAP: Record<string, { vendor: string; renderer: string }> = {
 export interface BrowserGene {
     id: string;
     uaIndex: number;
+    userAgent: string;
     viewport: { width: number; height: number };
     locale: string;
     hardwareConcurrency: number;
@@ -95,6 +96,7 @@ export class GeneticFingerprinter {
         return {
             id: Math.random().toString(36).substring(2, 10),
             uaIndex,
+            userAgent: ua.userAgent,
             viewport: VIEWPORTS[Math.floor(Math.random() * VIEWPORTS.length)],
             locale: Math.random() > 0.8 ? 'en-US' : 'it-IT',
             hardwareConcurrency: [4, 8, 12, 16][Math.floor(Math.random() * 4)],
@@ -239,6 +241,7 @@ export class GeneticFingerprinter {
             const child: BrowserGene = {
                 id: Math.random().toString(36).substring(2, 10),
                 uaIndex: pick(pA.uaIndex, pB.uaIndex),
+                userAgent: UA_DATABASE[pick(pA.uaIndex, pB.uaIndex)].userAgent,
                 viewport: pick(pA.viewport, pB.viewport),
                 locale: pick(pA.locale, pB.locale),
                 hardwareConcurrency: pick(pA.hardwareConcurrency, pB.hardwareConcurrency),
@@ -256,6 +259,7 @@ export class GeneticFingerprinter {
             if (Math.random() < this.mutationRate) child.viewport = VIEWPORTS[Math.floor(Math.random() * VIEWPORTS.length)];
 
             const ua = UA_DATABASE[child.uaIndex];
+            child.userAgent = ua.userAgent;
             child.os = ua.os;
             child.browser = ua.browser;
 
