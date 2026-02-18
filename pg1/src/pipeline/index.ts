@@ -37,6 +37,32 @@ export class Pipeline {
         const activeTasks = new Set<Promise<void>>();
         let writeChain = Promise.resolve();
 
+        const reasonCodeFromStatus = (status: DecisionStatus, decisionReason = ''): string => {
+            const reason = decisionReason.toLowerCase();
+            if (status === DecisionStatus.OK || status === DecisionStatus.OK_LIKELY) {
+                return 'OK_LIKELY_NAME_CITY_MATCH';
+            }
+            if (status === DecisionStatus.NO_DOMAIN_FOUND) {
+                if (reason.includes('no candidates')) return 'NOT_FOUND_NO_CANDIDATES';
+                return 'REJECTED_NO_MATCHING_SIGNALS';
+            }
+            if (status === DecisionStatus.REJECTED_DIRECTORY) return 'REJECTED_DIRECTORY_OR_SOCIAL';
+            if (status === DecisionStatus.ERROR_TIMEOUT) return 'ERROR_TIMEOUT_FETCH';
+            if (status === DecisionStatus.ERROR_BLOCKED) return 'ERROR_BLOCKED_403';
+            if (status === DecisionStatus.ERROR_DNS) return 'REJECTED_NO_MATCHING_SIGNALS';
+            if (status === DecisionStatus.ERROR_FETCH) return 'ERROR_TIMEOUT_FETCH';
+            return 'ERROR_INTERNAL';
+        };
+
+        const reasonCodeFromError = (error: any): string => {
+            const message = `${error?.message || ''}`.toLowerCase();
+            if (message.includes('timeout')) return 'ERROR_TIMEOUT_FETCH';
+            if (message.includes('403') || message.includes('blocked') || message.includes('captcha')) return 'ERROR_BLOCKED_403';
+            if (message.includes('dns') || message.includes('enotfound')) return 'REJECTED_NO_MATCHING_SIGNALS';
+            if (message.includes('429') || message.includes('rate')) return 'ERROR_PROVIDER_RATE_LIMIT';
+            return 'ERROR_INTERNAL';
+        };
+
         const enqueueCsvWrite = (row: OutputResult): Promise<void> => {
             writeChain = writeChain.then(async () => {
                 const canContinue = csvStream.write(row);
@@ -47,11 +73,19 @@ export class Pipeline {
             return writeChain;
         };
 
-        const processRow = async ({ row, line_number }: { row: any, line_number: number }): Promise<void> => {
+        const processRow = async ({ row, line_number, ingest_error }: { row: any, line_number: number, ingest_error?: string }): Promise<void> => {
             const start = Date.now();
             let output: Partial<OutputResult> = {};
 
             try {
+                if (ingest_error) {
+                    output = {
+                        status: DecisionStatus.ERROR,
+                        reason_code: 'ERROR_INVALID_INPUT_ROW',
+                        decision_reason: 'Invalid input row schema',
+                        error_message: ingest_error
+                    };
+                } else {
                 // 1. Normalize
                 const entity = Normalizer.normalize(row);
                 phoneTracker.track(entity.phones);
@@ -74,7 +108,9 @@ export class Pipeline {
                             snippet: 'From source URL',
                             title: 'Seed Link'
                         });
-                    } catch (e) { }
+                    } catch (e) {
+                        logger.log('warn', 'Invalid seed candidate URL skipped', { line_number, url, error: e });
+                    }
                 });
 
                 // Add Input Website (from CSV)
@@ -88,7 +124,9 @@ export class Pipeline {
                             snippet: 'Direct from Input',
                             title: 'Input Website'
                         });
-                    } catch (e) { }
+                    } catch (e) {
+                        logger.log('warn', 'Invalid input website URL skipped', { line_number, url: row.initial_website, error: e });
+                    }
                 }
 
                 // 4. Dedupe
@@ -125,11 +163,13 @@ export class Pipeline {
                 }
 
                 output = await Decider.decide(evaluatedCandidates, entity, freq);
+                }
 
             } catch (e: any) {
                 logger.log('error', `Row ${line_number} failed`, e);
                 output = {
                     status: DecisionStatus.ERROR,
+                    reason_code: reasonCodeFromError(e),
                     error_message: e.message
                 };
             }
@@ -138,6 +178,16 @@ export class Pipeline {
                 ...row,
                 ...output
             } as any;
+
+            result.status = (result.status || DecisionStatus.ERROR) as DecisionStatus;
+            result.reason_code = result.reason_code || reasonCodeFromStatus(result.status, result.decision_reason || '');
+            result.domain_official = result.domain_official ?? null;
+            result.site_url_official = result.site_url_official ?? null;
+            result.score = Number.isFinite(result.score as any) ? Number(result.score) : 0;
+            result.confidence = Number.isFinite(result.confidence as any) ? Number(result.confidence) : 0;
+            result.decision_reason = result.decision_reason || (result.status === DecisionStatus.ERROR ? 'Unhandled record error' : 'No decisive signal');
+            result.evidence_json = result.evidence_json || '{}';
+            result.candidates_json = result.candidates_json || '[]';
 
             // Run metadata is stable per run; timestamp remains per-record.
             result.run_id = runId;
@@ -154,8 +204,25 @@ export class Pipeline {
             for await (const item of iterator) {
                 let task: Promise<void>;
                 task = processRow(item)
-                    .catch((e: any) => {
+                    .catch(async (e: any) => {
                         logger.log('error', `Unhandled processing error for row ${item.line_number}`, e);
+                        const fallback: OutputResult = {
+                            ...item.row,
+                            domain_official: null,
+                            site_url_official: null,
+                            status: DecisionStatus.ERROR,
+                            reason_code: reasonCodeFromError(e),
+                            score: 0,
+                            confidence: 0,
+                            decision_reason: 'Unhandled row processing error',
+                            evidence_json: '{}',
+                            candidates_json: '[]',
+                            run_id: runId,
+                            timestamp_utc: new Date().toISOString(),
+                            error_message: e?.message || 'Unknown error',
+                        } as OutputResult;
+                        await enqueueCsvWrite(fallback);
+                        metrics.record(fallback, 0);
                     })
                     .finally(() => {
                         activeTasks.delete(task);

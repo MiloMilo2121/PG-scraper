@@ -6,10 +6,8 @@ import { z } from 'zod';
 export interface IngestResult {
     row: InputRow;
     line_number: number;
+    ingest_error?: string;
 }
-
-const MIN_REQUIRED_FIELDS = ['company_name'];
-const SIGNAL_FIELDS = ['phone', 'address', 'city', 'source_url'];
 
 const InputRowSchema = z.object({
     company_name: z.string().trim().min(1),
@@ -68,17 +66,33 @@ export async function* ingestCSV(filePath: string): AsyncGenerator<IngestResult,
     for await (const record of parser) {
         lineCount++;
         const parsed = InputRowSchema.safeParse(record);
-        if (!parsed.success) continue;
+        if (!parsed.success) {
+            const fallbackCompanyName = typeof (record as any).company_name === 'string'
+                ? (record as any).company_name.trim()
+                : '';
+            const fallbackRow: InputRow = {
+                ...(record as Record<string, unknown> as InputRow),
+                company_name: fallbackCompanyName || `invalid_row_${lineCount}`,
+            };
+            yield {
+                row: fallbackRow,
+                line_number: lineCount,
+                ingest_error: 'INVALID_ROW_SCHEMA',
+            };
+            continue;
+        }
         const row = parsed.data as InputRow;
 
-        // Basic validation: must have company_name and at least one signal
-        if (!row.company_name) continue;
-
-        const hasSignal = SIGNAL_FIELDS.some(field => !!row[field as keyof InputRow]);
-
-        if (hasSignal) {
-            yield { row, line_number: lineCount };
+        // Basic validation: company_name is mandatory, other signals are optional.
+        if (!row.company_name) {
+            yield {
+                row: { ...row, company_name: `invalid_row_${lineCount}` },
+                line_number: lineCount,
+                ingest_error: 'MISSING_COMPANY_NAME',
+            };
+            continue;
         }
+        yield { row, line_number: lineCount };
     }
 }
 

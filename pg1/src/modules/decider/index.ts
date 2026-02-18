@@ -5,6 +5,26 @@ import { logger } from '../observability';
 
 export class Decider {
 
+    private static reasonCodeForSuccess(top: { candidate: Candidate, score: ScoreBreakdown, evidence: Evidence }): string {
+        if (top.evidence.vat_ids_found?.length) return 'OK_CONFIRMED_VAT_MATCH';
+        if (top.evidence.phones_found?.length) return 'OK_CONFIRMED_PHONE_MATCH';
+        if (top.evidence.name_match_score >= 0.6 && top.evidence.address_match_score >= 0.45) {
+            return 'OK_LIKELY_NAME_CITY_MATCH';
+        }
+        return 'OK_LIKELY_NAME_CITY_MATCH';
+    }
+
+    private static reasonCodeForFailure(reason: string, top?: { candidate: Candidate, score: ScoreBreakdown, evidence: Evidence }): string {
+        const normalizedReason = reason.toLowerCase();
+        if (normalizedReason.includes('no candidates')) return 'NOT_FOUND_NO_CANDIDATES';
+        if (normalizedReason.includes('ai rejected')) return 'REJECTED_NO_MATCHING_SIGNALS';
+        const url = top?.candidate?.source_url?.toLowerCase() || '';
+        if (url.includes('facebook.com') || url.includes('instagram.com') || url.includes('linkedin.com') || url.includes('paginegialle.it')) {
+            return 'REJECTED_DIRECTORY_OR_SOCIAL';
+        }
+        return 'REJECTED_NO_MATCHING_SIGNALS';
+    }
+
     static async decide(
         candidates: { candidate: Candidate, score: ScoreBreakdown, evidence: Evidence }[],
         input: NormalizedEntity,
@@ -19,6 +39,7 @@ export class Decider {
         if (!top) {
             return {
                 status: DecisionStatus.NO_DOMAIN_FOUND,
+                reason_code: 'NOT_FOUND_NO_CANDIDATES',
                 score: 0,
                 confidence: 0,
                 decision_reason: 'No candidates found'
@@ -94,11 +115,17 @@ export class Decider {
                 domain_official: top.candidate.root_domain,
                 site_url_official: top.candidate.source_url,
                 status: DecisionStatus.OK,
+                reason_code: this.reasonCodeForSuccess(top),
                 score: top.score.final_score,
                 confidence: Math.round(confidence),
                 decision_reason: reason,
                 evidence_json: JSON.stringify(top.evidence),
-                candidates_json: JSON.stringify(candidates.map(c => ({ url: c.candidate.source_url, score: c.score.final_score })))
+                candidates_json: JSON.stringify(candidates.map(c => ({
+                    url: c.candidate.source_url,
+                    aliases: c.candidate.aliases || [c.candidate.source_url],
+                    sources: c.candidate.sources || [c.candidate.provider],
+                    score: c.score.final_score
+                })))
             };
         } else {
             // NO DOMAIN FOUND
@@ -107,11 +134,17 @@ export class Decider {
                 domain_official: null,
                 site_url_official: null,
                 status: DecisionStatus.NO_DOMAIN_FOUND,
+                reason_code: this.reasonCodeForFailure(reason, top),
                 score: top.score.final_score, // Best attempt
                 confidence: Math.round(confidence),
                 decision_reason: reason,
                 evidence_json: JSON.stringify(top.evidence), // Return evidence of top candidate even if failed? Useful for debugging.
-                candidates_json: JSON.stringify(candidates.map(c => ({ url: c.candidate.source_url, score: c.score.final_score })))
+                candidates_json: JSON.stringify(candidates.map(c => ({
+                    url: c.candidate.source_url,
+                    aliases: c.candidate.aliases || [c.candidate.source_url],
+                    sources: c.candidate.sources || [c.candidate.provider],
+                    score: c.score.final_score
+                })))
             };
         }
     }

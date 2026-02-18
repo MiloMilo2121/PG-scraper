@@ -12,8 +12,21 @@ export class CandidateDeduper {
 
         for (const c of candidates) {
             if (!unique.has(c.root_domain)) {
-                unique.set(c.root_domain, c);
+                unique.set(c.root_domain, {
+                    ...c,
+                    aliases: [c.source_url],
+                    sources: [c.provider],
+                });
+                continue;
             }
+
+            const existing = unique.get(c.root_domain)!;
+            const aliases = new Set(existing.aliases || [existing.source_url]);
+            aliases.add(c.source_url);
+            const sources = new Set(existing.sources || [existing.provider]);
+            sources.add(c.provider);
+            existing.aliases = Array.from(aliases);
+            existing.sources = Array.from(sources);
         }
 
         // Limit to max candidates per row

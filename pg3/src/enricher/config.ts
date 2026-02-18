@@ -67,6 +67,9 @@ const EnvSchema = z.object({
   DISCOVERY_THRESHOLD_WAVE3: z.coerce.number().min(0).max(1).default(0.80), // Judge: AI final validation (higher)
   DISCOVERY_THRESHOLD_MIN_VALID: z.coerce.number().min(0).max(1).default(0.55), // Absolute minimum to accept
   DISCOVERY_VERIFICATION_CACHE_MAX_ENTRIES: z.coerce.number().min(100).default(2000),
+  DISCOVERY_DEFAULT_MODE: z.enum(['FAST_RUN1', 'DEEP_RUN2', 'AGGRESSIVE_RUN3', 'NUCLEAR_RUN4']).default('DEEP_RUN2'),
+  DISCOVERY_ENABLE_BROWSER: BooleanString.default(true),
+  DISCOVERY_STOP_THE_BLEEDING: BooleanString.default(false),
 
   // ⚡ PERFORMANCE & QUEUE
   CONCURRENCY_LIMIT: z.coerce.number().min(1).max(100).default(10),
@@ -226,6 +229,9 @@ export const config = {
       minValid: env.DISCOVERY_THRESHOLD_MIN_VALID,
     },
     verificationCacheMaxEntries: env.DISCOVERY_VERIFICATION_CACHE_MAX_ENTRIES,
+    defaultMode: env.DISCOVERY_DEFAULT_MODE,
+    enableBrowser: env.DISCOVERY_ENABLE_BROWSER,
+    stopTheBleeding: env.DISCOVERY_STOP_THE_BLEEDING,
   },
   ai: {
     cacheMaxEntries: env.AI_CACHE_MAX_ENTRIES,

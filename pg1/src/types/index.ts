@@ -40,6 +40,8 @@ export type Candidate = {
     provider: string;
     snippet?: string;
     title?: string;
+    aliases?: string[];
+    sources?: string[];
 };
 
 export type Evidence = {

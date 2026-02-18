@@ -25,9 +25,8 @@ import {
     QUEUE_NAMES,
     moveToDeadLetter,
 } from './queue';
-import { ViesService } from './core/financial/vies';
 import { FinancialService } from './core/financial/service';
-import { UnifiedDiscoveryService } from './core/discovery/unified_discovery_service';
+import { UnifiedDiscoveryService, DiscoveryMode } from './core/discovery/unified_discovery_service';
 import { BrowserFactory } from './core/browser/factory_v2';
 import {
     getEnrichmentResult,
@@ -42,11 +41,29 @@ const discoveryService = new UnifiedDiscoveryService();
 let isShuttingDown = false;
 let processHandlersRegistered = false;
 
+function mapErrorToReasonCode(error: Error): string {
+    const category = Logger.categorizeError(error);
+    switch (category) {
+        case 'NETWORK':
+            return 'ERROR_TIMEOUT_FETCH';
+        case 'AUTH':
+            return 'ERROR_PROVIDER_RATE_LIMIT';
+        case 'BROWSER':
+            return 'ERROR_BROWSER_FAILURE';
+        case 'PARSING':
+            return 'ERROR_PARSING';
+        case 'VALIDATION':
+            return 'ERROR_VALIDATION';
+        default:
+            return 'ERROR_INTERNAL';
+    }
+}
+
 /**
  * 🏭 Process a single enrichment job
  */
 async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobResult> {
-    const { company_name, city, company_id } = job.data;
+    const { company_name, city, company_id, run_id, correlation_id } = job.data;
     let { website } = job.data;
     const startTime = Date.now();
     const minValidWebsiteConfidence = config.discovery.thresholds.minValid;
@@ -54,6 +71,8 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
     Logger.info(`🔄 Processing: ${company_name}`, {
         company_id,
         company_name,
+        run_id,
+        correlation_id,
         attempt: job.attemptsMade + 1,
     });
 
@@ -63,9 +82,20 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             const duration = Date.now() - startTime;
             Logger.info(`[Worker] ⏭️ Skipping already enriched company: ${company_name}`, {
                 company_id,
+                run_id,
+                correlation_id,
                 duration_ms: duration,
             });
-            logJobResult(company_id, 'SUCCESS', duration, job.attemptsMade + 1);
+            logJobResult(
+                company_id,
+                'SUCCESS',
+                duration,
+                job.attemptsMade + 1,
+                undefined,
+                undefined,
+                'OK_ALREADY_ENRICHED',
+                run_id
+            );
             return {
                 success: true,
                 company_id,
@@ -94,6 +124,11 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             website: website || undefined,
         };
 
+        // 1B) If missing (or rejected), launch discovery waves.
+        let discoveryMethod: string | undefined;
+        let discoveryConfidence: number | undefined;
+        let discoveryReasonCode: string | undefined;
+
         // 1A) If a website is provided, we still verify it before trusting/storing it.
         if (website && website.trim() !== '' && website !== 'null') {
             Logger.info(`[Worker] 🔎 Pre-validating provided website for "${company_name}": ${website}`);
@@ -102,6 +137,9 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             if (confidence >= minValidWebsiteConfidence) {
                 // Normalize to the final navigated root (scheme matters for http-only sites).
                 website = verification?.final_url || website;
+                discoveryMethod = 'pre_validated_input';
+                discoveryConfidence = confidence;
+                discoveryReasonCode = verification?.reason_code || 'OK_CONFIRMED_INPUT_WEBSITE';
                 Logger.info(`[Worker] ✅ Provided website verified (${confidence.toFixed(2)}): ${company_name} -> ${website}`);
             } else {
                 Logger.warn(`[Worker] ⚠️ Provided website rejected (${confidence.toFixed(2)} < ${minValidWebsiteConfidence}): ${company_name} -> ${website}`);
@@ -109,18 +147,14 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             }
         }
 
-        // 1B) If missing (or rejected), launch discovery waves.
-        let discoveryMethod: string | undefined;
-        let discoveryConfidence: number | undefined;
-        let discoveryReasonCode: string | undefined;
-
         if (!website || website.trim() === '' || website === 'null') {
             Logger.info(`[Worker] 🔍 Website missing for "${company_name}". Launching Discovery Waves...`);
-            const discoveryResult = await discoveryService.discover(discoveryInput);
+            const configuredMode = config.discovery.defaultMode as DiscoveryMode;
+            const discoveryResult = await discoveryService.discover(discoveryInput, configuredMode);
 
             discoveryMethod = discoveryResult.method;
             discoveryConfidence = discoveryResult.confidence;
-            discoveryReasonCode = discoveryResult.reason_code;
+            discoveryReasonCode = discoveryResult.reason_code || discoveryReasonCode;
 
             if (discoveryResult.url && discoveryResult.status === 'FOUND_VALID') {
                 website = discoveryResult.url;
@@ -174,9 +208,18 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             data_source: result.source || undefined,
             discovery_method: discoveryMethod,
             discovery_confidence: discoveryConfidence,
-            reason_code: discoveryReasonCode,
+            reason_code: discoveryReasonCode || 'NOT_FOUND_NO_CANDIDATES',
         });
-        logJobResult(company_id, 'SUCCESS', duration, job.attemptsMade + 1);
+        logJobResult(
+            company_id,
+            'SUCCESS',
+            duration,
+            job.attemptsMade + 1,
+            undefined,
+            undefined,
+            discoveryReasonCode || 'OK_ENRICHMENT_COMPLETED',
+            run_id
+        );
 
         return {
             success: true,
@@ -194,10 +237,13 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
     } catch (error) {
         const err = error as Error;
         const duration = Date.now() - startTime;
+        const reasonCode = mapErrorToReasonCode(err);
 
         Logger.logError(`Failed: ${company_name}`, err, {
             company_id,
             company_name,
+            run_id,
+            correlation_id,
             duration_ms: duration,
             attempt: job.attemptsMade + 1,
             max_attempts: RETRY_ATTEMPTS,
@@ -208,7 +254,9 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             duration,
             job.attemptsMade + 1,
             err.message,
-            Logger.categorizeError(err)
+            Logger.categorizeError(err),
+            reasonCode,
+            run_id
         );
 
         // If this is the last attempt, move to dead letter queue

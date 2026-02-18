@@ -92,7 +92,7 @@ function deterministicCompanyId(company: CSVCompany): string {
     .digest('hex');
 }
 
-function mapCompaniesToJobs(companies: CSVCompany[]): { jobs: EnrichmentJobData[]; skipped: number } {
+function mapCompaniesToJobs(companies: CSVCompany[], runId: string): { jobs: EnrichmentJobData[]; skipped: number } {
   const uniqueJobs = new Map<string, EnrichmentJobData>();
 
   for (const c of companies) {
@@ -121,6 +121,8 @@ function mapCompaniesToJobs(companies: CSVCompany[]): { jobs: EnrichmentJobData[
       vat_code: c.vat_code?.trim() || undefined,
       pg_url: c.pg_url?.trim() || undefined,
       email: c.email?.trim() || undefined,
+      run_id: runId,
+      correlation_id: `${runId}:${companyId}`,
     });
   }
 
@@ -199,6 +201,7 @@ async function releaseSchedulerLock(lockToken: string): Promise<void> {
 export async function runScheduler(csvPath?: string): Promise<SchedulerSummary> {
     const startedAt = Date.now();
     const inputFile = csvPath || INPUT_FILE;
+    const runId = `run-${startedAt}-${crypto.randomUUID().slice(0, 8)}`;
     let events: QueueEvents | null = null;
     let lockToken: string | null = null;
 
@@ -217,7 +220,7 @@ export async function runScheduler(csvPath?: string): Promise<SchedulerSummary> 
       };
     }
 
-    Logger.info('📥 SCHEDULER: Starting job injection');
+    Logger.info('📥 SCHEDULER: Starting job injection', { run_id: runId });
     events = createQueueEvents(QUEUE_NAMES.ENRICHMENT);
 
     const companies = await loadCompaniesFromCSV(inputFile);
@@ -228,7 +231,7 @@ export async function runScheduler(csvPath?: string): Promise<SchedulerSummary> 
       `📋 Queue state: ${queueCounts.waiting} waiting, ${queueCounts.active} active, ${queueCounts.completed} completed`
     );
 
-    const { jobs, skipped } = mapCompaniesToJobs(companies);
+    const { jobs, skipped } = mapCompaniesToJobs(companies, runId);
 
     if (jobs.length === 0) {
       Logger.warn('⚠️ No companies to process.');
@@ -243,7 +246,7 @@ export async function runScheduler(csvPath?: string): Promise<SchedulerSummary> 
     insertCompanies(mapJobsToDbCompanies(jobs));
     const enqueued = await addJobsBatch(enrichmentQueue, jobs);
 
-    Logger.info(`✅ SCHEDULER: Injected ${enqueued} jobs to queue`);
+    Logger.info(`✅ SCHEDULER: Injected ${enqueued} jobs to queue`, { run_id: runId });
 
     return {
       loaded: companies.length,

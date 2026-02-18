@@ -148,7 +148,10 @@ export class UnifiedDiscoveryService {
 
         // Apply Mode Profile
         const profile = MODE_PROFILES[mode] || MODE_PROFILES[DiscoveryMode.DEEP_RUN2];
+        const stopTheBleeding = config.discovery.stopTheBleeding;
         const currentThreshold = this.applyThresholdDelta(THRESHOLDS.WAVE1_SWARM, profile.wave1ThresholdDelta);
+        const effectiveThreshold = stopTheBleeding ? Math.max(currentThreshold, THRESHOLDS.MINIMUM_VALID) : currentThreshold;
+        const effectiveMaxCandidates = stopTheBleeding ? Math.min(profile.wave1MaxCandidates, 8) : profile.wave1MaxCandidates;
 
         let bestInvalid: DiscoveryResult | null = null;
         let identity: IdentityResult | null = null;
@@ -213,20 +216,24 @@ export class UnifiedDiscoveryService {
             // =====================================================================
             // 🧠 LAYER 2: SEMANTIC WEB (LLM Oracle)
             // =====================================================================
-            Logger.info(`[Discovery] 🧠 LAYER 2: LLM ORACLE`);
-            const oracleUrl = await LLMOracle.predictWebsite(company);
-            if (oracleUrl) {
-                const oracleVerification = await this.deepVerify(oracleUrl, company);
-                if (oracleVerification && oracleVerification.confidence >= 0.85) {
-                    return this.finalize(company, {
-                        url: oracleVerification.final_url || oracleUrl,
-                        status: 'FOUND_VALID',
-                        method: 'llm_oracle',
-                        confidence: oracleVerification.confidence,
-                        wave: 'LAYER2_ORACLE',
-                        details: oracleVerification
-                    }, identity);
+            if (!stopTheBleeding) {
+                Logger.info(`[Discovery] 🧠 LAYER 2: LLM ORACLE`);
+                const oracleUrl = await LLMOracle.predictWebsite(company);
+                if (oracleUrl) {
+                    const oracleVerification = await this.deepVerify(oracleUrl, company);
+                    if (oracleVerification && oracleVerification.confidence >= 0.85) {
+                        return this.finalize(company, {
+                            url: oracleVerification.final_url || oracleUrl,
+                            status: 'FOUND_VALID',
+                            method: 'llm_oracle',
+                            confidence: oracleVerification.confidence,
+                            wave: 'LAYER2_ORACLE',
+                            details: oracleVerification
+                        }, identity);
+                    }
                 }
+            } else {
+                Logger.warn('[Discovery] Stop-the-bleeding mode active: skipping LLM oracle layer');
             }
 
             // =====================================================================
@@ -242,8 +249,8 @@ export class UnifiedDiscoveryService {
                 swarmCandidates,
                 company,
                 'LAYER3_SWARM',
-                currentThreshold,
-                profile.wave1MaxCandidates
+                effectiveThreshold,
+                effectiveMaxCandidates
             );
 
             if (validResult && validResult.status === 'FOUND_VALID') {
@@ -260,7 +267,7 @@ export class UnifiedDiscoveryService {
             // =====================================================================
             // ⚖️ LAYER 4: THE JUDGE (Nuclear Fallback)
             // =====================================================================
-            if (profile.runNuclear) {
+            if (!stopTheBleeding && profile.runNuclear) {
                 Logger.info(`[Discovery] ⚖️ LAYER 4: NUCLEAR FALLBACK`);
                 try {
                     const nuclear = await this.nuclearStrategy.execute(company);
@@ -280,35 +287,37 @@ export class UnifiedDiscoveryService {
                 } catch (e: any) {
                     Logger.warn('[Wave4] Nuclear strategy failed', { error: e, company_name: company.company_name });
                 }
+            } else if (stopTheBleeding) {
+                Logger.warn('[Discovery] Stop-the-bleeding mode active: skipping nuclear layer');
             }
 
             // FINAL REPORT
             if (bestInvalid) {
                 Logger.warn(`[Discovery] ⚠️ Best candidate invalid: ${bestInvalid.url} (${bestInvalid.confidence.toFixed(2)})`);
                 AntigravityClient.getInstance().trackCompanyUpdate(company, 'FAILED', { reason: 'Low confidence' });
-                return this.attachIdentity(bestInvalid, identity);
+                return this.attachIdentity(this.withReasonCode(bestInvalid), identity);
             }
 
             AntigravityClient.getInstance().trackCompanyUpdate(company, 'FAILED', { reason: 'Waves exhausted' });
-            return this.attachIdentity({
+            return this.attachIdentity(this.withReasonCode({
                 url: null,
                 status: 'NOT_FOUND',
                 method: 'waves_exhausted',
                 confidence: 0,
                 wave: 'ALL',
                 details: {}
-            }, identity);
+            }), identity);
 
         } catch (error: any) {
             Logger.error(`[Discovery] Error:`, { error });
-            return this.attachIdentity({
+            return this.attachIdentity(this.withReasonCode({
                 url: null,
                 status: 'ERROR',
                 method: 'exception',
                 confidence: 0,
                 wave: 'ERROR',
                 details: { error: error.message }
-            }, identity);
+            }), identity);
         }
     }
 
@@ -584,6 +593,7 @@ export class UnifiedDiscoveryService {
         const checks = unique.map(c => this.validatorLimit(async () => {
             const verification = await this.deepVerify(c.url, company);
             if (!verification) return null;
+            const reasonCode = this.reasonCodeForVerification(verification);
 
             return {
                 url: c.url,
@@ -591,6 +601,7 @@ export class UnifiedDiscoveryService {
                 method: c.source,
                 confidence: verification.confidence,
                 wave,
+                reason_code: reasonCode,
                 details: verification
             } as DiscoveryResult;
         }));
@@ -634,7 +645,7 @@ export class UnifiedDiscoveryService {
             }
         }
 
-        const final = this.attachIdentity(result, identity);
+        const final = this.attachIdentity(this.withReasonCode(result), identity);
         this.notifySuccess(company, final);
         return final;
     }
@@ -660,6 +671,61 @@ export class UnifiedDiscoveryService {
 
     private applyThresholdDelta(base: number, delta: number): number {
         return Math.min(0.99, Math.max(0.1, base + delta));
+    }
+
+    private mapExceptionToReasonCode(error: unknown): string {
+        const message = `${(error as any)?.message || error || ''}`.toLowerCase();
+        if (message.includes('timeout') || message.includes('timed out')) return 'ERROR_TIMEOUT_FETCH';
+        if (message.includes('429') || message.includes('rate limit')) return 'ERROR_PROVIDER_RATE_LIMIT';
+        if (message.includes('403') || message.includes('blocked') || message.includes('captcha')) return 'ERROR_BLOCKED_403';
+        if (message.includes('busy')) return 'ERROR_DB_BUSY';
+        if (message.includes('config') || message.includes('invalid')) return 'ERROR_CONFIG_INVALID';
+        return 'ERROR_INTERNAL';
+    }
+
+    private reasonCodeForVerification(verification: any): string {
+        if (verification?.reason_code) return verification.reason_code;
+
+        const reason = `${verification?.reason || ''}`.toLowerCase();
+        const confidence = Number(verification?.confidence || 0);
+
+        if (verification?.scraped_piva) return 'OK_CONFIRMED_VAT_MATCH';
+        if (verification?.matched_phone) return 'OK_CONFIRMED_PHONE_MATCH';
+        if (verification?.schema_signals?.vatMatch || verification?.schema_signals?.urlMatch) return 'OK_CONFIRMED_SCHEMAORG_URL';
+        if (reason.includes('directory') || reason.includes('social')) return 'REJECTED_DIRECTORY_OR_SOCIAL';
+        if (reason.includes('browser verification disabled')) return 'ERROR_BROWSER_DISABLED';
+        if (reason.includes('timeout') || reason.includes('navigation')) return 'ERROR_TIMEOUT_FETCH';
+        if (reason.includes('403') || reason.includes('blocked') || reason.includes('captcha')) return 'ERROR_BLOCKED_403';
+        if (reason.includes('rate')) return 'ERROR_PROVIDER_RATE_LIMIT';
+        if (confidence >= THRESHOLDS.MINIMUM_VALID) return 'OK_LIKELY_NAME_CITY_MATCH';
+        if (confidence > 0) return 'REJECTED_NO_MATCHING_SIGNALS';
+        return 'NOT_FOUND_NO_CANDIDATES';
+    }
+
+    private withReasonCode(result: DiscoveryResult): DiscoveryResult {
+        if (result.reason_code) return result;
+
+        if (result.status === 'ERROR') {
+            return { ...result, reason_code: this.mapExceptionToReasonCode(result.details?.error) };
+        }
+        if (result.status === 'NOT_FOUND') {
+            return { ...result, reason_code: 'NOT_FOUND_NO_CANDIDATES' };
+        }
+        if (result.status === 'FOUND_INVALID') {
+            const reason = `${result.details?.reason || ''}`.toLowerCase();
+            if (reason.includes('directory') || reason.includes('social')) {
+                return { ...result, reason_code: 'REJECTED_DIRECTORY_OR_SOCIAL' };
+            }
+            return { ...result, reason_code: 'REJECTED_NO_MATCHING_SIGNALS' };
+        }
+        if (result.status === 'FOUND_VALID') {
+            const method = `${result.method || ''}`.toLowerCase();
+            if (method.includes('vat') || method.includes('golden')) {
+                return { ...result, reason_code: 'OK_CONFIRMED_VAT_MATCH' };
+            }
+            return { ...result, reason_code: this.reasonCodeForVerification(result.details) };
+        }
+        return { ...result, reason_code: 'ERROR_INTERNAL' };
     }
 
     private normalizeUrl(rawUrl: string): string | null {
@@ -708,15 +774,139 @@ export class UnifiedDiscoveryService {
         return candidate.confidence + domainCov * 0.25;
     }
 
+    private extractSchemaOrgSignals(html: string, company: CompanyInput, currentUrl: string): {
+        vatMatch: boolean;
+        phoneMatch: boolean;
+        urlMatch: boolean;
+        foundVat?: string;
+        foundPhone?: string;
+        foundUrl?: string;
+    } {
+        const targetVat = `${company.vat_code || (company as any).vat || (company as any).piva || ''}`.replace(/\D/g, '');
+        const targetPhone = CompanyMatcher.normalizePhone(company.phone);
+        let foundVat: string | undefined;
+        let foundPhone: string | undefined;
+        let foundUrl: string | undefined;
+
+        try {
+            const $ = cheerio.load(html);
+            const scripts = $('script[type="application/ld+json"]').toArray();
+            const currentHost = new URL(currentUrl).hostname.replace(/^www\./, '').toLowerCase();
+
+            const pushNode = (bucket: any[], node: any) => {
+                if (!node || typeof node !== 'object') return;
+                if (Array.isArray(node)) {
+                    node.forEach((n) => pushNode(bucket, n));
+                    return;
+                }
+                bucket.push(node);
+                if (Array.isArray(node['@graph'])) {
+                    node['@graph'].forEach((n: any) => pushNode(bucket, n));
+                }
+            };
+
+            for (const script of scripts) {
+                const raw = $(script).text().trim();
+                if (!raw) continue;
+                let parsed: any;
+                try {
+                    parsed = JSON.parse(raw);
+                } catch {
+                    continue;
+                }
+
+                const nodes: any[] = [];
+                pushNode(nodes, parsed);
+                for (const node of nodes) {
+                    const rawType = node?.['@type'];
+                    const types = Array.isArray(rawType) ? rawType : [rawType];
+                    const isBusinessNode = types.some((t) =>
+                        typeof t === 'string' &&
+                        (t.toLowerCase().includes('organization') ||
+                            t.toLowerCase().includes('localbusiness') ||
+                            t.toLowerCase().includes('corporation'))
+                    );
+                    if (!isBusinessNode) continue;
+
+                    const nodeUrl = typeof node.url === 'string' ? node.url : '';
+                    if (nodeUrl) {
+                        try {
+                            const host = new URL(nodeUrl).hostname.replace(/^www\./, '').toLowerCase();
+                            if (host === currentHost) {
+                                foundUrl = nodeUrl;
+                            }
+                        } catch {
+                            // ignore malformed url
+                        }
+                    }
+
+                    const rawPhone = Array.isArray(node.telephone) ? node.telephone[0] : node.telephone;
+                    if (typeof rawPhone === 'string') {
+                        const normalized = CompanyMatcher.normalizePhone(rawPhone);
+                        if (normalized) foundPhone = normalized;
+                    }
+
+                    const vatCandidates: string[] = [];
+                    if (typeof node.vatID === 'string') vatCandidates.push(node.vatID);
+                    if (typeof node.taxID === 'string') vatCandidates.push(node.taxID);
+                    const identifier = node.identifier;
+                    if (typeof identifier === 'string') vatCandidates.push(identifier);
+                    if (Array.isArray(identifier)) {
+                        identifier.forEach((id) => {
+                            if (typeof id === 'string') vatCandidates.push(id);
+                            if (id && typeof id === 'object' && typeof id.value === 'string') vatCandidates.push(id.value);
+                        });
+                    }
+                    if (identifier && typeof identifier === 'object' && typeof identifier.value === 'string') {
+                        vatCandidates.push(identifier.value);
+                    }
+
+                    for (const candidateVat of vatCandidates) {
+                        const digits = candidateVat.replace(/\D/g, '');
+                        if (digits.length === 11) {
+                            foundVat = digits;
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch {
+            // ignore schema parsing errors
+        }
+
+        const vatMatch = !!targetVat && !!foundVat && foundVat === targetVat;
+        const phoneMatch = !!targetPhone && !!foundPhone && (
+            targetPhone.endsWith(foundPhone) || foundPhone.endsWith(targetPhone)
+        );
+        const urlMatch = !!foundUrl;
+
+        return { vatMatch, phoneMatch, urlMatch, foundVat, foundPhone, foundUrl };
+    }
+
     // =========================================================================
     // DEEP VERIFICATION
     // =========================================================================
 
     private async deepVerify(url: string, company: CompanyInput): Promise<any | null> {
-        if (!url || ContentFilter.isDirectoryOrSocial(url)) return null;
+        if (!url) return null;
+        if (ContentFilter.isDirectoryOrSocial(url)) {
+            return {
+                confidence: 0,
+                reason: 'Directory/social URL',
+                reason_code: 'REJECTED_DIRECTORY_OR_SOCIAL',
+                final_url: url,
+            };
+        }
 
         const normalizedUrl = this.normalizeUrl(url);
-        if (!normalizedUrl) return null;
+        if (!normalizedUrl) {
+            return {
+                confidence: 0,
+                reason: 'Invalid URL',
+                reason_code: 'REJECTED_NO_MATCHING_SIGNALS',
+                final_url: url,
+            };
+        }
 
         const cacheKey = this.buildVerificationCacheKey(normalizedUrl, company);
         const cached = this.getCachedVerification(cacheKey);
@@ -724,7 +914,12 @@ export class UnifiedDiscoveryService {
 
         const dnsProbe = await HoneyPotDetector.getInstance().checkDNS(normalizedUrl);
         if (!dnsProbe.safe) {
-            const result = { confidence: 0, reason: dnsProbe.reason || 'DNS check failed' };
+            const result = {
+                confidence: 0,
+                reason: dnsProbe.reason || 'DNS check failed',
+                reason_code: 'REJECTED_NO_MATCHING_SIGNALS',
+                final_url: normalizedUrl,
+            };
             this.setCachedVerification(cacheKey, result);
             return result;
         }
@@ -750,6 +945,22 @@ export class UnifiedDiscoveryService {
                     lowConfidenceJinaResult = jinaResult;
                 }
                 // Jina failed — fall through to browser if available
+            }
+
+            if (!config.discovery.enableBrowser) {
+                const httpFallback = await this.httpVerify(normalizedUrl, company);
+                if (httpFallback) {
+                    this.setCachedVerification(cacheKey, httpFallback);
+                    return httpFallback;
+                }
+                const disabledResult = {
+                    confidence: 0,
+                    reason: 'Browser verification disabled',
+                    reason_code: 'ERROR_BROWSER_DISABLED',
+                    final_url: normalizedUrl,
+                };
+                this.setCachedVerification(cacheKey, disabledResult);
+                return disabledResult;
             }
 
             page = await this.browserFactory.newPage();
@@ -783,7 +994,14 @@ export class UnifiedDiscoveryService {
                     url: normalizedUrl,
                     company_name: company.company_name,
                 });
-                return null;
+                const navFail = {
+                    confidence: 0,
+                    reason: 'Navigation failed',
+                    reason_code: 'ERROR_TIMEOUT_FETCH',
+                    final_url: normalizedUrl,
+                };
+                this.setCachedVerification(cacheKey, navFail);
+                return navFail;
             }
 
             if (lowConfidenceJinaResult && !lowConfidenceJinaResult.scraped_piva && !lowConfidenceJinaResult.matched_phone) {
@@ -799,6 +1017,7 @@ export class UnifiedDiscoveryService {
                             scraped_piva: agentResult,
                             matched_phone: lowConfidenceJinaResult.matched_phone,
                             signals: lowConfidenceJinaResult.signals,
+                            reason_code: 'OK_CONFIRMED_VAT_MATCH',
                             final_url: currentUrl,
                         };
                         this.setCachedVerification(cacheKey, result);
@@ -815,14 +1034,24 @@ export class UnifiedDiscoveryService {
 
             const currentUrl = this.normalizeUrl(page.url()) || normalizedUrl;
             if (ContentFilter.isDirectoryOrSocial(currentUrl)) {
-                const result = { confidence: 0, reason: 'Redirected to directory/social' };
+                const result = {
+                    confidence: 0,
+                    reason: 'Redirected to directory/social',
+                    reason_code: 'REJECTED_DIRECTORY_OR_SOCIAL',
+                    final_url: currentUrl,
+                };
                 this.setCachedVerification(cacheKey, result);
                 return result;
             }
 
             const extraction = await this.extractPageEvidence(page);
             if (ContentFilter.isDirectoryLikeTitle(extraction.title)) {
-                const result = { confidence: 0, reason: 'Directory-like title' };
+                const result = {
+                    confidence: 0,
+                    reason: 'Directory-like title',
+                    reason_code: 'REJECTED_DIRECTORY_OR_SOCIAL',
+                    final_url: currentUrl,
+                };
                 this.setCachedVerification(cacheKey, result);
                 return result;
             }
@@ -832,7 +1061,12 @@ export class UnifiedDiscoveryService {
             const safety = honeyPot.analyzeContent(extraction.html);
             if (!safety.safe) {
                 Logger.warn(`[DeepVerify] 🍯 Trap: ${normalizedUrl} -> ${safety.reason}`);
-                const result = { confidence: 0, reason: safety.reason };
+                const result = {
+                    confidence: 0,
+                    reason: safety.reason,
+                    reason_code: 'REJECTED_NO_MATCHING_SIGNALS',
+                    final_url: currentUrl,
+                };
                 this.setCachedVerification(cacheKey, result);
                 return result;
             }
@@ -840,13 +1074,39 @@ export class UnifiedDiscoveryService {
             // Content validation
             const filter = ContentFilter.isValidContent(extraction.text);
             if (!filter.valid) {
-                const result = { confidence: 0, reason: filter.reason };
+                const result = {
+                    confidence: 0,
+                    reason: filter.reason,
+                    reason_code: 'REJECTED_NO_MATCHING_SIGNALS',
+                    final_url: currentUrl,
+                };
                 this.setCachedVerification(cacheKey, result);
                 return result;
             }
 
             let combinedText = extraction.text;
             let evaluation = CompanyMatcher.evaluate(company, currentUrl, combinedText, extraction.title);
+            const schemaSignals = this.extractSchemaOrgSignals(extraction.html, company, currentUrl);
+            if (schemaSignals.vatMatch) {
+                evaluation = {
+                    ...evaluation,
+                    confidence: Math.max(evaluation.confidence, 0.99),
+                    scrapedVat: schemaSignals.foundVat || evaluation.scrapedVat,
+                    reason: `${evaluation.reason}, schema.org vat match`,
+                };
+            } else if (schemaSignals.phoneMatch) {
+                evaluation = {
+                    ...evaluation,
+                    confidence: Math.min(0.99, evaluation.confidence + 0.1),
+                    reason: `${evaluation.reason}, schema.org phone match`,
+                };
+            } else if (schemaSignals.urlMatch) {
+                evaluation = {
+                    ...evaluation,
+                    confidence: Math.min(0.99, evaluation.confidence + 0.05),
+                    reason: `${evaluation.reason}, schema.org url match`,
+                };
+            }
 
             const candidateLinks = this.collectEvidenceLinks(extraction.links, currentUrl);
             if (evaluation.confidence < THRESHOLDS.WAVE1_SWARM && candidateLinks.length > 0) {
@@ -923,6 +1183,14 @@ export class UnifiedDiscoveryService {
                 scraped_piva: evaluation.scrapedVat,
                 matched_phone: evaluation.matchedPhone,
                 signals: evaluation.signals,
+                schema_signals: schemaSignals,
+                reason_code: this.reasonCodeForVerification({
+                    confidence: evaluation.confidence,
+                    reason: evaluation.reason,
+                    scraped_piva: evaluation.scrapedVat,
+                    matched_phone: evaluation.matchedPhone,
+                    schema_signals: schemaSignals,
+                }),
                 final_url: currentUrl,
             };
             this.setCachedVerification(cacheKey, result);
@@ -941,7 +1209,14 @@ export class UnifiedDiscoveryService {
             }
 
             Logger.warn('[DeepVerify] Verification failed', { error: e as Error, url: normalizedUrl, company_name: company.company_name });
-            return null;
+            const failedResult = {
+                confidence: 0,
+                reason: (e as Error)?.message || 'Verification failed',
+                reason_code: this.mapExceptionToReasonCode(e),
+                final_url: normalizedUrl,
+            };
+            this.setCachedVerification(cacheKey, failedResult);
+            return failedResult;
         } finally {
             if (page) {
                 page.removeAllListeners('request');
@@ -966,12 +1241,22 @@ export class UnifiedDiscoveryService {
 
             // Check for directory/social redirects in the markdown content
             if (ContentFilter.isDirectoryOrSocial(normalizedUrl)) {
-                return { confidence: 0, reason: 'Directory/social URL', final_url: normalizedUrl };
+                return {
+                    confidence: 0,
+                    reason: 'Directory/social URL',
+                    reason_code: 'REJECTED_DIRECTORY_OR_SOCIAL',
+                    final_url: normalizedUrl,
+                };
             }
 
             const filter = ContentFilter.isValidContent(text);
             if (!filter.valid) {
-                return { confidence: 0, reason: filter.reason, final_url: normalizedUrl };
+                return {
+                    confidence: 0,
+                    reason: filter.reason,
+                    reason_code: 'REJECTED_NO_MATCHING_SIGNALS',
+                    final_url: normalizedUrl,
+                };
             }
 
             // Extract a pseudo-title from the first line of markdown
@@ -979,7 +1264,12 @@ export class UnifiedDiscoveryService {
             const title = firstLine.replace(/^#+\s*/, '').trim();
 
             if (ContentFilter.isDirectoryLikeTitle(title)) {
-                return { confidence: 0, reason: 'Directory-like title', final_url: normalizedUrl };
+                return {
+                    confidence: 0,
+                    reason: 'Directory-like title',
+                    reason_code: 'REJECTED_DIRECTORY_OR_SOCIAL',
+                    final_url: normalizedUrl,
+                };
             }
 
             let evaluation = CompanyMatcher.evaluate(company, normalizedUrl, text, title);
@@ -1021,6 +1311,12 @@ export class UnifiedDiscoveryService {
                 scraped_piva: evaluation.scrapedVat,
                 matched_phone: evaluation.matchedPhone,
                 signals: evaluation.signals,
+                reason_code: this.reasonCodeForVerification({
+                    confidence: evaluation.confidence,
+                    reason: evaluation.reason,
+                    scraped_piva: evaluation.scrapedVat,
+                    matched_phone: evaluation.matchedPhone,
+                }),
                 final_url: normalizedUrl,
             };
         } catch (e) {
@@ -1054,21 +1350,57 @@ export class UnifiedDiscoveryService {
                 const $ = cheerio.load(html);
                 const title = ($('title').first().text() || '').trim();
                 if (ContentFilter.isDirectoryLikeTitle(title)) {
-                    return { confidence: 0, reason: 'Directory-like title', final_url: currentUrl };
+                    return {
+                        confidence: 0,
+                        reason: 'Directory-like title',
+                        reason_code: 'REJECTED_DIRECTORY_OR_SOCIAL',
+                        final_url: currentUrl
+                    };
                 }
 
                 const safety = HoneyPotDetector.getInstance().analyzeContent(html);
                 if (!safety.safe) {
-                    return { confidence: 0, reason: safety.reason, final_url: currentUrl };
+                    return {
+                        confidence: 0,
+                        reason: safety.reason,
+                        reason_code: 'REJECTED_NO_MATCHING_SIGNALS',
+                        final_url: currentUrl
+                    };
                 }
 
                 const text = ($('body').text() || '').replace(/\s+/g, ' ').trim().slice(0, 20000);
                 const filter = ContentFilter.isValidContent(text);
                 if (!filter.valid) {
-                    return { confidence: 0, reason: filter.reason, final_url: currentUrl };
+                    return {
+                        confidence: 0,
+                        reason: filter.reason,
+                        reason_code: 'REJECTED_NO_MATCHING_SIGNALS',
+                        final_url: currentUrl
+                    };
                 }
 
                 let evaluation = CompanyMatcher.evaluate(company, currentUrl, text, title);
+                const schemaSignals = this.extractSchemaOrgSignals(html, company, currentUrl);
+                if (schemaSignals.vatMatch) {
+                    evaluation = {
+                        ...evaluation,
+                        confidence: Math.max(evaluation.confidence, 0.99),
+                        scrapedVat: schemaSignals.foundVat || evaluation.scrapedVat,
+                        reason: `${evaluation.reason}, schema.org vat match`,
+                    };
+                } else if (schemaSignals.phoneMatch) {
+                    evaluation = {
+                        ...evaluation,
+                        confidence: Math.min(0.99, evaluation.confidence + 0.1),
+                        reason: `${evaluation.reason}, schema.org phone match`,
+                    };
+                } else if (schemaSignals.urlMatch) {
+                    evaluation = {
+                        ...evaluation,
+                        confidence: Math.min(0.99, evaluation.confidence + 0.05),
+                        reason: `${evaluation.reason}, schema.org url match`,
+                    };
+                }
                 const appearsItalian = ContentFilter.isItalianLanguage(text);
                 if (!appearsItalian && evaluation.confidence < 0.9) {
                     evaluation = {
@@ -1085,6 +1417,14 @@ export class UnifiedDiscoveryService {
                     scraped_piva: evaluation.scrapedVat,
                     matched_phone: evaluation.matchedPhone,
                     signals: evaluation.signals,
+                    schema_signals: schemaSignals,
+                    reason_code: this.reasonCodeForVerification({
+                        confidence: evaluation.confidence,
+                        reason: evaluation.reason,
+                        scraped_piva: evaluation.scrapedVat,
+                        matched_phone: evaluation.matchedPhone,
+                        schema_signals: schemaSignals,
+                    }),
                     final_url: currentUrl,
                 };
             } catch {
@@ -1115,7 +1455,7 @@ export class UnifiedDiscoveryService {
     }> {
         return page.evaluate(() => {
             const text = document.body?.innerText || '';
-            const html = document.body?.innerHTML || '';
+            const html = document.documentElement?.outerHTML || document.body?.innerHTML || '';
             const title = document.title || '';
             const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a'))
                 .slice(0, 220)
