@@ -56,7 +56,7 @@ export class HyperGuesser {
         for (const strategy of this.strategies) {
             try {
                 const candidates = strategy.generate(ctx);
-                candidates.forEach(d => domains.add(d));
+                candidates.forEach((d) => this.addVariations(domains, d, ['.it', '.com', '.eu']));
             } catch (e) {
                 // Strategy failure shouldn't crash the whole guesser
                 console.warn(`[HyperGuesser] Strategy ${strategy.name} failed:`, e);
@@ -81,7 +81,7 @@ export class HyperGuesser {
                 return aDashes - bDashes;
             });
 
-        return ranked.slice(0, 150);
+        return ranked.slice(0, 80);
     }
 
     private static buildContext(name: string, city: string, province: string, category: string): GenerationContext {
@@ -134,6 +134,7 @@ export class HyperGuesser {
         norm = norm.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
         // Strip dots first so "s.r.l." becomes "srl", then matching works
         norm = norm.replace(/\./g, ' ');
+        norm = this.normalizeCorporateAbbreviations(norm);
         for (const stop of this.STOP_WORDS) {
             const plain = stop.replace(/\./g, '');
             const regex = new RegExp(`(?:^|\\s)${plain}(?:\\s|$)`, 'gi');
@@ -150,6 +151,7 @@ export class HyperGuesser {
         norm = norm.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
         // Strip dots first so "s.r.l." becomes "srl", then word-boundary matching works
         norm = norm.replace(/\./g, ' ');
+        norm = this.normalizeCorporateAbbreviations(norm);
         const allStops = [...this.STOP_WORDS, ...this.SELECTIVE_STOP_WORDS];
         for (const stop of allStops) {
             const plain = stop.replace(/\./g, '');
@@ -159,6 +161,14 @@ export class HyperGuesser {
 
         norm = norm.replace(/\./g, '');
         return norm.replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, ' ').trim();
+    }
+
+    private static normalizeCorporateAbbreviations(text: string): string {
+        return text
+            .replace(/\bs\s*r\s*l\b/gi, 'srl')
+            .replace(/\bs\s*p\s*a\b/gi, 'spa')
+            .replace(/\bs\s*n\s*c\b/gi, 'snc')
+            .replace(/\bs\s*a\s*s\b/gi, 'sas');
     }
 
     public static normalizeFully(text: string): string {

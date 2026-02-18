@@ -13,7 +13,7 @@ vi.mock('../../src/enricher/core/discovery/company_matcher');
 vi.mock('../../src/enricher/core/browser/factory_v2');
 vi.mock('../../src/enricher/core/discovery/content_filter');
 vi.mock('../../src/enricher/core/security/honeypot_detector');
-vi.mock('../../src/utils/scraper_client', () => ({
+vi.mock('../../src/enricher/utils/scraper_client', () => ({
     ScraperClient: { isJinaEnabled: () => false, fetchHtml: vi.fn(), isScrapeDoEnabled: () => false } // Disable Jina for this test
 }));
 vi.mock('../../src/observability/antigravity_client', () => ({
@@ -26,9 +26,6 @@ describe('UnifiedDiscoveryService - Agent Integration', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
-
-        // SERVICE SETUP
-        service = new UnifiedDiscoveryService();
 
         // PAGE MOCK
         mockPage = {
@@ -49,6 +46,9 @@ describe('UnifiedDiscoveryService - Agent Integration', () => {
             newPage: vi.fn().mockResolvedValue(mockPage),
             closePage: vi.fn(),
         } as any);
+
+        // SERVICE SETUP (after BrowserFactory mock)
+        service = new UnifiedDiscoveryService();
 
         // CONTENT FILTER MOCK (Pass validation)
         vi.mocked(ContentFilter.isDirectoryOrSocial).mockReturnValue(false);

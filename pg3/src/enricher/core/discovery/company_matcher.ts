@@ -100,7 +100,7 @@ export class CompanyMatcher {
     const vatMatch = !!matchedVat;
     if (vatMatch) {
       return {
-        confidence: 0.95, // GOLDEN SIGNAL
+        confidence: 1.0, // GOLDEN SIGNAL
         reason: 'VAT match (Golden Signal)',
         scrapedVat: matchedVat,
         signals: {

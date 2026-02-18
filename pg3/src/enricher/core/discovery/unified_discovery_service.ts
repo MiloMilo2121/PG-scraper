@@ -730,13 +730,24 @@ export class UnifiedDiscoveryService {
         }
 
         let page;
+        let lowConfidenceJinaResult: any | null = null;
         try {
             // 🧠 JINA-FIRST: If Jina is enabled, try browser-free verification first
             if (ScraperClient.isJinaEnabled()) {
                 const jinaResult = await this.jinaVerify(normalizedUrl, company);
                 if (jinaResult) {
-                    this.setCachedVerification(cacheKey, jinaResult);
-                    return jinaResult;
+                    const isLowConfidence = jinaResult.confidence > 0 && jinaResult.confidence < 0.4;
+                    const hasStrongSignal = !!jinaResult.scraped_piva || !!jinaResult.matched_phone;
+                    if (!isLowConfidence || hasStrongSignal) {
+                        this.setCachedVerification(cacheKey, jinaResult);
+                        return jinaResult;
+                    }
+                    Logger.info('[DeepVerify] Jina result low-confidence, escalating to browser verification', {
+                        url: normalizedUrl,
+                        confidence: jinaResult.confidence,
+                        company_name: company.company_name,
+                    });
+                    lowConfidenceJinaResult = jinaResult;
                 }
                 // Jina failed — fall through to browser if available
             }
@@ -773,6 +784,33 @@ export class UnifiedDiscoveryService {
                     company_name: company.company_name,
                 });
                 return null;
+            }
+
+            if (lowConfidenceJinaResult && !lowConfidenceJinaResult.scraped_piva && !lowConfidenceJinaResult.matched_phone) {
+                const goal = `Find the VAT number (P.IVA) for "${company.company_name}" in "${company.city || 'Italy'}". Return ONLY the VAT code.`;
+                try {
+                    const agentResult = await AgentRunner.run(page, goal);
+                    if (agentResult && (agentResult.includes('IT') || agentResult.match(/\d{11}/))) {
+                        const currentUrl = this.normalizeUrl(page.url()) || normalizedUrl;
+                        const result = {
+                            confidence: 0.95,
+                            reason: `${lowConfidenceJinaResult.reason}; Agent verified P.IVA`,
+                            level: 'RULE_STRONG',
+                            scraped_piva: agentResult,
+                            matched_phone: lowConfidenceJinaResult.matched_phone,
+                            signals: lowConfidenceJinaResult.signals,
+                            final_url: currentUrl,
+                        };
+                        this.setCachedVerification(cacheKey, result);
+                        return result;
+                    }
+                } catch (agentError) {
+                    Logger.warn('[DeepVerify] Agent escalation from Jina low-confidence failed', {
+                        error: agentError as Error,
+                        url: normalizedUrl,
+                        company_name: company.company_name,
+                    });
+                }
             }
 
             const currentUrl = this.normalizeUrl(page.url()) || normalizedUrl;
