@@ -202,9 +202,8 @@ export class BrowserFactory {
                             '--disable-renderer-backgrounding',
                             '--enable-features=NetworkService,NetworkServiceInProcess',
                             '--window-size=1920,1080',
-                            '--single-process',
-                            '--no-zygote',
-                            '--ignore-certificate-errors'
+                            // Removed --single-process: causes instability under load (shared memory between tabs = cascade crash)
+                            // Removed --ignore-certificate-errors: acceptInsecureCerts above handles misconfigured TLS safely
                         ]
                     }) as unknown as Browser;
                 }

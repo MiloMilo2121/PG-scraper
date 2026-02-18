@@ -56,6 +56,7 @@ export interface DiscoveryResult {
     method: string;
     confidence: number;
     wave: string;
+    reason_code?: string;
     details: any;
 }
 

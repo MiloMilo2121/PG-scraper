@@ -75,14 +75,22 @@ export type ScoreBreakdown = {
 
 export enum DecisionStatus {
     OK = 'OK',
+    OK_LIKELY = 'OK_LIKELY',
     NO_DOMAIN_FOUND = 'NO_DOMAIN_FOUND',
+    AMBIGUOUS = 'AMBIGUOUS',
+    REJECTED_DIRECTORY = 'REJECTED_DIRECTORY',
     ERROR = 'ERROR',
+    ERROR_FETCH = 'ERROR_FETCH',
+    ERROR_DNS = 'ERROR_DNS',
+    ERROR_TIMEOUT = 'ERROR_TIMEOUT',
+    ERROR_BLOCKED = 'ERROR_BLOCKED',
 }
 
 export type OutputResult = {
     domain_official: string | null;
     site_url_official: string | null;
     status: DecisionStatus;
+    reason_code: string;
     score: number;
     confidence: number;
     decision_reason: string;

@@ -67,6 +67,8 @@ export interface EnrichmentJobData {
     pg_url?: string;
     email?: string;
     attempt?: number;
+    run_id?: string;
+    correlation_id?: string;
 }
 
 export interface JobResult {
@@ -79,6 +81,9 @@ export interface JobResult {
     website_url?: string;
     error?: string;
     error_category?: string;
+    reason_code?: string;
+    discovery_method?: string;
+    discovery_confidence?: number;
 }
 
 /**
