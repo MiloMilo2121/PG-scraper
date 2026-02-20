@@ -59,7 +59,7 @@ async function run() {
 
     // Initialize Real Providers
 
-    // Better yet, I'll provide a minimal wrapper that reads process.env.SERPER_API_KEY
+    // Initialize Real Providers securely via environment variables
     const router = new CostRouter(cache, ledger, new Map([
         ['SERPER-1', {
             costPerRequest: 0.001,
@@ -67,11 +67,35 @@ async function run() {
             execute: async <T>(payload: any): Promise<T> => {
                 const axios = require('axios');
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const apiKey = process.env.SERPER_API_KEY || 'dummy_key';
+                const apiKey = process.env.SERPER_API_KEY || '';
                 const res = await axios.post('https://google.serper.dev/search', { q: query, gl: 'it', hl: 'it' }, {
                     headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' }
                 });
                 return (res.data.organic || []).map((r: any) => ({ url: r.link, title: r.title, snippet: r.snippet })) as unknown as T;
+            }
+        } as any],
+        ['JINA-1', {
+            costPerRequest: 0.002, // Base Jina cost
+            tier: 2,
+            execute: async <T>(payload: any): Promise<T> => {
+                const axios = require('axios');
+                const url = typeof payload === 'string' ? payload : payload.url;
+                const apiKey = process.env.JINA_API_KEY || '';
+                const res = await axios.get(`https://r.jina.ai/${encodeURIComponent(url)}`, {
+                    headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' }
+                });
+                return res.data as unknown as T;
+            }
+        } as any],
+        ['OPENAI-1', {
+            costPerRequest: 0.005, // Varies by token
+            tier: 3,
+            execute: async <T>(payload: any): Promise<T> => {
+                const { OpenAI } = require('openai');
+                const apiKey = process.env.OPENAI_API_KEY || '';
+                const openai = new OpenAI({ apiKey });
+                const completion = await openai.chat.completions.create(payload);
+                return completion as unknown as T;
             }
         } as any]
     ]));
