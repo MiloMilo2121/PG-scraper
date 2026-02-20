@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+require('dotenv').config();
 import { parse } from 'csv-parse/sync';
 import { MasterPipeline } from './MasterPipeline';
 import { InputNormalizer } from './InputNormalizer';
