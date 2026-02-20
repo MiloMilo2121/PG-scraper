@@ -81,7 +81,7 @@ export class BrowserPool {
         }
 
         const { browser, page } = await connect({
-            headless: 'new', // Using new headless so we get Stealth but backgrounded
+            headless: false, // PRB only accepts boolean. 
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
