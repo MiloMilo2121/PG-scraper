@@ -207,6 +207,7 @@ export class CostRouter {
                 success = true;
             } catch (err: any) {
                 errorMsg = err.message;
+                console.error(`[CostRouter] Provider ${providerId} failed: ${errorMsg}`);
             }
 
             const duration = Date.now() - start;
