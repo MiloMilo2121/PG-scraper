@@ -178,14 +178,21 @@ export class CostRouter {
             }
         }
 
-        // Waterfall attempt by tier
         const sortedProviders = Array.from(this.providers.entries())
             .filter(([id, adapter]) => !options?.maxTier || adapter.tier <= options.maxTier)
             .sort((a, b) => a[1].tier - b[1].tier);
 
+        const failures: { provider: string; error: string; status?: number }[] = [];
+
         for (const [providerId, adapter] of sortedProviders) {
-            if (await this.isExhausted(providerId)) continue;
-            if (!this.isProviderHealthy(providerId)) continue;
+            if (await this.isExhausted(providerId)) {
+                failures.push({ provider: providerId, error: 'Exhausted/RateLimited' });
+                continue;
+            }
+            if (!this.isProviderHealthy(providerId)) {
+                failures.push({ provider: providerId, error: 'Unhealthy' });
+                continue;
+            }
 
             // Check bucket
             const bucket = this.llmBuckets.get(providerId);
@@ -201,12 +208,15 @@ export class CostRouter {
             let success = false;
             let errorMsg: string | undefined;
             let resultData: T | undefined;
+            let statusCode: number | undefined;
 
             try {
                 resultData = await adapter.execute<T>(payload, options);
                 success = true;
             } catch (err: any) {
                 errorMsg = err.message;
+                statusCode = err.response?.status || (err.message.includes('401') ? 401 : err.message.includes('403') ? 403 : undefined);
+                failures.push({ provider: providerId, error: errorMsg || 'Unknown', status: statusCode });
                 console.error(`[CostRouter] Provider ${providerId} failed: ${errorMsg}`);
             }
 
@@ -229,7 +239,6 @@ export class CostRouter {
 
             if (success && resultData !== undefined) {
                 if (!options?.skipCache) {
-                    // Set both caches
                     await this.cache.set('router_cache', cacheKey, resultData, 3600);
                 }
                 return {
@@ -241,6 +250,30 @@ export class CostRouter {
                     cache_hit: false,
                     cache_level: 'MISS'
                 };
+            }
+        }
+
+        // EVALUATE FREE-ONLY FALLBACK IF ALL PAID APIS FAILED DUE TO AUTH
+        const authFailures = failures.filter(f => f.status === 401 || f.status === 403 || f.error.includes('auth') || f.error.includes('400'));
+        if (authFailures.length > 0 && authFailures.length === failures.filter(f => f.error !== 'Exhausted/RateLimited' && f.error !== 'Unhealthy').length) {
+            console.warn(`[CostRouter] ⚠️ All paid providers failed with auth errors. Falling back to FREE-ONLY mode.`);
+
+            const freeProviders = Array.from(this.providers.entries()).filter(([id, adapter]) => adapter.tier <= 1 && !failures.find(f => f.provider === id && f.error !== 'Unhealthy'));
+            for (const [providerId, adapter] of freeProviders) {
+                try {
+                    const resultData = await adapter.execute<T>(payload, options);
+                    return {
+                        data: resultData,
+                        provider: providerId + '_FREE_FALLBACK',
+                        tier: adapter.tier,
+                        cost_eur: 0,
+                        duration_ms: 0,
+                        cache_hit: false,
+                        cache_level: 'MISS'
+                    };
+                } catch (e) {
+                    // Ignore free fallback errors
+                }
             }
         }
 

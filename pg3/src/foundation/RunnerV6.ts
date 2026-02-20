@@ -33,7 +33,6 @@ async function healthCheck(cache: MemoryFirstCache, registry: ShadowRegistry, po
         console.log('✅ [RunnerV6] ShadowRegistry mounted.');
     }
 
-    // Ping Browser Pool (Spawns 1 instance)
     try {
         const testNav = await pool.navigateSafe('about:blank');
         if (testNav.status === 'ERROR') throw new Error('Browser error');
@@ -43,12 +42,48 @@ async function healthCheck(cache: MemoryFirstCache, registry: ShadowRegistry, po
     }
 }
 
+async function startupGate(): Promise<{ mode: 'FULL' | 'FREE_ONLY' | 'ABORT', available: string[] }> {
+    console.log('\n🔍 OMEGA v6 — Pre-flight provider check...\n');
+    const available: string[] = [];
+    let paidOk = false;
+    let freeOk = false;
+
+    const keys = ['SERPER_API_KEY', 'JINA_API_KEY', 'OPENAI_API_KEY', 'PERPLEXITY_API_KEY', 'DEEPSEEK_API_KEY', 'KIMI_API_KEY', 'Z_AI_API_KEY'];
+    for (const k of keys) {
+        const val = process.env[k];
+        if (val && val.trim() !== '' && !val.includes('your-') && !val.includes('xxx')) {
+            paidOk = true;
+            available.push(k.replace('_API_KEY', ''));
+        }
+    }
+
+    try {
+        const res = await require('axios').get('https://lite.duckduckgo.com/lite', { timeout: 5000 });
+        if (res.status === 200) freeOk = true;
+    } catch { }
+
+    if (!freeOk && !paidOk) {
+        console.log('🔴 ABORT: Nessun provider free o paid raggiungibile. Problema di rete.');
+        process.exit(1);
+    }
+    if (!paidOk) {
+        console.log('🟡 FREE-ONLY MODE: Tutti i provider a pagamento sono invalidi o non configurati.');
+        console.log('   Il batch girerà SOLO con risorse gratuite e Jina senza key.');
+        return { mode: 'FREE_ONLY', available: ['DDG', 'BING', 'JINA'] };
+    }
+
+    console.log(`🟢 FULL MODE: Provider operativi rilevati: ${available.join(', ')}`);
+    return { mode: 'FULL', available };
+}
+
 async function run() {
     const csvPath = process.argv[2];
     if (!csvPath || !fs.existsSync(csvPath)) {
         console.error('Usage: ts-node RunnerV6.ts <path-to-csv>');
         process.exit(1);
     }
+
+    const gateCheck = await startupGate();
 
     // Dependencies
     const ledger = new CostLedger();
@@ -57,13 +92,50 @@ async function run() {
     const pool = new BrowserPool({ ledger });
     const registry = new ShadowRegistry('omega_shadow.sqlite'); // Dummy path
 
-    // Initialize Real Providers
-
-    // Initialize Real Providers securely via environment variables
     const router = new CostRouter(cache, ledger, new Map([
+        ['BING-HTML-1', {
+            costPerRequest: 0,
+            tier: 0,
+            execute: async <T>(payload: any): Promise<T> => {
+                const axios = require('axios');
+                const query = typeof payload === 'string' ? payload : payload.query;
+                const res = await axios.get(`https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=it`, {
+                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' }, timeout: 8000
+                });
+                const cheerio = require('cheerio');
+                const $ = cheerio.load(res.data);
+                const results: any[] = [];
+                $('li.b_algo').each((_: any, el: any) => {
+                    const url = $(el).find('a').attr('href');
+                    const title = $(el).find('h2').text();
+                    const snippet = $(el).find('.b_caption p').text();
+                    if (url) results.push({ url, title, snippet });
+                });
+                return results as unknown as T;
+            }
+        } as any],
+        ['DDG-LITE-1', {
+            costPerRequest: 0,
+            tier: 1,
+            execute: async <T>(payload: any): Promise<T> => {
+                const axios = require('axios');
+                const query = typeof payload === 'string' ? payload : payload.query;
+                const res = await axios.post('https://lite.duckduckgo.com/lite/', `q=${encodeURIComponent(query)}&kl=it-it`, {
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0' }, timeout: 8000
+                });
+                const cheerio = require('cheerio');
+                const $ = cheerio.load(res.data);
+                const results: any[] = [];
+                $('a.result-url').each((_: any, el: any) => {
+                    const url = $(el).attr('href');
+                    if (url) results.push({ url, title: url, snippet: '' });
+                });
+                return results as unknown as T;
+            }
+        } as any],
         ['SERPER-1', {
             costPerRequest: 0.001,
-            tier: 1,
+            tier: 2,
             execute: async <T>(payload: any): Promise<T> => {
                 const axios = require('axios');
                 const query = typeof payload === 'string' ? payload : payload.query;
