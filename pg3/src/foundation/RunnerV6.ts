@@ -55,7 +55,26 @@ async function run() {
     const valve = new BackpressureValve({ ledger });
     const pool = new BrowserPool({ ledger });
     const registry = new ShadowRegistry('omega_shadow.sqlite'); // Dummy path
-    const router = new CostRouter(cache, ledger, new Map()); // Add providers in real impl
+
+    // Initialize Real Providers
+
+    // Better yet, I'll provide a minimal wrapper that reads process.env.SERPER_API_KEY
+    const router = new CostRouter(cache, ledger, new Map([
+        ['SERPER-1', {
+            costPerRequest: 0.001,
+            tier: 1,
+            execute: async <T>(payload: any): Promise<T> => {
+                const axios = require('axios');
+                const query = typeof payload === 'string' ? payload : payload.query;
+                const apiKey = process.env.SERPER_API_KEY || 'dummy_key';
+                const res = await axios.post('https://google.serper.dev/search', { q: query, gl: 'it', hl: 'it' }, {
+                    headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' }
+                });
+                return (res.data.organic || []).map((r: any) => ({ url: r.link, title: r.title, snippet: r.snippet })) as unknown as T;
+            }
+        } as any]
+    ]));
+
     const gate = new PreVerifyGate(cache, ledger);
     const buffer = new EnrichmentBuffer(cache);
     const dedup = new SerpDeduplicator(router, new (require('./QuerySanitizer').QuerySanitizer)(), buffer);
