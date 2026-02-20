@@ -88,14 +88,94 @@ async function run() {
             }
         } as any],
         ['OPENAI-1', {
-            costPerRequest: 0.005, // Varies by token
+            costPerRequest: 0.005,
             tier: 3,
             execute: async <T>(payload: any): Promise<T> => {
                 const { OpenAI } = require('openai');
                 const apiKey = process.env.OPENAI_API_KEY || '';
                 const openai = new OpenAI({ apiKey });
+                if (typeof payload === 'string' || !!payload.query) {
+                    const query = typeof payload === 'string' ? payload : payload.query;
+                    const c = await openai.chat.completions.create({
+                        model: 'gpt-4o-mini',
+                        messages: [{ role: 'user', content: `Perform a web search for: "${query}". Return the top 3 best exact matches in this JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Output raw JSON only.` }]
+                    });
+                    return JSON.parse(c.choices[0].message.content?.replace(/```json|```/g, '').trim() || '[]') as T;
+                }
                 const completion = await openai.chat.completions.create(payload);
                 return completion as unknown as T;
+            }
+        } as any],
+        ['PERPLEXITY-1', {
+            costPerRequest: 0.005,
+            tier: 4,
+            execute: async <T>(payload: any): Promise<T> => {
+                const { OpenAI } = require('openai');
+                const apiKey = process.env.PERPLEXITY_API_KEY || '';
+                const openai = new OpenAI({ apiKey, baseURL: 'https://api.perplexity.ai' });
+                if (typeof payload === 'string' || !!payload.query) {
+                    const query = typeof payload === 'string' ? payload : payload.query;
+                    const c = await openai.chat.completions.create({
+                        model: 'sonar-reasoning-pro',
+                        messages: [{ role: 'user', content: `Search the web for: "${query}". Return the top 3 best results in this JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Output raw JSON only and DO NOT use reasoning tags in the final output.` }]
+                    });
+                    return JSON.parse(c.choices[0].message.content?.replace(/```json|```/g, '').trim() || '[]') as T;
+                }
+                return (await openai.chat.completions.create(payload)) as unknown as T;
+            }
+        } as any],
+        ['DEEPSEEK-1', {
+            costPerRequest: 0.002,
+            tier: 5,
+            execute: async <T>(payload: any): Promise<T> => {
+                const { OpenAI } = require('openai');
+                const apiKey = process.env.DEEPSEEK_API_KEY || '';
+                const openai = new OpenAI({ apiKey, baseURL: 'https://api.deepseek.com/v1' });
+                if (typeof payload === 'string' || !!payload.query) {
+                    const query = typeof payload === 'string' ? payload : payload.query;
+                    const c = await openai.chat.completions.create({
+                        model: 'deepseek-chat',
+                        messages: [{ role: 'user', content: `Find the official website for: "${query}". Return the best result in this JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Output raw JSON only.` }]
+                    });
+                    return JSON.parse(c.choices[0].message.content?.replace(/```json|```/g, '').trim() || '[]') as T;
+                }
+                return (await openai.chat.completions.create(payload)) as unknown as T;
+            }
+        } as any],
+        ['KIMI-1', {
+            costPerRequest: 0.002,
+            tier: 6,
+            execute: async <T>(payload: any): Promise<T> => {
+                const { OpenAI } = require('openai');
+                const apiKey = process.env.KIMI_API_KEY || '';
+                const openai = new OpenAI({ apiKey, baseURL: 'https://api.moonshot.cn/v1' });
+                if (typeof payload === 'string' || !!payload.query) {
+                    const query = typeof payload === 'string' ? payload : payload.query;
+                    const c = await openai.chat.completions.create({
+                        model: 'moonshot-v1-8k',
+                        messages: [{ role: 'user', content: `Search the web for: "${query}". Return the top result in this JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Output raw JSON only.` }]
+                    });
+                    return JSON.parse(c.choices[0].message.content?.replace(/```json|```/g, '').trim() || '[]') as T;
+                }
+                return (await openai.chat.completions.create(payload)) as unknown as T;
+            }
+        } as any],
+        ['ZAI-1', {
+            costPerRequest: 0.002,
+            tier: 7,
+            execute: async <T>(payload: any): Promise<T> => {
+                const { OpenAI } = require('openai');
+                const apiKey = process.env.Z_AI_API_KEY || '';
+                const openai = new OpenAI({ apiKey, baseURL: 'https://api.z.ai/v1' });
+                if (typeof payload === 'string' || !!payload.query) {
+                    const query = typeof payload === 'string' ? payload : payload.query;
+                    const c = await openai.chat.completions.create({
+                        model: 'z-chat',
+                        messages: [{ role: 'user', content: `Search the web for: "${query}". Return results in JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Raw JSON only.` }]
+                    });
+                    return JSON.parse(c.choices[0].message.content?.replace(/```json|```/g, '').trim() || '[]') as T;
+                }
+                return (await openai.chat.completions.create(payload)) as unknown as T;
             }
         } as any]
     ]));
