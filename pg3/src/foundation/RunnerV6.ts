@@ -172,9 +172,12 @@ async function run() {
                         model: 'gpt-4o-mini',
                         messages: [{ role: 'user', content: `Perform a web search for: "${query}". Return the top 3 best exact matches in this JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Output raw JSON only.` }]
                     });
-                    return JSON.parse(c.choices[0].message.content?.replace(/```json|```/g, '').trim() || '[]') as T;
+                    const content = c.choices[0].message.content || '[]';
+                    const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
+                    try { return JSON.parse(jsonMatch ? jsonMatch[0] : '[]') as T; } catch { return [] as unknown as T; }
                 }
-                const completion = await openai.chat.completions.create(payload);
+                const finalPayload = { ...payload, model: 'gpt-4o-mini' };
+                const completion = await openai.chat.completions.create(finalPayload);
                 return completion as unknown as T;
             }
         } as any],
@@ -191,9 +194,12 @@ async function run() {
                         model: 'sonar-reasoning-pro',
                         messages: [{ role: 'user', content: `Search the web for: "${query}". Return the top 3 best results in this JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Output raw JSON only and DO NOT use reasoning tags in the final output.` }]
                     });
-                    return JSON.parse(c.choices[0].message.content?.replace(/```json|```/g, '').trim() || '[]') as T;
+                    const content = c.choices[0].message.content || '[]';
+                    const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
+                    try { return JSON.parse(jsonMatch ? jsonMatch[0] : '[]') as T; } catch { return [] as unknown as T; }
                 }
-                return (await openai.chat.completions.create(payload)) as unknown as T;
+                const finalPayload = { ...payload, model: 'sonar-reasoning-pro' };
+                return (await openai.chat.completions.create(finalPayload)) as unknown as T;
             }
         } as any],
         ['DEEPSEEK-1', {
@@ -209,9 +215,12 @@ async function run() {
                         model: 'deepseek-chat',
                         messages: [{ role: 'user', content: `Find the official website for: "${query}". Return the best result in this JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Output raw JSON only.` }]
                     });
-                    return JSON.parse(c.choices[0].message.content?.replace(/```json|```/g, '').trim() || '[]') as T;
+                    const content = c.choices[0].message.content || '[]';
+                    const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
+                    try { return JSON.parse(jsonMatch ? jsonMatch[0] : '[]') as T; } catch { return [] as unknown as T; }
                 }
-                return (await openai.chat.completions.create(payload)) as unknown as T;
+                const finalPayload = { ...payload, model: 'deepseek-chat' };
+                return (await openai.chat.completions.create(finalPayload)) as unknown as T;
             }
         } as any],
         ['KIMI-1', {
@@ -227,9 +236,12 @@ async function run() {
                         model: 'moonshot-v1-8k',
                         messages: [{ role: 'user', content: `Search the web for: "${query}". Return the top result in this JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Output raw JSON only.` }]
                     });
-                    return JSON.parse(c.choices[0].message.content?.replace(/```json|```/g, '').trim() || '[]') as T;
+                    const content = c.choices[0].message.content || '[]';
+                    const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
+                    try { return JSON.parse(jsonMatch ? jsonMatch[0] : '[]') as T; } catch { return [] as unknown as T; }
                 }
-                return (await openai.chat.completions.create(payload)) as unknown as T;
+                const finalPayload = { ...payload, model: 'moonshot-v1-8k' };
+                return (await openai.chat.completions.create(finalPayload)) as unknown as T;
             }
         } as any],
         ['ZAI-1', {
@@ -245,9 +257,12 @@ async function run() {
                         model: 'z-chat',
                         messages: [{ role: 'user', content: `Search the web for: "${query}". Return results in JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Raw JSON only.` }]
                     });
-                    return JSON.parse(c.choices[0].message.content?.replace(/```json|```/g, '').trim() || '[]') as T;
+                    const content = c.choices[0].message.content || '[]';
+                    const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
+                    try { return JSON.parse(jsonMatch ? jsonMatch[0] : '[]') as T; } catch { return [] as unknown as T; }
                 }
-                return (await openai.chat.completions.create(payload)) as unknown as T;
+                const finalPayload = { ...payload, model: 'z-chat' };
+                return (await openai.chat.completions.create(finalPayload)) as unknown as T;
             }
         } as any]
     ]));
