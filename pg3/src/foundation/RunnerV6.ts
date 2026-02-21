@@ -179,8 +179,8 @@ async function run() {
             }
         } as any],
         ['PERPLEXITY-1', {
-            costPerRequest: 0.005,
-            tier: 4,
+            costPerRequest: 0.010,
+            tier: 8,
             execute: async <T>(payload: any): Promise<T> => {
                 const apiKey = process.env.PERPLEXITY_API_KEY || '';
                 const openai = new OpenAI({ apiKey, baseURL: 'https://api.perplexity.ai' });
