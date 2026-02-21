@@ -1,6 +1,9 @@
 import * as fs from 'fs';
 require('dotenv').config();
 import { parse } from 'csv-parse/sync';
+import axios from 'axios';
+import * as cheerio from 'cheerio';
+import { OpenAI } from 'openai';
 import { MasterPipeline } from './MasterPipeline';
 import { InputNormalizer } from './InputNormalizer';
 import { ShadowRegistry } from './ShadowRegistry';
@@ -16,6 +19,7 @@ import { MemoryFirstCache } from './MemoryFirstCache';
 import { CostLedger } from './CostLedger';
 import { CostRouter } from './CostRouter';
 import { EnrichmentBuffer } from './EnrichmentBuffer';
+import { QuerySanitizer } from './QuerySanitizer';
 
 async function healthCheck(cache: MemoryFirstCache, registry: ShadowRegistry, pool: BrowserPool) {
     console.log('[RunnerV6] Running Startup Health Diagnostics...');
@@ -58,7 +62,7 @@ async function startupGate(): Promise<{ mode: 'FULL' | 'FREE_ONLY' | 'ABORT', av
     }
 
     try {
-        const res = await require('axios').get('https://lite.duckduckgo.com/lite', { timeout: 5000 });
+        const res = await axios.get('https://lite.duckduckgo.com/lite', { timeout: 5000 });
         if (res.status === 200) freeOk = true;
     } catch { }
 
@@ -97,12 +101,10 @@ async function run() {
             costPerRequest: 0,
             tier: 0,
             execute: async <T>(payload: any): Promise<T> => {
-                const axios = require('axios');
                 const query = typeof payload === 'string' ? payload : payload.query;
                 const res = await axios.get(`https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=it`, {
                     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' }, timeout: 8000
                 });
-                const cheerio = require('cheerio');
                 const $ = cheerio.load(res.data);
                 const results: any[] = [];
                 $('li.b_algo').each((_: any, el: any) => {
@@ -118,12 +120,10 @@ async function run() {
             costPerRequest: 0,
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
-                const axios = require('axios');
                 const query = typeof payload === 'string' ? payload : payload.query;
                 const res = await axios.post('https://lite.duckduckgo.com/lite/', `q=${encodeURIComponent(query)}&kl=it-it`, {
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0' }, timeout: 8000
                 });
-                const cheerio = require('cheerio');
                 const $ = cheerio.load(res.data);
                 const results: any[] = [];
                 $('a.result-url').each((_: any, el: any) => {
@@ -137,7 +137,6 @@ async function run() {
             costPerRequest: 0.001,
             tier: 2,
             execute: async <T>(payload: any): Promise<T> => {
-                const axios = require('axios');
                 const query = typeof payload === 'string' ? payload : payload.query;
                 const apiKey = process.env.SERPER_API_KEY || '';
                 const res = await axios.post('https://google.serper.dev/search', { q: query, gl: 'it', hl: 'it' }, {
@@ -147,10 +146,9 @@ async function run() {
             }
         } as any],
         ['JINA-1', {
-            costPerRequest: 0.002, // Base Jina cost
+            costPerRequest: 0.002,
             tier: 2,
             execute: async <T>(payload: any): Promise<T> => {
-                const axios = require('axios');
                 const url = typeof payload === 'string' ? payload : payload.url;
                 const apiKey = process.env.JINA_API_KEY || '';
                 const res = await axios.get(`https://r.jina.ai/${encodeURIComponent(url)}`, {
@@ -163,7 +161,6 @@ async function run() {
             costPerRequest: 0.005,
             tier: 3,
             execute: async <T>(payload: any): Promise<T> => {
-                const { OpenAI } = require('openai');
                 const apiKey = process.env.OPENAI_API_KEY || '';
                 const openai = new OpenAI({ apiKey });
                 if (typeof payload === 'string' || !!payload.query) {
@@ -185,7 +182,6 @@ async function run() {
             costPerRequest: 0.005,
             tier: 4,
             execute: async <T>(payload: any): Promise<T> => {
-                const { OpenAI } = require('openai');
                 const apiKey = process.env.PERPLEXITY_API_KEY || '';
                 const openai = new OpenAI({ apiKey, baseURL: 'https://api.perplexity.ai' });
                 if (typeof payload === 'string' || !!payload.query) {
@@ -206,7 +202,6 @@ async function run() {
             costPerRequest: 0.002,
             tier: 5,
             execute: async <T>(payload: any): Promise<T> => {
-                const { OpenAI } = require('openai');
                 const apiKey = process.env.DEEPSEEK_API_KEY || '';
                 const openai = new OpenAI({ apiKey, baseURL: 'https://api.deepseek.com/v1' });
                 if (typeof payload === 'string' || !!payload.query) {
@@ -227,7 +222,6 @@ async function run() {
             costPerRequest: 0.002,
             tier: 6,
             execute: async <T>(payload: any): Promise<T> => {
-                const { OpenAI } = require('openai');
                 const apiKey = process.env.KIMI_API_KEY || '';
                 const openai = new OpenAI({ apiKey, baseURL: 'https://api.moonshot.cn/v1' });
                 if (typeof payload === 'string' || !!payload.query) {
@@ -248,7 +242,6 @@ async function run() {
             costPerRequest: 0.002,
             tier: 7,
             execute: async <T>(payload: any): Promise<T> => {
-                const { OpenAI } = require('openai');
                 const apiKey = process.env.Z_AI_API_KEY || '';
                 const openai = new OpenAI({ apiKey, baseURL: 'https://api.z.ai/v1' });
                 if (typeof payload === 'string' || !!payload.query) {
@@ -269,7 +262,7 @@ async function run() {
 
     const gate = new PreVerifyGate(cache, ledger);
     const buffer = new EnrichmentBuffer(cache);
-    const dedup = new SerpDeduplicator(router, new (require('./QuerySanitizer').QuerySanitizer)(), buffer);
+    const dedup = new SerpDeduplicator(router, new QuerySanitizer(), buffer);
     const oracleGuard = new LLMOracleGuard(cache, valve);
     const bleedingCtrl = new StopTheBleedingController(ledger, valve, pool);
 
@@ -293,23 +286,36 @@ async function run() {
     console.log(`[RunnerV6] Loaded ${records.length} records. Commencing OMEGA ENGINE v6.`);
 
     let done = 0;
-    const promises = records.map((row: any, idx: number) => {
-        return pipeline.processCompany(row, idx).then(res => {
-            done++;
-            if (done % 10 === 0) {
-                const metrics = valve.getMetrics();
-                const poolMetrics = pool.getPoolStatus();
-                console.log(`📊 Progress: ${done}/${records.length} (${((done / records.length) * 100).toFixed(1)}%) | 🚦 Concurrency: ${metrics.current_concurrency}/${metrics.max_concurrency} (Q: ${metrics.queue_depth}) | ❌ Errors: ${(metrics.error_rate_5m * 100).toFixed(1)}% | 🩸 Bleeding: ${bleedingCtrl.isBleedingModeActive}`);
-            }
-            return res;
-        });
-    });
+    const BATCH_SIZE = 15; // Process in controlled batches to prevent OOM
+    const results: any[] = [];
 
-    await Promise.all(promises);
+    for (let i = 0; i < records.length; i += BATCH_SIZE) {
+        const batch = records.slice(i, i + BATCH_SIZE);
+        const batchPromises = batch.map((row: any, batchIdx: number) => {
+            const idx = i + batchIdx;
+            return pipeline.processCompany(row, idx).then(res => {
+                done++;
+                if (done % 10 === 0) {
+                    const metrics = valve.getMetrics();
+                    const poolMetrics = pool.getPoolStatus();
+                    console.log(`📊 Progress: ${done}/${records.length} (${((done / records.length) * 100).toFixed(1)}%) | 🚦 Concurrency: ${metrics.current_concurrency}/${metrics.max_concurrency} (Q: ${metrics.queue_depth}) | ❌ Errors: ${(metrics.error_rate_5m * 100).toFixed(1)}% | 🩸 Bleeding: ${bleedingCtrl.isBleedingModeActive}`);
+                }
+                return res;
+            }).catch(err => {
+                done++;
+                console.error(`[RunnerV6] Company ${idx} failed:`, err.message);
+                return { status: 'ERROR', error: err.message };
+            });
+        });
+
+        const batchResults = await Promise.all(batchPromises);
+        results.push(...batchResults);
+    }
 
     console.log('[RunnerV6] Extraction Complete. Cleaning up...');
     valve.cleanup();
     ledger.cleanup();
+    router.cleanup();
     await pool.destroyAll();
     process.exit(0);
 }

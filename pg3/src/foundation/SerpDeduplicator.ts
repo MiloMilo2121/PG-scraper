@@ -95,7 +95,7 @@ export class SerpDeduplicator {
             if (uniqueDomains.has(domain)) continue;
 
             const isNoise = NOISE_DOMAINS.has(domain);
-            const isLinkedIn = domain.includes('linkedin.com/in/');
+            const isLinkedIn = domain.includes('linkedin.com') && raw.url.includes('/in/');
 
             if (isLinkedIn) {
                 linkedinBuffer.push({
