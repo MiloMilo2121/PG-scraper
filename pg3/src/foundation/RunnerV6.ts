@@ -203,7 +203,7 @@ async function run() {
             tier: 5,
             execute: async <T>(payload: any): Promise<T> => {
                 const apiKey = process.env.DEEPSEEK_API_KEY || '';
-                const openai = new OpenAI({ apiKey, baseURL: 'https://api.deepseek.com/v1' });
+                const openai = new OpenAI({ apiKey, baseURL: 'https://api.deepseek.com' });
                 if (typeof payload === 'string' || !!payload.query) {
                     const query = typeof payload === 'string' ? payload : payload.query;
                     const c = await openai.chat.completions.create({
@@ -243,18 +243,18 @@ async function run() {
             tier: 7,
             execute: async <T>(payload: any): Promise<T> => {
                 const apiKey = process.env.Z_AI_API_KEY || '';
-                const openai = new OpenAI({ apiKey, baseURL: 'https://api.z.ai/v1' });
+                const openai = new OpenAI({ apiKey, baseURL: 'https://open.bigmodel.cn/api/paas/v4' });
                 if (typeof payload === 'string' || !!payload.query) {
                     const query = typeof payload === 'string' ? payload : payload.query;
                     const c = await openai.chat.completions.create({
-                        model: 'z-chat',
+                        model: 'glm-4-plus',
                         messages: [{ role: 'user', content: `Search the web for: "${query}". Return results in JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Raw JSON only.` }]
                     });
                     const content = c.choices[0].message.content || '[]';
                     const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
                     try { return JSON.parse(jsonMatch ? jsonMatch[0] : '[]') as T; } catch { return [] as unknown as T; }
                 }
-                const finalPayload = { ...payload, model: 'z-chat' };
+                const finalPayload = { ...payload, model: 'glm-4-plus' };
                 return (await openai.chat.completions.create(finalPayload)) as unknown as T;
             }
         } as any]
