@@ -3,7 +3,7 @@ import { CostLedger } from './CostLedger';
 import * as http from 'http';
 import * as https from 'https';
 
-export type VerificationResult = 'VERIFIED' | 'NEEDS_BROWSER' | 'REJECTED' | 'PARKED';
+export type VerificationResult = 'VERIFIED' | 'VERIFIED_SEMANTIC' | 'NEEDS_BROWSER' | 'REJECTED' | 'PARKED';
 
 const PARKING_SIGNATURES = [
     'domain is for sale',
@@ -24,7 +24,7 @@ export class PreVerifyGate {
         this.ledger = ledger;
     }
 
-    public async check(url: string, piva?: string): Promise<VerificationResult> {
+    public async check(url: string, piva?: string, companyName?: string): Promise<VerificationResult> {
         try {
             const parsedUrl = new URL(url);
             const domain = parsedUrl.hostname;
@@ -53,7 +53,7 @@ export class PreVerifyGate {
                 return 'PARKED';
             }
 
-            // STAGE 3: Quick Jina Fetch (only if CF not detected and P.IVA present)
+            // STAGE 3: Quick Jina Fetch (P.IVA match if available)
             if (piva) {
                 const jinaHit = await this.checkJinaForPiva(url, piva);
                 if (jinaHit === 'CF_DETECTED') {
@@ -62,6 +62,19 @@ export class PreVerifyGate {
                 }
                 if (jinaHit === 'VERIFIED') {
                     return 'VERIFIED';
+                }
+            }
+
+            // STAGE 3B: Semantic Name Matching (when PIVA unavailable)
+            // If no PIVA, use company name + domain heuristics to verify ownership
+            if (!piva && companyName) {
+                const semanticResult = await this.checkSemanticNameMatch(url, companyName);
+                if (semanticResult === 'CF_DETECTED') {
+                    await this.cache.setRedisOnly('omega:cloudflare', domain, true, 86400 * 7);
+                    return 'NEEDS_BROWSER';
+                }
+                if (semanticResult === 'VERIFIED') {
+                    return 'VERIFIED_SEMANTIC';
                 }
             }
 
@@ -201,6 +214,92 @@ export class PreVerifyGate {
                 await this.ledger.log({
                     timestamp: new Date().toISOString(),
                     module: 'PreVerifyGate', provider: 'jina', tier: 1, task_type: 'LLM_PARSE',
+                    cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: Date.now() - start, success: false, error: 'TIMEOUT'
+                });
+                resolve('MISS');
+            });
+
+            req.setHeader('Authorization', `Bearer ${process.env.JINA_API_KEY || ''}`);
+            req.end();
+        });
+    private async checkSemanticNameMatch(url: string, companyName: string): Promise<'VERIFIED' | 'CF_DETECTED' | 'MISS'> {
+        const start = Date.now();
+        return new Promise((resolve) => {
+            const jinaUrl = `https://r.jina.ai/${url}`;
+            const req = https.request(jinaUrl, { method: 'GET', timeout: 6000 }, (res) => {
+                let data = '';
+
+                res.on('data', (chunk) => {
+                    data += chunk;
+                    if (data.length > 10000) {
+                        res.destroy(); // Only need first 10KB for name matching
+                    }
+                });
+
+                const handleData = async () => {
+                    const duration = Date.now() - start;
+
+                    if (data.includes('Checking your browser') || data.includes('Just a moment...')) {
+                        await this.ledger.log({
+                            timestamp: new Date().toISOString(),
+                            module: 'PreVerifyGate', provider: 'jina-semantic', tier: 1, task_type: 'LLM_PARSE',
+                            cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: duration, success: false, error: 'CF_DETECTED'
+                        });
+                        resolve('CF_DETECTED');
+                        return;
+                    }
+
+                    // Normalize both sides for fuzzy matching
+                    const siteTextLower = data.toLowerCase();
+                    const nameTokens = companyName
+                        .toLowerCase()
+                        .replace(/s\.?r\.?l\.?|s\.?n\.?c\.?|s\.?p\.?a\.?|s\.?a\.?s\.?|s\.?r\.?l\.?s\.?|unipersonale|in liquidazione|di |\&|snc|srl|sas|spa/gi, '')
+                        .trim()
+                        .split(/\s+/)
+                        .filter(t => t.length >= 3); // Only meaningful tokens
+
+                    // Count how many name tokens appear in the site text
+                    const matchedTokens = nameTokens.filter(token => siteTextLower.includes(token));
+                    const matchRatio = nameTokens.length > 0 ? matchedTokens.length / nameTokens.length : 0;
+
+                    // Also check domain vs company name
+                    const domain = new URL(url).hostname.replace('www.', '').split('.')[0].toLowerCase();
+                    const nameSlug = companyName.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const domainMatchesName = nameSlug.includes(domain) || domain.includes(nameSlug.substring(0, Math.min(nameSlug.length, 8)));
+
+                    const verified = matchRatio >= 0.6 || (matchRatio >= 0.4 && domainMatchesName);
+
+                    await this.ledger.log({
+                        timestamp: new Date().toISOString(),
+                        module: 'PreVerifyGate', provider: 'jina-semantic', tier: 1, task_type: 'LLM_PARSE',
+                        cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: duration, success: verified
+                    });
+
+                    if (verified) {
+                        console.log(`[PreVerifyGate] ✅ Semantic match: ${matchedTokens.join('+')} (${(matchRatio * 100).toFixed(0)}%) for "${companyName}" on ${url}`);
+                    }
+
+                    resolve(verified ? 'VERIFIED' : 'MISS');
+                };
+
+                res.on('end', handleData);
+                res.on('close', handleData);
+            });
+
+            req.on('error', async () => {
+                await this.ledger.log({
+                    timestamp: new Date().toISOString(),
+                    module: 'PreVerifyGate', provider: 'jina-semantic', tier: 1, task_type: 'LLM_PARSE',
+                    cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: Date.now() - start, success: false, error: 'NET_ERROR'
+                });
+                resolve('MISS');
+            });
+
+            req.on('timeout', async () => {
+                req.destroy();
+                await this.ledger.log({
+                    timestamp: new Date().toISOString(),
+                    module: 'PreVerifyGate', provider: 'jina-semantic', tier: 1, task_type: 'LLM_PARSE',
                     cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: Date.now() - start, success: false, error: 'TIMEOUT'
                 });
                 resolve('MISS');

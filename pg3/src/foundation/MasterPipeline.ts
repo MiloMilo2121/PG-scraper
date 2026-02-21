@@ -62,7 +62,7 @@ export class MasterPipeline {
             // STAGE 0: Normalize Input
             const input = this.normalizer.normalize(rawInput);
             if (input.quality_score < 0.3) {
-                return this.buildResult(input, 'NOT_FOUND', null, null, null, layersAttempted, start);
+                return this.buildResult(input, 'NOT_FOUND', null, '', null, null, layersAttempted, start);
             }
 
             // STAGE 1: ShadowRegistry Local Lookup
@@ -75,22 +75,45 @@ export class MasterPipeline {
             // In a perfect system, if Registry returns URL, we take it. 
             // Since ShadowRegistry only returns PIVA right now, we use that for later verification.
 
-            // Helper for Ultimate Golden Match
+            // Helper for Ultimate Golden Match (now with semantic name matching)
+            const companyNameForGate = input.company_name;
             const checkUrl = async (url: string, layerName: string): Promise<boolean> => {
-                const gateStatus = await this.gate.check(url, piva);
+                const gateStatus = await this.gate.check(url, piva, companyNameForGate);
                 if (gateStatus === 'VERIFIED') {
                     discoveredUrl = url;
-                    discoveryLayer = layerName;
+                    discoveryLayer = layerName + '_PIVA_MATCH';
                     return true;
-                } else if (gateStatus === 'NEEDS_BROWSER' && piva) {
-                    // The ultimate WAF bypass: Chromium loads it and we check HTML for PIVA
+                } else if (gateStatus === 'VERIFIED_SEMANTIC') {
+                    discoveredUrl = url;
+                    discoveryLayer = layerName + '_SEMANTIC';
+                    return true;
+                } else if (gateStatus === 'NEEDS_BROWSER') {
+                    // The ultimate WAF bypass: Chromium loads it and we check HTML
                     const nav = await this.browserPool.navigateSafe(url);
                     if (nav.status === 'OK' && nav.html) {
-                        const cleanPiva = piva.replace(/[^0-9]/g, '');
-                        const bodyText = nav.html.replace(/[^0-9]/g, '');
-                        if (bodyText.includes(cleanPiva)) {
+                        // Try PIVA match first
+                        if (piva) {
+                            const cleanPiva = piva.replace(/[^0-9]/g, '');
+                            const bodyText = nav.html.replace(/[^0-9]/g, '');
+                            if (bodyText.includes(cleanPiva)) {
+                                discoveredUrl = url;
+                                discoveryLayer = layerName + '_WAF_PIVA';
+                                return true;
+                            }
+                        }
+                        // Fallback: company name match in browser HTML
+                        const htmlLower = nav.html.toLowerCase();
+                        const nameTokens = companyNameForGate
+                            .toLowerCase()
+                            .replace(/s\.?r\.?l\.?|s\.?n\.?c\.?|s\.?p\.?a\.?|srl|snc|spa|sas|unipersonale|in liquidazione/gi, '')
+                            .trim()
+                            .split(/\s+/)
+                            .filter(t => t.length >= 3);
+                        const matched = nameTokens.filter(t => htmlLower.includes(t));
+                        if (nameTokens.length > 0 && (matched.length / nameTokens.length) >= 0.5) {
                             discoveredUrl = url;
-                            discoveryLayer = layerName + '_WAF_BYPASS';
+                            discoveryLayer = layerName + '_WAF_SEMANTIC';
+                            console.log(`[MasterPipeline] 🧠 Browser semantic match: ${matched.join('+')} for "${companyNameForGate}" on ${url}`);
                             return true;
                         }
                     }
@@ -199,7 +222,7 @@ export class MasterPipeline {
 
             const status = discoveredUrl ? 'FOUND_COMPLETE' : 'NOT_FOUND';
 
-            return this.buildResult(input, status, discoveredUrl, financial, decisionMaker, layersAttempted, start);
+            return this.buildResult(input, status, discoveredUrl, discoveryLayer, financial, decisionMaker, layersAttempted, start);
         }, 1); // Priority 1 (Core Pipeline)
     }
 
@@ -207,11 +230,17 @@ export class MasterPipeline {
         input: NormalizedInput,
         status: string,
         url: string | null,
+        discoveryLayer: string,
         fin: any,
         dm: any,
         layers: string[],
         start: number
     ) {
+        // Dynamic confidence based on discovery method
+        let confidence = 0.95; // PIVA match default
+        if (discoveryLayer.includes('SEMANTIC')) confidence = 0.80;
+        if (discoveryLayer.includes('LLM_ORACLE_SEMANTIC')) confidence = 0.75;
+
         return {
             input: {
                 company_name: input.company_name,
@@ -220,7 +249,7 @@ export class MasterPipeline {
             },
             website: url ? {
                 url,
-                confidence: discoveryLayer.includes('LLM_ORACLE_SEMANTIC') ? 0.75 : 0.95,
+                confidence,
                 discovery_layer: discoveryLayer || layers[layers.length - 1]
             } : undefined,
             financial: fin || undefined,
