@@ -121,11 +121,29 @@ export class MasterPipeline {
                 return false;
             };
 
+            // Timeout wrapper: max 8 seconds per checkUrl attempt
+            const checkUrlWithTimeout = async (url: string, layerName: string): Promise<boolean> => {
+                try {
+                    console.log(`[MasterPipeline] ⚡ Checking: ${url} (${layerName}) for "${input.company_name}"`);
+                    const result = await Promise.race([
+                        checkUrl(url, layerName),
+                        new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error('CHECK_URL_TIMEOUT')), 8000))
+                    ]);
+                    if (result) {
+                        console.log(`[MasterPipeline] ✅ FOUND: ${url} via ${discoveryLayer}`);
+                    }
+                    return result;
+                } catch (err: any) {
+                    console.warn(`[MasterPipeline] ⏰ Timeout/Error checking ${url}: ${err.message}`);
+                    return false;
+                }
+            };
+
             // STAGE 2: Email Domain Candidate
             layersAttempted.push('STAGE_2_EMAIL_DOMAIN');
             if (input.email_domain) {
                 const candidateUrl = `https://www.${input.email_domain}`;
-                await checkUrl(candidateUrl, 'EMAIL_DOMAIN');
+                await checkUrlWithTimeout(candidateUrl, 'EMAIL_DOMAIN');
             }
 
             // STAGE 3: Hyper Guesser (Direct Domain Probe)
@@ -134,7 +152,7 @@ export class MasterPipeline {
                 const baseGuess = input.company_name_variants[0].replace(/[^a-z0-9]/g, '');
                 if (baseGuess.length >= 3) {
                     const guessUrl = `https://www.${baseGuess}.it`;
-                    await checkUrl(guessUrl, 'HYPER_GUESSER');
+                    await checkUrlWithTimeout(guessUrl, 'HYPER_GUESSER');
                 }
             }
 
@@ -143,8 +161,12 @@ export class MasterPipeline {
                 layersAttempted.push('STAGE_4_SERP_COMPANY');
                 const serpRes = await this.dedup.search(companyId, input, 'company', { maxTier: isBleeding ? 1 : undefined });
 
-                for (const cand of serpRes.results) {
-                    const found = await checkUrl(cand.url, 'SERP_COMPANY');
+                console.log(`[MasterPipeline] 🔎 SERP returned ${serpRes.results.length} candidates for "${input.company_name}" (providers: ${serpRes.providers_used.join(',')})`);
+
+                // Only check top 3 candidates to avoid timeout cascade
+                const topCandidates = serpRes.results.slice(0, 3);
+                for (const cand of topCandidates) {
+                    const found = await checkUrlWithTimeout(cand.url, 'SERP_COMPANY');
                     if (found) break;
                 }
 

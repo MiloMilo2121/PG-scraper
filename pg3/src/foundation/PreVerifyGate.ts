@@ -228,7 +228,7 @@ export class PreVerifyGate {
         const start = Date.now();
         return new Promise((resolve) => {
             const jinaUrl = `https://r.jina.ai/${url}`;
-            const req = https.request(jinaUrl, { method: 'GET', timeout: 6000 }, (res) => {
+            const req = https.request(jinaUrl, { method: 'GET', timeout: 4000 }, (res) => {
                 let data = '';
 
                 res.on('data', (chunk) => {
