@@ -222,6 +222,8 @@ export class PreVerifyGate {
             req.setHeader('Authorization', `Bearer ${process.env.JINA_API_KEY || ''}`);
             req.end();
         });
+    }
+
     private async checkSemanticNameMatch(url: string, companyName: string): Promise<'VERIFIED' | 'CF_DETECTED' | 'MISS'> {
         const start = Date.now();
         return new Promise((resolve) => {
