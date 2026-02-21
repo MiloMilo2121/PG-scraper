@@ -23,11 +23,10 @@ export class DistributedRateLimiter {
         }
 
         try {
-            // Remove old entries
             const windowStart = now - (windowSeconds * 1000);
-            // ioredis zremrangebyscore isn't natively exposed in our wrapper, we'll just check count.
-            // A production environment would execute a Lua script here for atomicity, but 
-            // since we count and then add, it's roughly fine.
+
+            // Cleanup expired entries to prevent unbounded sorted set growth
+            await this.cache.zremrangebyscore('rate_limit_ns', key, 0, windowStart);
 
             const recentHits = await this.cache.zrangeByScore('rate_limit_ns', key, windowStart, now);
 
@@ -38,8 +37,6 @@ export class DistributedRateLimiter {
             // Allowed, add it
             await this.cache.zadd('rate_limit_ns', key, score, `${now}-${Math.random()}`);
 
-            // Set an explicit expiration on the key if we wanted, but ZSETs can grow. To manage growth we rely on Cron cleanup
-            // Or use simple counters instead of sliding windows if strict sliding isn't needed.
             return true;
 
         } catch (err) {

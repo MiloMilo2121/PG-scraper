@@ -237,6 +237,11 @@ export class MemoryFirstCache {
         return await this.redis.zcard(this.getL2Key(ns, key)).catch(() => 0) as number;
     }
 
+    public async zremrangebyscore(ns: string, key: string, min: number, max: number): Promise<number> {
+        if (!this.redisHealthy) return 0;
+        return await this.redis.zremrangebyscore(this.getL2Key(ns, key), min, max).catch(() => 0) as number;
+    }
+
     public async ping(): Promise<boolean> {
         if (!this.redisHealthy) return false;
         try {

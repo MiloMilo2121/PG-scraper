@@ -279,4 +279,10 @@ export class CostRouter {
 
         throw new AllProvidersExhausted(taskType);
     }
+
+    public cleanup(): void {
+        for (const [, bucket] of this.llmBuckets) {
+            bucket.cleanup();
+        }
+    }
 }

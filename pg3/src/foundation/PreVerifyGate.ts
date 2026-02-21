@@ -108,6 +108,14 @@ export class PreVerifyGate {
 
     private performParkingCheck(url: string): Promise<boolean> {
         return new Promise((resolve) => {
+            let resolved = false;
+            const safeResolve = (value: boolean) => {
+                if (!resolved) {
+                    resolved = true;
+                    resolve(value);
+                }
+            };
+
             const parsed = new URL(url);
             const lib = parsed.protocol === 'https:' ? https : http;
 
@@ -124,18 +132,18 @@ export class PreVerifyGate {
                 res.on('end', () => {
                     const content = data.toLowerCase();
                     const isParked = PARKING_SIGNATURES.some(sig => content.includes(sig));
-                    resolve(isParked);
+                    safeResolve(isParked);
                 });
 
                 res.on('close', () => {
                     const content = data.toLowerCase();
                     const isParked = PARKING_SIGNATURES.some(sig => content.includes(sig));
-                    resolve(isParked);
+                    safeResolve(isParked);
                 });
             });
 
-            req.on('error', () => resolve(false));
-            req.on('timeout', () => { req.destroy(); resolve(false); });
+            req.on('error', () => safeResolve(false));
+            req.on('timeout', () => { req.destroy(); safeResolve(false); });
             req.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
             req.end();
         });

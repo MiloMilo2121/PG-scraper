@@ -85,7 +85,7 @@ export class BackpressureValve {
             if (this.targetConcurrency !== 1) {
                 this.targetConcurrency = 1;
                 this.adjustmentsMade++;
-                console.warn('[BackpressureValve] EMERGENCY MODE ACTIVED: error_rate > 30%. Concurrency locked to 1.');
+                console.warn('[BackpressureValve] EMERGENCY MODE ACTIVATED: error_rate > 30%. Concurrency locked to 1.');
             }
         } else if (health.error_rate > 0.15 || health.avg_duration_ms > 8000) {
             // Multiplicative Decrease
