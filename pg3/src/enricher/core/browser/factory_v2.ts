@@ -127,6 +127,9 @@ export class BrowserFactory {
 
             const freeMem = os.freemem() / 1024 / 1024;
             Logger.info(`[BrowserFactory:${this.instanceId}] Spawning browser`, { free_ram_mb: Math.round(freeMem) });
+            // Generate a fresh profile directory on every launch to guarantee we bypass OS lockfile collisions
+            this.instanceId = Math.random().toString(36).substring(7);
+            this.userDataDir = path.join(process.cwd(), 'temp_profiles', `browser_${this.instanceId}`);
             this.currentProfilePath = this.userDataDir;
 
             // Task 10: Cloak webdriver

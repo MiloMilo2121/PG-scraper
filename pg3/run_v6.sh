@@ -1,0 +1,1 @@
+cd /root/pg3 && git fetch origin main && git reset --hard origin/main && npm install && npx tsc --noEmit && head -n 100 output_server/campaigns/DISCOVERY_INPUT_2026-02-19.csv > output_server/campaigns/test_v6.csv && npx ts-node src/foundation/RunnerV6.ts output_server/campaigns/test_v6.csv

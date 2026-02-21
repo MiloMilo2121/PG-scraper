@@ -173,6 +173,11 @@ export class QueryBuilder {
         // Sort by precision (highest first)
         queries.sort((a, b) => b.expectedPrecision - a.expectedPrecision);
 
+        // Sanitize queries to prevent Serper API 400 Bad Request with empty strings
+        queries.forEach(q => {
+            q.query = q.query.replace(/\s\"\"/g, '').replace(/\"\"\s/g, '').trim();
+        });
+
         return queries;
     }
 
@@ -185,7 +190,7 @@ export class QueryBuilder {
         const city = company.city || '';
         // Top 7 exclusions for Serper (keep query short to avoid truncation)
         const exclusions = '-site:facebook.com -site:paginegialle.it -site:linkedin.com -site:instagram.com -site:prontopro.it -site:yelp.it -site:europages.com';
-        return `"${name}" "${city}" ${exclusions}`;
+        return `"${name}" "${city}" ${exclusions}`.replace(/\s\"\"/g, '').replace(/\"\"\s/g, '').trim();
     }
 
     /**
@@ -194,6 +199,6 @@ export class QueryBuilder {
     static buildContactQuery(company: CompanyInput): string {
         const name = company.company_name;
         const city = company.city || '';
-        return `"${name}" "${city}" ("chi siamo" OR "contatti" OR "about us")`;
+        return `"${name}" "${city}" ("chi siamo" OR "contatti" OR "about us")`.replace(/\s\"\"/g, '').replace(/\"\"\s/g, '').trim();
     }
 }

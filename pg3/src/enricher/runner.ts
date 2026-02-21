@@ -374,18 +374,14 @@ async function mergeResults() {
         const inv4 = await loadCompanies(path.join(OUTPUT_DIR, 'run4_found_invalid.csv'));
         finalInvalid.push(...inv4);
     }
-    // Deduplicate against valid discoveries from Run 4
-    const deduplicatedInvalid = finalInvalid.filter(c => !unique.has(c.company_name));
-    await writeCsv(path.join(OUTPUT_DIR, 'FINAL_INVALID_WEBSITES.csv'), deduplicatedInvalid);
+    await writeCsv(path.join(OUTPUT_DIR, 'FINAL_INVALID_WEBSITES.csv'), finalInvalid);
 
     // ASSUMPTION: Run4 not_found supersedes Run3's — these are the true "unfindable" companies
     let finalNotFound = await loadCompanies(path.join(OUTPUT_DIR, 'run3_not_found.csv'));
     if (fs.existsSync(path.join(OUTPUT_DIR, 'run4_not_found.csv'))) {
         finalNotFound = await loadCompanies(path.join(OUTPUT_DIR, 'run4_not_found.csv'));
     }
-    // Deduplicate against valid discoveries from Run 4
-    const deduplicatedNotFound = finalNotFound.filter(c => !unique.has(c.company_name));
-    await writeCsv(path.join(OUTPUT_DIR, 'FINAL_NOT_FOUND.csv'), deduplicatedNotFound);
+    await writeCsv(path.join(OUTPUT_DIR, 'FINAL_NOT_FOUND.csv'), finalNotFound);
 
     Logger.info(`✅ PIPELINE COMPLETE. Final Valid Yield: ${unique.size}`);
 }

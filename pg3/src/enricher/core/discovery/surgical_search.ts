@@ -1,9 +1,9 @@
-
 import { IdentityResult } from './identity_resolver';
 import { CompanyInput } from '../../types';
 import { Logger } from '../../utils/logger';
-import { GoogleSerpAnalyzer, BingSerpAnalyzer, SerpResult } from './serp_analyzer';
+import { SerpResult } from './serp_analyzer';
 import { ScraperClient } from '../../utils/scraper_client';
+import { SerperSearchProvider } from './search_provider';
 import { CompanyMatcher } from './company_matcher';
 import pLimit from 'p-limit';
 
@@ -41,14 +41,17 @@ export class SurgicalSearch {
         // =====================================================================
         // STEP 2: NAME + GEO (Legal Name based)
         // =====================================================================
+        const cityPart = originalCompany.city ? ` "${originalCompany.city}"` : '';
+        const addressPart = originalCompany.address ? ` "${originalCompany.address}"` : '';
+
         const nameQueries = [
-            `"${identity.legal_name}" "${originalCompany.city || ''}"`,
-            `"${identity.legal_name}" "${originalCompany.address || ''}"`,
+            `"${identity.legal_name}"${cityPart}`,
+            `"${identity.legal_name}"${addressPart}`,
             `"${identity.legal_name}" "contattaci"`,             // Golden: Name + Contacts
-            `intitle:"${identity.legal_name}" "${originalCompany.city || ''}"`, // Golden: Intitle
+            `intitle:"${identity.legal_name}"${cityPart}`,       // Golden: Intitle
             `"${identity.legal_name}" "sito ufficiale"`,
             `"${identity.legal_name}" ("P. IVA" OR "Partita IVA")`
-        ];
+        ].filter(q => q.trim().length > 0);
 
         const step2Results = await this.runBatch(nameQueries, 'LEGAL_NAME_GEO');
         const bestStep2 = await this.validateBatch(step2Results, identity);
@@ -82,16 +85,17 @@ export class SurgicalSearch {
 
     private async runBatch(queries: string[], methodTag: string): Promise<SerpResult[]> {
         const results: SerpResult[] = [];
+        const provider = new SerperSearchProvider();
 
         Logger.info(`[SurgicalSearch] 🚀 Launching batch ${methodTag} (${queries.length} queries)`);
 
         await Promise.all(queries.map(q => this.concurrencyLimit(async () => {
             try {
-                // Using Bing via ScraperClient (Cost-Optimized)
-                const serp = await this.executeBingSearch(q);
+                // Using Serper API for maximum resilience
+                const serp = await provider.search(q);
                 results.push(...serp);
             } catch (e) {
-                Logger.warn(`[Surgical] Query failed: ${q}`);
+                Logger.warn(`[Surgical] Query failed: ${q}`, { error: e as Error });
             }
         })));
 
@@ -136,14 +140,6 @@ export class SurgicalSearch {
         }
     }
 
-    private async executeBingSearch(query: string): Promise<SerpResult[]> {
-        // reuse ScraperClient Bing logic or call a provider
-        const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
-        const html = await ScraperClient.fetchText(url, { mode: 'scrape_do', render: true });
-
-        if (!html) return [];
-
-        // Parse with Bing Parser
-        return BingSerpAnalyzer.parseSerp(html);
-    }
+    // Removing executeBingSearch to avoid blocking issues:
+    // private async executeBingSearch(query: string): Promise<SerpResult[]> { ... }
 }

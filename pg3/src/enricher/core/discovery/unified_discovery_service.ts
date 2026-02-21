@@ -214,6 +214,25 @@ export class UnifiedDiscoveryService {
             }
 
             // =====================================================================
+            // 📧 LAYER 1.5: EMAIL DOMAIN REVERSE ENGINEERING (Absolute Precision)
+            // =====================================================================
+            Logger.info(`[Discovery] 📧 LAYER 1.5: EMAIL DOMAIN REVERSAL`);
+            const emailReverseResult = await this.reverseEngineerEmailDomain(company, effectiveThreshold);
+            if (emailReverseResult) {
+                return this.finalize(company, emailReverseResult, identity);
+            }
+
+            // =====================================================================
+            // 🏛️ LAYER 1.7: REGISTRY DORKING (High Iteration)
+            // =====================================================================
+            Logger.info(`[Discovery] 🏛️ LAYER 1.7: REGISTRY DORKING`);
+            const registryResult = await this.dorkRegistries(company, effectiveThreshold);
+            if (registryResult) {
+                return this.finalize(company, registryResult, identity);
+            }
+
+
+            // =====================================================================
             // 🧠 LAYER 2: SEMANTIC WEB (LLM Oracle)
             // =====================================================================
             if (!stopTheBleeding) {
@@ -578,6 +597,104 @@ export class UnifiedDiscoveryService {
     }
 
     // =========================================================================
+    // 📧 LAYER 1.5 / 1.7 NEW LOGIC
+    // =========================================================================
+
+    private async reverseEngineerEmailDomain(company: CompanyInput, threshold: number): Promise<DiscoveryResult | null> {
+        const emails = [company.email, (company as any).pec].filter(e => e && e.includes('@'));
+        const PUBLIC_DOMAINS = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'libero.it', 'virgilio.it', 'tiscali.it', 'alice.it', 'tim.it', 'pec.it', 'legalmail.it', 'arubapec.it'];
+
+        for (const email of emails) {
+            try {
+                const domain = email!.split('@')[1].toLowerCase().trim();
+                // If it's a generic public domain or a generic PEC provider, skip it.
+                if (PUBLIC_DOMAINS.includes(domain) || domain.includes('.telecompost.it') || domain.includes('mypec.eu')) {
+                    continue;
+                }
+
+                Logger.info(`[EmailReversal] Probing domain extracted from email: ${domain}`);
+
+                const url = `http://${domain}`;
+                const verification = await this.deepVerify(url, company);
+
+                if (verification && verification.confidence >= threshold) {
+                    return {
+                        url: verification.final_url || url,
+                        status: 'FOUND_VALID',
+                        method: 'email_reversal',
+                        confidence: verification.confidence,
+                        wave: 'LAYER1_5_EMAIL',
+                        details: verification
+                    };
+                }
+            } catch (e) {
+                Logger.warn(`[EmailReversal] Error probing email ${email}`);
+            }
+        }
+        return null;
+    }
+
+    private async dorkRegistries(company: CompanyInput, threshold: number): Promise<DiscoveryResult | null> {
+        try {
+            await this.rateLimiter.waitForSlot('google');
+            const provider = new SerperSearchProvider();
+
+            // Search in trusted Italian directories that often list outbound links
+            const cityPart = company.city ? ` "${company.city}"` : '';
+            const query = `site:registroimprese.it OR site:informazione-aziende.it "${company.company_name}"${cityPart}`;
+            const results = await provider.search(query);
+            this.rateLimiter.reportSuccess('google');
+
+            for (const r of results) {
+                // Check if the snippet contains a viable URL string before even opening the page
+                // e.g., "Sito Web: www.azienda.it"
+                const urlRegex = /(?:sito|web)[:\s]*(www\.[a-z0-9-]+\.[a-z]{2,3}|[a-z0-9-]+\.it\/)/i;
+                const textToScan = r.title; // Serper provides title (snippet might need fetching)
+                const match = r.title.match(urlRegex);
+
+                let extractedUrl = match ? match[1] : null;
+
+                // If not in snippet, we fetch the registry page and parse it (Scrape_do)
+                if (!extractedUrl) {
+                    const html = await ScraperClient.fetchText(r.url, { mode: 'scrape_do' });
+                    if (html) {
+                        const docMatch = html.match(/(?:href=")(https?:\/\/(?:www\.)?[^"\/]+(?:\.it|\.com|\.eu|\.net|\.srl|\.org))"/g);
+                        if (docMatch) {
+                            // Filter out social links and the registry's own domain
+                            const cleaned = docMatch
+                                .map(m => m.replace('href="', '').replace('"', ''))
+                                .filter(l => !l.includes('registroimprese.it') && !l.includes('informazione-aziende.it') && !l.includes('google') && !l.includes('linkedin') && !l.includes('facebook'));
+
+                            if (cleaned.length > 0) {
+                                extractedUrl = cleaned[0];
+                            }
+                        }
+                    }
+                }
+
+                if (extractedUrl) {
+                    Logger.info(`[RegistryDorking] Found embedded link ${extractedUrl} in ${r.url}`);
+                    const verification = await this.deepVerify(extractedUrl, company);
+                    if (verification && verification.confidence >= threshold) {
+                        return {
+                            url: verification.final_url || extractedUrl,
+                            status: 'FOUND_VALID',
+                            method: 'registry_dork',
+                            confidence: verification.confidence,
+                            wave: 'LAYER1_7_REGISTRY',
+                            details: verification
+                        };
+                    }
+                }
+            }
+        } catch (e) {
+            this.rateLimiter.reportFailure('google');
+            Logger.warn(`[RegistryDorking] Error`, { error: e as Error });
+        }
+        return null;
+    }
+
+    // =========================================================================
     // 🔍 VERIFICATION LOGIC
     // =========================================================================
 
@@ -638,7 +755,7 @@ export class UnifiedDiscoveryService {
                 if (aiEmployees) {
                     if (!identity.financials) identity.financials = {};
                     identity.financials.employees = `${aiEmployees} (AI Est.)`;
-                    Logger.info(`[Finalize] 🤖 Enriched employee count: ${aiEmployees}`);
+                    Logger.info(`[Finalize] 🤖 Enriched employee count: ${aiEmployees} `);
                 }
             } catch (e: any) {
                 Logger.warn('[Finalize] Employee estimation failed', { error: e });
@@ -674,7 +791,7 @@ export class UnifiedDiscoveryService {
     }
 
     private mapExceptionToReasonCode(error: unknown): string {
-        const message = `${(error as any)?.message || error || ''}`.toLowerCase();
+        const message = `${(error as any)?.message || error || ''} `.toLowerCase();
         if (message.includes('timeout') || message.includes('timed out')) return 'ERROR_TIMEOUT_FETCH';
         if (message.includes('429') || message.includes('rate limit')) return 'ERROR_PROVIDER_RATE_LIMIT';
         if (message.includes('403') || message.includes('blocked') || message.includes('captcha')) return 'ERROR_BLOCKED_403';
@@ -686,7 +803,7 @@ export class UnifiedDiscoveryService {
     private reasonCodeForVerification(verification: any): string {
         if (verification?.reason_code) return verification.reason_code;
 
-        const reason = `${verification?.reason || ''}`.toLowerCase();
+        const reason = `${verification?.reason || ''} `.toLowerCase();
         const confidence = Number(verification?.confidence || 0);
 
         if (verification?.scraped_piva) return 'OK_CONFIRMED_VAT_MATCH';
@@ -712,14 +829,14 @@ export class UnifiedDiscoveryService {
             return { ...result, reason_code: 'NOT_FOUND_NO_CANDIDATES' };
         }
         if (result.status === 'FOUND_INVALID') {
-            const reason = `${result.details?.reason || ''}`.toLowerCase();
+            const reason = `${result.details?.reason || ''} `.toLowerCase();
             if (reason.includes('directory') || reason.includes('social')) {
                 return { ...result, reason_code: 'REJECTED_DIRECTORY_OR_SOCIAL' };
             }
             return { ...result, reason_code: 'REJECTED_NO_MATCHING_SIGNALS' };
         }
         if (result.status === 'FOUND_VALID') {
-            const method = `${result.method || ''}`.toLowerCase();
+            const method = `${result.method || ''} `.toLowerCase();
             if (method.includes('vat') || method.includes('golden')) {
                 return { ...result, reason_code: 'OK_CONFIRMED_VAT_MATCH' };
             }
