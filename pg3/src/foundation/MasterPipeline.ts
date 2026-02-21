@@ -8,6 +8,7 @@ import { BackpressureValve } from './BackpressureValve';
 import { BilancioHunter } from './BilancioHunter';
 import { LinkedInSniper } from './LinkedInSniper';
 import { BrowserPool } from './BrowserPool';
+import { CostRouter } from './CostRouter';
 import crypto from 'crypto';
 
 export class MasterPipeline {
@@ -21,6 +22,7 @@ export class MasterPipeline {
     private bilancioHunter: BilancioHunter;
     private linkedinSniper: LinkedInSniper;
     private browserPool: BrowserPool;
+    private costRouter: CostRouter;
 
     constructor(deps: {
         normalizer: InputNormalizer,
@@ -32,7 +34,8 @@ export class MasterPipeline {
         valve: BackpressureValve,
         bilancioHunter: BilancioHunter,
         linkedinSniper: LinkedInSniper,
-        browserPool: BrowserPool
+        browserPool: BrowserPool,
+        costRouter: CostRouter
     }) {
         this.normalizer = deps.normalizer;
         this.registry = deps.registry;
@@ -44,6 +47,7 @@ export class MasterPipeline {
         this.bilancioHunter = deps.bilancioHunter;
         this.linkedinSniper = deps.linkedinSniper;
         this.browserPool = deps.browserPool;
+        this.costRouter = deps.costRouter;
     }
 
     public async processCompany(rawInput: Record<string, string>, companyIdx: number): Promise<any> {
@@ -131,6 +135,54 @@ export class MasterPipeline {
                 }
             }
 
+            // ===== STAGE 6: LLM ORACLE VERIFICATION =====
+            // If SERP found candidates but regex PIVA matching failed,
+            // ask an LLM to semantically verify the best URL candidate.
+            if (!discoveredUrl && !isBleeding) {
+                const guardResult = await this.oracleGuard.evaluate(companyId, {
+                    candidates_count: 0,  // 0 = deterministic layers found nothing
+                    highest_confidence: 0,
+                    has_piva: !!piva,
+                    has_rs: true,
+                    has_address: !!input.city,
+                    has_phone: !!rawInput['phone'],
+                    bleeding_mode: isBleeding
+                });
+
+                if (guardResult === 'ORACLE_APPROVED') {
+                    layersAttempted.push('STAGE_6_LLM_ORACLE');
+                    try {
+                        // Ask CostRouter to use LLM (Tier 3-8) to search for this company
+                        const searchQuery = `${input.company_name} ${input.city || ''} sito web ufficiale`;
+                        const llmResult = await this.costRouter.route<Array<{ title: string; url: string; snippet: string }>>(
+                            'SERP',
+                            { query: searchQuery },
+                            { companyId, maxTier: 8 }
+                        );
+
+                        if (llmResult.data && Array.isArray(llmResult.data) && llmResult.data.length > 0) {
+                            console.log(`[LLM_ORACLE] Provider ${llmResult.provider} returned ${llmResult.data.length} candidates for "${input.company_name}"`);
+                            for (const llmCand of llmResult.data) {
+                                if (llmCand.url) {
+                                    // Try the Gate verification on LLM-suggested URLs
+                                    const found = await checkUrl(llmCand.url, 'LLM_ORACLE');
+                                    if (found) break;
+                                    // If Gate fails but we trust the LLM (Tier 3+), accept with lower confidence
+                                    if (!discoveredUrl && llmResult.tier >= 3) {
+                                        discoveredUrl = llmCand.url;
+                                        discoveryLayer = 'LLM_ORACLE_SEMANTIC';
+                                        console.log(`[LLM_ORACLE] Semantic accept: ${llmCand.url} for "${input.company_name}" (provider: ${llmResult.provider})`);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (err: any) {
+                        console.warn(`[LLM_ORACLE] Failed for ${input.company_name}: ${err.message}`);
+                    }
+                }
+            }
+
             // ENRICHMENT PHASE (Parallel via Valve)
             let financial = null;
             let decisionMaker = null;
@@ -166,7 +218,11 @@ export class MasterPipeline {
                 city: input.city,
                 normalized_name: input.company_name_variants[0] || input.company_name,
             },
-            website: url ? { url, confidence: 0.95, discovery_layer: layers[layers.length - 1] } : undefined,
+            website: url ? {
+                url,
+                confidence: discoveryLayer.includes('LLM_ORACLE_SEMANTIC') ? 0.75 : 0.95,
+                discovery_layer: discoveryLayer || layers[layers.length - 1]
+            } : undefined,
             financial: fin || undefined,
             decision_maker: dm || undefined,
             meta: {

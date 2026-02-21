@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as path from 'path';
 require('dotenv').config();
 import { parse } from 'csv-parse/sync';
 import axios from 'axios';
@@ -273,7 +274,8 @@ async function run() {
         registry, gate, dedup, oracleGuard, bleedingCtrl, valve,
         bilancioHunter: new BilancioHunter(dedup),
         linkedinSniper: new LinkedInSniper(dedup, valve),
-        browserPool: pool
+        browserPool: pool,
+        costRouter: router
     });
 
     const fileContent = fs.readFileSync(csvPath, 'utf8');
@@ -312,7 +314,47 @@ async function run() {
         results.push(...batchResults);
     }
 
-    console.log('[RunnerV6] Extraction Complete. Cleaning up...');
+    console.log('[RunnerV6] Extraction Complete. Saving results...');
+
+    // ===== BUG FIX: EXPORT RESULTS TO DISK =====
+    const inputBasename = path.basename(csvPath, path.extname(csvPath));
+    const outputDir = path.dirname(csvPath);
+    const jsonOutputPath = path.join(outputDir, `${inputBasename}_v6_results.json`);
+    const csvOutputPath = path.join(outputDir, `${inputBasename}_v6_results.csv`);
+
+    // 1. Save raw JSON (full fidelity)
+    fs.writeFileSync(jsonOutputPath, JSON.stringify(results, null, 2), 'utf8');
+    console.log(`[RunnerV6] ✅ JSON saved: ${jsonOutputPath}`);
+
+    // 2. Flatten to CSV for human consumption
+    const csvHeader = 'company_name,city,normalized_name,status,website_url,confidence,discovery_layer,duration_ms,layers_attempted';
+    const csvRows = results.map((r: any) => {
+        const companyName = (r.input?.company_name || '').replace(/,/g, ';').replace(/"/g, "'");
+        const city = (r.input?.city || '').replace(/,/g, ';');
+        const normalizedName = (r.input?.normalized_name || '').replace(/,/g, ';');
+        const status = r.status || 'ERROR';
+        const url = r.website?.url || '';
+        const confidence = r.website?.confidence || '';
+        const layer = r.website?.discovery_layer || '';
+        const duration = r.meta?.duration_ms || '';
+        const layers = (r.meta?.layers_attempted || []).join(';');
+        return `"${companyName}","${city}","${normalizedName}",${status},${url},${confidence},${layer},${duration},"${layers}"`;
+    });
+    const csvContent = [csvHeader, ...csvRows].join('\n');
+    fs.writeFileSync(csvOutputPath, csvContent, 'utf8');
+    console.log(`[RunnerV6] ✅ CSV saved: ${csvOutputPath}`);
+
+    // Final stats
+    const found = results.filter((r: any) => r.status === 'FOUND_COMPLETE').length;
+    const notFound = results.filter((r: any) => r.status === 'NOT_FOUND').length;
+    const errors = results.filter((r: any) => r.status === 'ERROR').length;
+    const ledgerSummary = await ledger.getSummary();
+    console.log(`\n📊 FINAL REPORT:`);
+    console.log(`   Total: ${results.length} | ✅ Found: ${found} | ❌ Not Found: ${notFound} | 💀 Errors: ${errors}`);
+    console.log(`   💰 Total Cost: €${ledgerSummary.total_cost_eur.toFixed(4)} | API Calls: ${ledgerSummary.total_calls} | Success Rate: ${(ledgerSummary.success_rate * 100).toFixed(1)}%`);
+    console.log(`   💰 Cost/Company: €${(ledgerSummary.total_cost_eur / results.length).toFixed(4)}`);
+
+    // Cleanup
     valve.cleanup();
     ledger.cleanup();
     router.cleanup();
