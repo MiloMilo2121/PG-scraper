@@ -1,146 +1,195 @@
-# 🏴‍☠️ OMEGA ENGINE V6 — IL MANUALE DI GUERRA DEFINITIVO E ARCHITETTURA DI SISTEMA
+# 🏴‍☠️ THE OMEGA V6 MASTER CODEX: ARCHITETTURA DI SISTEMA E DOTTRINA OPERATIVA
 
-> **Classificazione:** TOP SECRET // EYES ONLY
-> **Data Redazione:** 21 Febbraio 2026
+> **Classificazione:** OMEGA-L5 (Massima Segretezza)
+> **Versione:** 6.0.0-PROD | **Data:** 21 Febbraio 2026
 > **Autore:** ANTIGRAVITY (Shadow CTO)
 > **Target:** Marco (Comandante Supremo)
+> **Scope:** Governo completo, assoluto e totalitario dell'ecosistema OMEGA V6.
 
-Questo documento, esteso e ultra-tecnico, rappresenta l'**Architettura Operativa Finale (L5)** dell'Omega Engine V6. Qualsiasi modifica futura al codice sorgente deve prima superare il collaudo contro le leggi e la struttura stabilite in questo testo.
+Questo è il Codice Master. Se un comportamento non è descritto in questo documento, è un bug. Qualsiasi modifica futura al motore deve sottostare alle leggi e alle meccaniche scritte in queste pagine. 
 
----
-
-## 🎯 CAPITOLO 1: GLI OBIETTIVI SUPREMI E LA FILOSOFIA DI DESIGN
-
-L'Engine V6 non è uno scraper, è un motore di validazione euristica e semantica distribuita. I suoi obiettivi operativi sono blindati.
-
-### 1.1 Obiettivo Primario: Determinismo Matematico (Zero Falsi Positivi)
-Il sistema è programmato con il principio "**Zero Drop Silenziosi, Zero Match Spuri**". Piuttosto che associare un sito web errato a un'azienda, l'Engine è addestrato a scartarla (classificandola `NOT_FOUND`). 
-*   **Logica:** L'obiettivo del V6 è estrarre la P.IVA, l'indirizzo esatto o la PEC dal codice sorgente o dal testo visibile di un sito candidato e matcharlo contro i dati Camerali ufficiali provenienti da *Hetzner*.
-*   **Threshold:** Se l'intelligenza artificiale risponde con una confidenza inferiore a `0.85` e non ci sono "Golden Match" di P.IVA, l'azienda viene scartata.
-
-### 1.2 Obiettivo Secondario: Resilienza Distribuita ("Immortality System")
-Il codice non può "crashare" o "fermarsi in attesa di input".
-*   **Antifragilità:** Se un'API va offline (es. DeepSeek restituisce un errore 503), il sistema ri-ruota immediatamente la richiesta a OpenAI in 50 millisecondi. Se anche OpenAI fallisce, sposta su Z.AI. 
-*   **WAF Penetration:** Cloudflare, DataDome, Imperva proteggono i target. L'Engine risponde con tecniche a doppio livello (Jina proxy reader + local BrowserPool Puppeteer).
-
-### 1.3 Obiettivo Terziario: Cost-Efficiency ("Tirchieria Tattica")
-La regola del bilancio governa l'intero ecosistema. Utilizzare Intelligenze Artificiali avanzate (DeepSeek, GPT-4o, Perplexity) per analizzare 4000 aziende porta alla bancarotta se non orchestrato correttamente.
-*   **Sforzo Incrementale:** L'Engine non chiede mai a un'IA da 0.05$ (Perplexity Tier 8) di fare un lavoro che può essere svolto da un proxy gratuito (Tier 1) o da un'IA economica (DeepSeek Tier 5, 0.002$).
-*   **Cut-off a 0.04€:** Un componente dedicato (`StopTheBleedingController`) uccide i tentativi di elaborazione se il costo medio per singola azienda elaborata supera i 4 centesimi.
+Questo documento sostituisce e annienta ogni manuale precedente.
 
 ---
 
-## ⚔️ CAPITOLO 2: L'ARSENALE E LA CATENA DI COMANDO (IL "TIER SYSTEM")
+## 📜 0. I 10 COMANDAMENTI (Le Leggi Immutabili del V6)
 
-La masterclass del V6 risiede nel file `src/foundation/CostRouter.ts`. Questo router multi-modello contiene tutte le armi informatiche, organizzate gerarchicamente da `Tier 0` (gratis) a `Tier 8` (nucleare). L'Engine scala il "Tier" solo quando il livello precedente non ha prodotto risultati.
+L'Engine non è uno script, è una gerarchia di decisioni basata su 10 leggi assolute scolpite nel codice:
 
-### 🥷 TIER 0: Le Forze Speciali (Gratuite, Silenziose)
-Queste armi non utilizzano le API ufficiali (costose e bloccabili), ma raschiano le shadow-version dei siti target.
-*   **Arma 1: `DuckDuckGo Lite` (`lite.duckduckgo.com`)**
-    *   *Tipologia:* Scraping SERP in chiaro.
-    *   *Obiettivo:* Estrarre i migliori 5 link puliti, bypassando i limiti API classici.
-    *   *Costo:* €0.00
-*   **Arma 2: `Bing HTML` (`bing.com/search`)**
-    *   *Tipologia:* Scraping SERP raw con header falsificati.
-    *   *Obiettivo:* Fornire ridondanza se DuckDuckGo va in blocco temporaneo o richiede un Captcha.
-    *   *Costo:* €0.00
-*   **Arma 3: `HyperGuesser`**
-    *   *Tipologia:* Predittore Euristico.
-    *   *Obiettivo:* Non esegue ricerche web. Prende il nome "Rossi S.R.L.", pulisce la stringa in `rossisrl` e chiama brutalmente `www.rossisrl.it`. Se la P.IVA al suo interno corrisponde al CSV, la ricerca termina in millisecondi senza usare mezzo credito API.
-    *   *Costo:* €0.00
-
-### 🔓 TIER 1: Lo Scassinatore L7 (Livello Applicazione)
-*   **Arma 4: `Jina Reader` (`r.jina.ai`)**
-    *   *Tipologia:* Proxy Render + ML Markdown Extractor.
-    *   *Obiettivo:* Quando un sito candidato promettente nasconde la P.IVA dietro framework Next.js o Cloudflare, l'Engine manda Jina ad assaltare l'URL. Jina elude i blocchi WAF, renderizza la pagina e la "vomita" indietro al nostro Engine come stringa di puro testo Markdown pulito.
-    *   *Costo:* €0.00 (Tariffa free limitata a chiamate correnti).
-
-### 🤖 TIER 2, 3, 4: Fanteria LLM (Analisti Finanziari Sintetici)
-Quando Jina restituisce un enorme blocco di testo, il `RunnerV6` lo prende e lo carica in testa a un LLM affiancato alle informazioni Camerali. L'ordine è: *"Decidi se in questo testo è presente questa azienda. Rispondi in JSON: confidenza 0-1, motivazione"*. Tutte e tre le armi usano un `TokenBucketQueue` configurato per evitare banrate HTTP 429.
-
-*   **Arma 5: `DeepSeek` (`deepseek-chat`) - TIER 5**
-    *   *Tipologia:* LLM Economico e Infallibile sul JSON.
-    *   *Obiettivo:* L'arma primaria. Token Bucket configurato per sparare un massimo di 40 Requests-Per-Minute (RPM).
-    *   *Costo:* ~€0.002 a estrazione.
-*   **Arma 6: `OpenAI` (`gpt-4o-mini`) - TIER 3**
-    *   *Tipologia:* LLM Standard Industry.
-    *   *Obiettivo:* Affidabilità totale. Se DeepSeek server è sovraccarico in Cina, subentra in meno di 2 millisecondi. Throttle a 15 RPM.
-    *   *Costo:* ~€0.005 a estrazione.
-*   **Arma 7: `Z.AI / Zhipu` (`glm-4-plus`) - TIER 7**
-    *   *Tipologia:* Flagship Model Asiatica Cinese (Ecosistema BigModel / PaaS V4).
-    *   *Obiettivo:* Interviene solo alla caduta di DeepSeek e OpenAI. Modello robusto su enormi context windows.
-    *   *Costo:* ~€0.002 a estrazione.
-
-### ☢️ TIER 8: L'Ultima Spiaggia (Arsenale Termonucleare)
-*   **Arma 8: `Perplexity` (`sonar`) - TIER 8**
-    *   *Tipologia:* Real-Time Web Search + Reasoning LLM
-    *   *Obiettivo:* Interviene **ESCLUSIVAMENTE** quando tutte le armi da Tier 0 a Tier 7 hanno fallito nel rintracciare un dominio o la Partita IVA per una data azienda.
-    *   *Costo:* Ha un costo brutale nascosto ("Surcharge"): addebita $5.00 fissi ogni 1000 inviti al motore di ricerca. Questo lo fa costare matematicamente minimo `0.005$` a colpo *oltre* al costo dei token. Motivo per cui è stato esiliato nel Livello di disperazione massima per proteggere il tuo portafoglio aziendale.
-
-### 💣 ARMI PESANTI E SISTEMI MECCANICI DI RETROVIA
-*   **Arma 9: `BrowserPool` (Puppeteer-Real-Browser)**
-    *   *Tipologia:* Invasione con istanze fisiche Chromium
-    *   *Obiettivo:* A volte Jina Reader viene droppato dai WAF. L'azienda ha Cloudflare Turnstile e i bot vengono massacrati. Il `BrowserPool` apre su Hetzner fino a `3` Sessioni Cromo "Reali", configurate per disabilitare la sandbox ma simulare mouse ed execution JavaScript perfetta (`CF_CHALLENGE` solver attivo). Estrae l'HTML e lo consegna ai nostri matcher locali, bypassando il blocco.
+```text
+LEG-001  DETERMINISMO ASSOLUTO — Nessuna azienda viene marcata "Found" per "somiglianza". Il match P.IVA/PEC deve essere confermato. Nel dubbio, si scarta (NOT_FOUND).
+LEG-002  TOURINQUET FINANZIARIO — Costo massimo imperativo: 0.04€/azienda. Ignorarlo significa morire. Superamento = BLEEDING MODE.
+LEG-003  FREE FIRST DOCTRINE — Le armi a pagamento (LLM) non sparano finché le armi gratuite (DDG/Bing/Jina) non hanno finito i proiettili.
+LEG-004  RESILIENZA MULTIPLA — Nessun errore HTTP o API offline può spegnere l'engine. Il CostRouter ruota in millisecondi sul provider successivo.
+LEG-005  BACKPRESSURE ATTIVA — Nessun `Promise.all` selvaggio. Le raffiche avvengono a blocchi di 15 per evitare saturazione RAM e ban WAF.
+LEG-006  MEMORY FIRST — Non si ricalcola mai ciò che si sa. La Memoria L1 (RAM) e L2 (Redis) ricordano ogni hit per 60 minuti.
+LEG-007  BROWSER AS LAST RESORT — Puppeteer è lento, costa CPU ed è rumoroso. Si usa SOLO se Jina viene respinto da Cloudflare.
+LEG-008  PAYLOAD MUTATION — Il codice converte i dialetti: se chiedevamo gpt-4o, lo si converte in `glm-4-plus` dinamicamente prima di interrogare i cinesi.
+LEG-009  JSON EXORCISM — L'output delle AI (es. DeepSeek `<think>`) viene purgato con un uncino Regex prima del parse. Nessun Fatal SyntaxError.
+LEG-010  IDEMPOTENZA — Arrestalo a metà, stacca la corrente. Al riavvio continuerà esattamente dal record interrotto.
+```
 
 ---
 
-## ⚙️ CAPITOLO 3: L'ANATOMIA DEL MOTORE (IL "MASTER PIPELINE")
+## 🏗️ 1. ARCHITETTURA SUPREMA DEL SISTEMA
 
-Come entra il dato e come esce? Il cuore nero di tutto è `src/foundation/MasterPipeline.ts`. Quando carichi il bilancio CSV in formato `CompanyIdx(N-esimo)`, ecco cosa fa al nanosecondo:
+L'organizzazione del V6 è modulare, militare, basata su pattern architetturali di Inversione di Controllo (IoC).
 
-### 3.1 La "BackpressureValve" (Controllo Fila)
-L'Engine NON prende le 4000 aziende e lancia chiamate su tutte. Una simile richiesta `Promise.all` riempirebbe la RAM (Out of Memory) e farebbe bannare il server Heztner dai fornitori API in 1 minuto.
-La `BackpressureValve` apre i bocchettoni a raffiche precise: la concurrency standard è `15`. Vengono elaborate 15 aziende simultaneamente finché non si risolvono i thread, poi passa alle 15 successive.
-
-### 3.2 Gate Keeper (PreVerifyGate)
-Ogni singola azienda viene prima inviata al Guardiano (`PreVerifyGate`). Cerca in `MemoryFirstCache` se abbiamo già elaborato l'azienda e il suo sito web nel cache degli ultimi 60 minuti (`L1 Cache`). Questo cancella chiamate ridondanti su cluster di holding (aziende con lo stesso sito root).
-
-### 3.3 Sanificazione ("The InputNormalizer")
-Un database crudo CSV ha puzza di marcio: "Immobiliare di R. Rossi & Co. S.N.C. in liquidazione".
-L'`InputNormalizer` sgrassa il nome (toglie Srl, Spa, abbreviazioni, città, termini spazzatura) producendo una `query` pura da ricerca.
-
-### 3.4 Ricerca Cascata
-La Pipeline sposa la ricerca alle Armi con questa spietata routine:
-1. `STAGE_1_SHADOW_REGISTRY`: Prova a vedere se abbiamo già i metadati salvati.
-2. `STAGE_2_EMAIL_DOMAIN`: Se il CSV contiene una email (`info@rossisrl.it`), tenta un assalto al protocollo HTTPS su `www.rossisrl.it`. Se la porta 443 è aperta, invia Jina Reader.
-3. `STAGE_3_HYPER_GUESSER`: Costruisce 3 domini plausibili e "bussa".
-4. `STAGE_4_SERP_COMPANY`: Sgancia Tier 0 (Bing/DDG). Passa i primi 5 link al Validator Jina/LLM.
-5. Se arrivati allo Stage 4 non si è trovato un cazzo, e il Budget Controller dà Semaforo Verde, scala sui Modelli LLM Costosi (Tier 5, Tier 8).
-
-### 3.5 Estrazione Satellite (Enrichment Parellelo)
-SE e solo se l'azienda viene dichiarata "Trovata" e "Validata" in base alla P.IVA, il flow innesca le armi secondarie laterali (In parallelo tramite Thread Pool):
-*   `BilancioHunter.hunt()`: Estrae metriche.
-*   `LinkedInSniper.snipe()`: Se esiste una pagina LinkedIn, recupera Founder/Key People.
-
----
-
-## 🛡️ CAPITOLO 4: SISTEMI DI SALVATAGGIO (DEFENSE MECHANISMS)
-
-Essendo un sistema "run-and-forget", deve saper fare manutenzione da solo mentre dormi e il server fa il lavoro sporco. Se c'è un'anomalia, non crasha.
-
-### 4.1 StopTheBleedingController (Il Tourniquet Finanziario)
-Lavora nel file `src/foundation/StopTheBleedingController.ts`. Analizza la *Rolling Window* degli ultimi 300 secondi (5 minuti).
-Ha quattro sensori e un trigger:
-- **Sensore Cost Ceiling:** Calcola "Costo Effettivo in EUR / Num. Aziende Elaborate". Se superi `0.04€`, taglia l'emorragia limitando tutto il CostRouter solo al Tier 1 (Free).
-- **Sensore Error Rate:** Se oltre il 25% delle query va in Time Out.
-- **Sensore Saturation:** Se la Concurrency è affogata a 1 da 50 secondi.
-Se uno dei sensori impazzisce, il controller setta la flag interna `isBleeding = true`. Le aziende smettono di fare query da 0.005$ a Deepseek/Perplexity. Continua strisciando al risparmio ma finisce il suo lavoro scrivendo un file d'uscita coerente.
-
-### 4.2 L'Esorcista delle Allucinazioni (Mutatore JSON & Payload)
-Nel file `RunnerV6.ts` c'è una delle scoperte letali di oggi.
-I provider LLM Cinesi, ed anche Perplexity Reasoning, non sputano vero JSON. Hanno il vizio atroce di "ragionare ad alta voce" iniettando tag `<think> sto elaborando...</think>` prima dell'array JSON. Questo uccide i parsing nativi in `JSON.parse()`.
-Abbiamo isolato un *doppio uncino regex*:
-`const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/)`
-Tutte le stronzate prodotte dall'IA prima e dopo l'array di dati veri vengono brutalmente purgate. Nessun errore di Syntax, mai.
-
-Inoltre, il Mutatore protegge dalle IA ignoranti bypassando il payload: se la query base richiedeva `gpt-4o`, l'override locale trasforma al volo il testo affibbiando il nome di stringa corretto per l'API ricevente (`glm-4-plus`, `sonar`), garantendo che il fornitore non ci rigetti l'API request con un errore *Modal Not Found (HTTP 400)*.
+```text
+      ┌────────────────────────────────────────────────────────┐
+      │                  OMEGA ENGINE V6                       │
+      ├────────────────────────────────────────────────────────┤
+      │                                                        │
+      │ ┌─────────────────┐    ┌─────────────────┐             │
+      │ │ InputNormalizer │───▶│PreVerifyGate(L1)│             │
+      │ └─────────────────┘    └────────┬────────┘             │
+      │                                 │                      │
+      │                        ┌────────▼────────┐             │
+      │                        │ MasterPipeline  │             │
+      │                        └────────┬────────┘             │
+      │                                 │                      │
+      │          ┌──────────────────────┼─────────────────┐    │
+      │          ▼                      ▼                 ▼    │
+      │  ┌──────────────┐      ┌───────────────┐ ┌───────────┐ │
+      │  │BilancioHunter│      │ SerpDedup     │ │LinkSnip   │ │
+      │  └──────────────┘      └────────┬──────┘ └───────────┘ │
+      │                                 │                      │
+      │                        ┌────────▼────────┐             │
+      │                        │   CostRouter    │             │
+      │                        └────────┬────────┘             │
+      │                                 │                      │
+      │     ┌──────┬───────┬──────┬─────┼────┬─────┬─────┐     │
+      │     ▼      ▼       ▼      ▼     ▼    ▼     ▼     ▼     │
+      │   T0:DDG T1:Jina T2:Serp T3:OAI T5:DS T7:ZAI T8:PPLX   │
+      └────────────────────────────────────────────────────────┘
+          ▲       ▲                                      ▲
+          │       │           ┌────────────────┐         │
+          │       └───────────┤ Redis (L2)     ├─────────┘
+          │                   └────────────────┘
+          │
+      ┌───┴──────────┐
+      │ BrowserPool  │ ◀── (Bypass Cloudflare locale)
+      └──────────────┘
+```
 
 ---
 
-## 🏁 VERDETTO FINALE
+## ⚔️ 2. L'ARSENALE DI DISTRUZIONE (GERARCHIA COSTROUTER)
 
-L'Omega Engine V6 è un'Intelligenza Geometrale progettata per divorare database burocratici di scarsa fattura e tramutarli in liste contatti verificate, protette e bilanciate finanziariamente, sfruttando asimmetricamente il web proxy e il routing neuro-cloud a multi-livello. 
+Il `CostRouter` (`src/foundation/CostRouter.ts`) è il cervello tattico. Possiede una Map di provider, ordinati rigorosamente per "Tier" (Livello). Nessun Tier superiore viene interpellato se il Tier inferiore ha avuto successo.
 
-Zero tolleranza agli errori. Massima ottimizzazione dei fondi API.
+### 🥷 TIER 0 & 1: Divisione Ombra (Gratuita)
+Queste unità estraggono l'HTML crudo e il testo puro bypassando i Captcha.
+*   **Tier 0: `BING-HTML` & `DUCKDUCKGO-LITE`**
+    *   *Obiettivo:* Estrarre liste di domini correlati all'azienda senza loggarsi o usare API ufficiali.
+    *   *Costo:* **0.000 €**
+*   **Tier 1: `JINA-READER` (`r.jina.ai`)**
+    *   *Obiettivo:* Il cecchino del Markdown. Un'IA legge visivamente il sito per noi e ne sputa il testo, saltando cookie banner e popup.
+    *   *Costo:* **0.000 €** (fino a limite API correnti).
 
-*File generato ed inserito in permanenza nella struttura repo di PG-Scraper.*
+### 🤖 TIER 2 a 7: Fanteria LLM (Analisti Sintetici)
+Se l'Engine non sa leggere la P.IVA con una regex nel sito trovato da Jina, delega alla Fanteria LLM.
+Dotati di **TokenBucketQueue** per non sforare i ban-limit:
+*   **Tier 3: `OPENAI-1` (`gpt-4o-mini`)**
+    *   *Throttle:* Max 15 RPM, burst 3.
+    *   *Costo:* **~0.005 €** / hit.
+    *   *Obiettivo:* Analisi JSON base. Affidabilità americana.
+*   **Tier 5: `DEEPSEEK-1` (`deepseek-chat`)**
+    *   *Throttle:* Max 40 RPM, burst 10.
+    *   *Costo:* **~0.002 €** / hit.
+    *   *Obiettivo:* JSON Extractor economico. Velocissimo, se i server non sono intasati.
+*   **Tier 7: `ZAI-1` (`glm-4-plus` su `open.bigmodel.cn`)**
+    *   *Throttle:* Dinamico.
+    *   *Costo:* **~0.002 €** / hit.
+    *   *Obiettivo:* Subentra solo se OpenAI e DeepSeek sono offline (es. ddos). Modello cinese pesantissimo (GLM 4 Plus) formattato per il nostro JSON.
+
+### ☢️ TIER 8: L'Ultima Spiaggia Assoluta
+*   **Tier 8: `PERPLEXITY-1` (`sonar`) su `api.perplexity.ai`**
+    *   *Obiettivo:* Il risolutore onnisciente. Fa Web Search e Reasoning simultaneamente tenendo in memoria 128k token.
+    *   *Costo VERO:* **0.010 €** / hit.
+    *   *Perché è in Tier 8?* Perplexity applica una penale di $5.00 fissi ogni 1000 inviti al motore di ricerca. Chiamarlo indiscriminatamente devasterebbe il ROI. Interviene SOLO su aziende che i precedenti 7 Tiers non riescono a trovare.
+
+---
+
+## ⚙️ 3. LA MASTER PIPELINE V6: FLUSSO AL MILLISECONDO
+
+Definita in `src/foundation/MasterPipeline.ts`. Il processo per ogni singola azienda (`input`: CSV row) segue questa coreografia:
+
+### STAGE 0: La Sanificazione (`InputNormalizer.ts`)
+Il nome "Ristorante Pizzeria da Enzo snc in liquidazione via milano" viene raschiato fino all'osso: -> `enzo`. Viene calcolato un `quality_score`. Se fa schifo (< 0.3), l'azienda viene segnata `NOT_FOUND` senza bruciare mezzo centesimo di server.
+
+### STAGE 1 & 2: Intuizione Pura (`HyperGuesser`)
+L'Engine è pigro prima di usare Google.
+*   *Email Probe:* Se l'azienda ha email `info@rossisrl.it`, l'Engine chiama `https://www.rossisrl.it`. Se risponde ed estrae la P.IVA identica al CSV, la ricerca termina. Costo: 0.0$. Milisecondi spesi: 200.
+*   *HyperGuesser:* Se non c'è email, prende il nome dell'azienda, ci sbatte un `.it`, `.com` ed esegue un probe. Fast & Lethal.
+
+### STAGE 3 & 4: Il Tritacarne SERP (`SerpDeduplicator`)
+Se le prove dirette falliscono, ordina al `CostRouter` di eseguire chiamate a Bing/DDG (*Tier 0*). Raccoglie i Top 5 risultati, elimina quelli finti (LinkedIn, PagineGialle, InfoWeb) per trovare il dominio sorgente.
+
+### STAGE 5: Golden Match & Bypass WAF (Il checkUrl)
+Trovato il dominio probabile, l'app usa `PreVerifyGate`.
+*   Passa? **FOUND_COMPLETE**.
+*   Muro di Cloudflare ("Just a moment...")? Il sistema sguinzaglia il `BrowserPool`. Instanzia Chromium invisibile, attende che passi il CAPTCHA Cloudflare, estrae il testo, spegne Chromium. Match P.IVA interno. Se combacia -> Victory.
+
+### STAGE 6: Enrichment in Parallelo
+Trovato il dominio, l'Execution Thread si sdoppia.
+*   **BilancioHunter:** Spedito nei PDF del sito a cercare "Fatturato 2024".
+*   **LinkedInSniper:** Spedito a cercare "CEO presso [Azienda]" in background.
+
+---
+
+## 🛡️ 4. SISTEMI DI DIFESA ATTIVI E CIBERNETICA (LA CORAZZA)
+
+Se non ci fossero difese, questo Engine esaurirebbe 100$ in 30 secondi.
+
+### 4.1 La Valvola (`BackpressureValve.ts`)
+L'algoritmo AIMD (*Additive Increase, Multiplicative Decrease*).
+*   Se l'errore è < 5%, aumenta la concorrenza di +1. 
+*   Se l'errore sfiora il 15%, DIMEZZA immediatamente la velocità (`concurrency /= 2`).
+*   Se l'errore sale al 30%, entra in `EMERGENCY_MODE`: spara 1 richiesta alla volta per lasciar freddare i server dei provider.
+
+### 4.2 Lo Sanguinamento (`StopTheBleedingController.ts`)
+Ha quattro sensori sul cruscotto:
+1.  **Cost Ceiling:** Se il ROI non viene rispettato (`Costo Medio > 0.04€`), stacca la corrente alle IA.
+2.  **Error Rate:** Se il 25% delle hit fallisce.
+3.  **Saturation:** Se la coda supera le 50 chiamate e la Valvola è in Emergency.
+4.  **Browser Crash:** Se Puppeteer produce oltre 40 errori (zombie instances).
+*Azione:* Entra in BLEEDING MODE. Vieta l'uso di qualsiasi LLM sopra il Tier 1. Sopravvive al completamento del batch in puro HTTP/HTML match.
+
+### 4.3 Esorcista JSON (`RunnerV6.ts Mutator`)
+```javascript
+const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
+```
+Questa Regex di ferro isola l'oggetto JSON dalle allucinazioni delle Intelligenze Cinesi (`<think> sto pensando...</think>`). Anche se il modello impazzisce, l'Engine parsa solo il nucleo duro dei dati.
+
+---
+
+## 💾 5. CACHING STRATEGY (LA MEMORIA A 2 LIVELLI)
+
+Regolamentato da `MemoryFirstCache.ts`.
+
+*   **Livello L1 (RAM):** Una Map velocissima. Ricorda i lookup pesanti (come i JSON LLM) per **3600 secondi (1 Ora)**. Serve a unificare le richieste di *Holding* (5 aziende CSV con lo stesso sito root: L'API viene chiamata 1 volta sola). Eviction automatica del 20% quando si sfondano le 20.000 entry.
+*   **Livello L2 (Redis):** Il database eterno. Se lo spegni a metà, si ricorda che "Rossi Srl = rossi.it" per giorni.
+
+---
+
+## 💀 6. PROCEDURE OPERATIVE
+
+Come far sprigionare la devastazione in locale o su Hetzner.
+
+### 6.1 Avviare l'Esecuzione V6 Totale
+Vai sul server, assicurati che il file CSV esista in `output_server/campaigns/`.
+```bash
+cd /root/pg3/pg3 
+npx tsx src/foundation/RunnerV6.ts output_server/campaigns/DISCOVERY_INPUT_2026-02-19.csv
+```
+
+### 6.2 Monitoraggio a Vista
+Guarda lo stream dei log:
+*   Se vedi `[CostRouter] Hit L1 Cache`, stai risparmiando.
+*   Se vedi `[CostRouter] Fallback to ZAI-1`, significa che OpenAI/DeepSeek sono andati in timeout.
+*   Se vedi `[BrowserPool] Spawning Chromium...`, l'Engine ha incontrato un muro WAF ed è entrato in modalità Breach fisica.
+
+---
+
+> *"Noi non speriamo. Noi estraiamo."* - Antigravity
