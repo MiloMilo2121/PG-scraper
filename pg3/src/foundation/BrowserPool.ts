@@ -2,7 +2,7 @@ import { connect } from 'puppeteer-real-browser';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import { CostLedger } from './CostLedger';
 import { Page, Browser } from 'puppeteer';
 
@@ -159,8 +159,9 @@ export class BrowserPool {
         } catch (e) {
             // Force kill
             try {
-                // Find and kill process by profile directory argument
-                execSync(`ps aux | grep chrome | grep ${instance.profilePath} | awk '{print $2}' | xargs kill -9 2>/dev/null`);
+                // Find and kill process safely without shell pipes
+                const profileName = path.basename(instance.profilePath);
+                spawnSync('pkill', ['-f', `chrome.*${profileName}`]);
             } catch (kille) {
                 // Ignore
             }
@@ -259,9 +260,9 @@ export class BrowserPool {
             lockfiles_deleted++;
         }
 
-        // Global sweep for zombies
+        // Global sweep for zombies safely
         try {
-            execSync(`pkill -f "chrome.*omega-browser"`);
+            spawnSync('pkill', ['-f', 'chrome.*omega-browser']);
         } catch (e) { }
 
         try {
