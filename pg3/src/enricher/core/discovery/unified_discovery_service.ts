@@ -38,6 +38,10 @@ import { LLMOracle } from './llm_oracle';
 import { QueryBuilder, GoldenQuery } from './query_builder';
 import { AgentRunner } from '../agent/agent_runner';
 import { HoneyPotDetector } from '../security/honeypot_detector';
+import { ShadowRegistry } from './shadow_registry';
+import { EmailDomainMiner } from './email_domain_miner';
+import { GoogleBrowserProvider } from './google_browser_provider';
+import { AINameVariator } from './ai_name_variator';
 
 // ============================================================================
 // INTERFACES & CONFIG
@@ -58,6 +62,12 @@ export interface DiscoveryResult {
     wave: string;
     reason_code?: string;
     details: any;
+    metrics?: {
+        layersAttempted: string[];
+        totalCostEur: number;
+        durationMs: number;
+        captchaHits: number;
+    };
 }
 
 // Granular Control Profile
@@ -116,6 +126,7 @@ export class UnifiedDiscoveryService {
     private identityResolver: IdentityResolver;
     private surgicalSearch: SurgicalSearch;
     private nuclearStrategy: NuclearStrategy;
+    private shadowRegistry: ShadowRegistry;
     private validatorLimit = pLimit(20);
     private verificationCache = new Map<string, any>();
     private readonly verificationCacheTtlMs = 15 * 60 * 1000;
@@ -130,6 +141,7 @@ export class UnifiedDiscoveryService {
         this.identityResolver = new IdentityResolver();
         this.surgicalSearch = new SurgicalSearch();
         this.nuclearStrategy = new NuclearStrategy();
+        this.shadowRegistry = new ShadowRegistry();
     }
 
     /**
@@ -156,10 +168,19 @@ export class UnifiedDiscoveryService {
         let bestInvalid: DiscoveryResult | null = null;
         let identity: IdentityResult | null = null;
 
+        const metrics = {
+            layersAttempted: [] as string[],
+            totalCostEur: 0,
+            durationMs: 0,
+            captchaHits: 0
+        };
+        const startTime = Date.now();
+
         try {
             // =====================================================================
             // 💰 LAYER 1: IDENTITY RESOLUTION (Zero Cost)
             // =====================================================================
+            metrics.layersAttempted.push('LAYER1_IDENTITY');
             Logger.info(`[Discovery] 🕵️ LAYER 1: IDENTITY RESOLUTION`);
             identity = await this.identityResolver.resolveIdentity(company);
 
@@ -175,13 +196,15 @@ export class UnifiedDiscoveryService {
 
                 // If existing website is valid, return immediately
                 if (preCheck && preCheck.confidence >= THRESHOLDS.MINIMUM_VALID) {
+                    metrics.durationMs = Date.now() - startTime;
                     return this.finalize(company, {
                         url: preCheck.final_url || company.website,
                         status: 'FOUND_VALID',
                         method: 'pre_existing',
                         confidence: preCheck.confidence,
                         wave: 'PRE',
-                        details: preCheck
+                        details: preCheck,
+                        metrics
                     }, identity);
                 }
 
@@ -200,34 +223,58 @@ export class UnifiedDiscoveryService {
 
             // SURGICAL SEARCH (if identity known)
             if (identity) {
+                metrics.layersAttempted.push('LAYER1_SURGICAL');
                 const surgicalResult = await this.surgicalSearch.execute(identity, company);
                 if (surgicalResult) {
+                    metrics.durationMs = Date.now() - startTime;
                     return this.finalize(company, {
                         url: surgicalResult.url,
                         status: 'FOUND_VALID',
                         method: surgicalResult.method,
                         confidence: surgicalResult.confidence,
                         wave: 'LAYER1_SURGICAL',
-                        details: surgicalResult
+                        details: surgicalResult,
+                        metrics
                     }, identity);
+                }
+            }
+
+            // =====================================================================
+            // 🕵️‍♂️ LAYER 1.2: SHADOW REGISTRY (Zero Cost local lookup)
+            // =====================================================================
+            // If we don't have a PIVA/VAT passed through input, look it up locally
+            const existingVat = company.vat_code || (company as any).vat || (company as any).piva;
+            if (!existingVat) {
+                metrics.layersAttempted.push('LAYER1.2_SHADOW_REGISTRY');
+                Logger.info(`[Discovery] 🕵️‍♂️ LAYER 1.2: SHADOW REGISTRY SEARCH`);
+                const shadowResult = await this.shadowRegistry.find(company);
+                if (shadowResult && shadowResult.piva) {
+                    company.vat_code = shadowResult.piva;
+                    Logger.info(`[Discovery] 🎯 ShadowRegistry match found. Injected PIVA: ${shadowResult.piva} (${shadowResult.confidence})`);
                 }
             }
 
             // =====================================================================
             // 📧 LAYER 1.5: EMAIL DOMAIN REVERSE ENGINEERING (Absolute Precision)
             // =====================================================================
+            metrics.layersAttempted.push('LAYER1.5_EMAIL_DOMAIN');
             Logger.info(`[Discovery] 📧 LAYER 1.5: EMAIL DOMAIN REVERSAL`);
             const emailReverseResult = await this.reverseEngineerEmailDomain(company, effectiveThreshold);
             if (emailReverseResult) {
+                metrics.durationMs = Date.now() - startTime;
+                emailReverseResult.metrics = metrics;
                 return this.finalize(company, emailReverseResult, identity);
             }
 
             // =====================================================================
             // 🏛️ LAYER 1.7: REGISTRY DORKING (High Iteration)
             // =====================================================================
+            metrics.layersAttempted.push('LAYER1.7_REGISTRY_DORK');
             Logger.info(`[Discovery] 🏛️ LAYER 1.7: REGISTRY DORKING`);
             const registryResult = await this.dorkRegistries(company, effectiveThreshold);
             if (registryResult) {
+                metrics.durationMs = Date.now() - startTime;
+                registryResult.metrics = metrics;
                 return this.finalize(company, registryResult, identity);
             }
 
@@ -236,18 +283,21 @@ export class UnifiedDiscoveryService {
             // 🧠 LAYER 2: SEMANTIC WEB (LLM Oracle)
             // =====================================================================
             if (!stopTheBleeding) {
+                metrics.layersAttempted.push('LAYER2_ORACLE');
                 Logger.info(`[Discovery] 🧠 LAYER 2: LLM ORACLE`);
                 const oracleUrl = await LLMOracle.predictWebsite(company);
                 if (oracleUrl) {
                     const oracleVerification = await this.deepVerify(oracleUrl, company);
                     if (oracleVerification && oracleVerification.confidence >= 0.85) {
+                        metrics.durationMs = Date.now() - startTime;
                         return this.finalize(company, {
                             url: oracleVerification.final_url || oracleUrl,
                             status: 'FOUND_VALID',
                             method: 'llm_oracle',
                             confidence: oracleVerification.confidence,
                             wave: 'LAYER2_ORACLE',
-                            details: oracleVerification
+                            details: oracleVerification,
+                            metrics
                         }, identity);
                     }
                 }
@@ -258,6 +308,7 @@ export class UnifiedDiscoveryService {
             // =====================================================================
             // 🐝 LAYER 3: THE SWARM (Parallel Execution) + JINA/BING/DDG
             // =====================================================================
+            metrics.layersAttempted.push('LAYER3_SWARM');
             Logger.info(`[Discovery] 🐝 LAYER 3: THE SWARM (Google + Bing + DDG + Jina + HyperGuesser)`);
 
             // Execute parallel strategies (RESTORED sources)
@@ -273,6 +324,8 @@ export class UnifiedDiscoveryService {
             );
 
             if (validResult && validResult.status === 'FOUND_VALID') {
+                metrics.durationMs = Date.now() - startTime;
+                validResult.metrics = metrics;
                 return this.finalize(company, validResult, identity);
             }
 
@@ -284,22 +337,65 @@ export class UnifiedDiscoveryService {
             }
 
             // =====================================================================
+            // 🧠 LAYER 3.5: AI SEMANTIC VARIANTS RETRY
+            // =====================================================================
+            if (!stopTheBleeding && config.features.aiVariantsEnabled) {
+                metrics.layersAttempted.push('LAYER3.5_AI_VARIANTS');
+                Logger.info(`[Discovery] 🤖 LAYER 3.5: Generating AI semantic variants for "${company.company_name}"`);
+                const variants = await AINameVariator.generateVariants(company);
+
+                if (variants.length > 0) {
+                    const variantCandidates: Candidate[] = [];
+                    for (const v of variants) {
+                        Logger.info(`[Discovery] 🔄 Retrying search with alias: "${v}"`);
+                        const aliasCompany = { ...company, company_name: v };
+                        // Aggressive focused search using the GoldenQueries and Browser strategy
+                        const vCandidates = await this.searchAttack(aliasCompany);
+                        variantCandidates.push(...vCandidates);
+                    }
+
+                    const validVariant = await this.validateAndSelectBest(
+                        variantCandidates,
+                        company, // Note: verify against original details (VAT/address)
+                        'LAYER3.5_AI_VARIANTS',
+                        effectiveThreshold,
+                        effectiveMaxCandidates
+                    );
+
+                    if (validVariant && validVariant.status === 'FOUND_VALID') {
+                        metrics.durationMs = Date.now() - startTime;
+                        validVariant.metrics = metrics;
+                        return this.finalize(company, validVariant, identity);
+                    }
+
+                    if (validVariant && (!bestInvalid || validVariant.confidence > bestInvalid.confidence)) {
+                        bestInvalid = validVariant;
+                    }
+                }
+            } else if (stopTheBleeding) {
+                Logger.warn('[Discovery] Stop-the-bleeding mode active: skipping AI Variants layer');
+            }
+
+            // =====================================================================
             // ⚖️ LAYER 4: THE JUDGE (Nuclear Fallback)
             // =====================================================================
             if (!stopTheBleeding && profile.runNuclear) {
+                metrics.layersAttempted.push('LAYER4_NUCLEAR');
                 Logger.info(`[Discovery] ⚖️ LAYER 4: NUCLEAR FALLBACK`);
                 try {
                     const nuclear = await this.nuclearStrategy.execute(company);
                     if (nuclear && nuclear.url) {
                         const ver = await this.deepVerify(nuclear.url, company);
                         if (ver && ver.confidence >= THRESHOLDS.MINIMUM_VALID) {
+                            metrics.durationMs = Date.now() - startTime;
                             return this.finalize(company, {
                                 url: ver.final_url || nuclear.url,
                                 status: 'FOUND_VALID',
                                 method: 'nuclear',
                                 confidence: ver.confidence,
                                 wave: 'LAYER4_NUCLEAR',
-                                details: ver
+                                details: ver,
+                                metrics
                             }, identity);
                         }
                     }
@@ -310,10 +406,13 @@ export class UnifiedDiscoveryService {
                 Logger.warn('[Discovery] Stop-the-bleeding mode active: skipping nuclear layer');
             }
 
+            metrics.durationMs = Date.now() - startTime;
+
             // FINAL REPORT
             if (bestInvalid) {
                 Logger.warn(`[Discovery] ⚠️ Best candidate invalid: ${bestInvalid.url} (${bestInvalid.confidence.toFixed(2)})`);
                 AntigravityClient.getInstance().trackCompanyUpdate(company, 'FAILED', { reason: 'Low confidence' });
+                bestInvalid.metrics = metrics;
                 return this.attachIdentity(this.withReasonCode(bestInvalid), identity);
             }
 
@@ -324,10 +423,12 @@ export class UnifiedDiscoveryService {
                 method: 'waves_exhausted',
                 confidence: 0,
                 wave: 'ALL',
-                details: {}
+                details: {},
+                metrics
             }), identity);
 
         } catch (error: any) {
+            metrics.durationMs = Date.now() - startTime;
             Logger.error(`[Discovery] Error:`, { error });
             return this.attachIdentity(this.withReasonCode({
                 url: null,
@@ -335,7 +436,8 @@ export class UnifiedDiscoveryService {
                 method: 'exception',
                 confidence: 0,
                 wave: 'ERROR',
-                details: { error: error.message }
+                details: { error: error.message },
+                metrics
             }), identity);
         }
     }
@@ -413,11 +515,12 @@ export class UnifiedDiscoveryService {
             const liveDomains = await DomainValidator.bulkCheckDNS(topDomains, 200);
 
             // Parking filter: parallel check of all DNS-valid domains (with timeout)
+            const parkingLimit = pLimit(5); // Limit concurrency to avoid network exhaustion
             const parkingChecks = await Promise.all(
-                liveDomains.map(async (url) => {
+                liveDomains.map(url => parkingLimit(async () => {
                     const notParked = await DomainValidator.isNotParked(url, 6000);
                     return notParked ? url : null;
-                })
+                }))
             );
             const validDomains = parkingChecks.filter((url): url is string => !!url);
             Logger.info(`[HyperGuesser] After parking filter: ${validDomains.length}/${liveDomains.length}`);
@@ -450,17 +553,35 @@ export class UnifiedDiscoveryService {
         try {
             await this.rateLimiter.waitForSlot('google');
 
-            const provider = new SerperSearchProvider();
-            const results = await provider.search(q.query);
+            let results: Candidate[] = [];
+
+            // Prefer the high-stealth Google Browser if enabled, otherwise fall back to Serper
+            if (config.features.googleBrowserEnabled) {
+                const browserProvider = new GoogleBrowserProvider();
+                const serpResults = await browserProvider.search(q.query);
+                results = serpResults.map(r => ({
+                    url: r.url,
+                    source: `search_${q.type}`,
+                    confidence: 0.60 + (q.expectedPrecision * 0.2)
+                }));
+            }
+
+            // If Browser Provider is disabled (or circuit breaker tripped and returned empty), fallback to Serper API
+            if (results.length === 0) {
+                const serperProvider = new SerperSearchProvider();
+                const serpResults = await serperProvider.search(q.query);
+                results = serpResults.map(r => ({
+                    url: r.url,
+                    source: `search_${q.type}`,
+                    confidence: 0.60 + (q.expectedPrecision * 0.2)
+                }));
+            }
 
             this.rateLimiter.reportSuccess('google');
 
-            return results.slice(0, 5).map(r => ({
-                url: r.url,
-                source: `search_${q.type}`,
-                confidence: 0.60 + (q.expectedPrecision * 0.2)
-            }));
+            return results.slice(0, 5);
         } catch (e: any) {
+            this.rateLimiter.reportFailure('google');
             Logger.warn(`[Search] Query failed: ${q.query}`, { error: e });
             return [];
         }
@@ -601,18 +722,11 @@ export class UnifiedDiscoveryService {
     // =========================================================================
 
     private async reverseEngineerEmailDomain(company: CompanyInput, threshold: number): Promise<DiscoveryResult | null> {
-        const emails = [company.email, (company as any).pec].filter(e => e && e.includes('@'));
-        const PUBLIC_DOMAINS = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'libero.it', 'virgilio.it', 'tiscali.it', 'alice.it', 'tim.it', 'pec.it', 'legalmail.it', 'arubapec.it'];
+        const candidateDomains = EmailDomainMiner.extractDomains(company);
 
-        for (const email of emails) {
+        for (const domain of candidateDomains) {
             try {
-                const domain = email!.split('@')[1].toLowerCase().trim();
-                // If it's a generic public domain or a generic PEC provider, skip it.
-                if (PUBLIC_DOMAINS.includes(domain) || domain.includes('.telecompost.it') || domain.includes('mypec.eu')) {
-                    continue;
-                }
-
-                Logger.info(`[EmailReversal] Probing domain extracted from email: ${domain}`);
+                Logger.info(`[EmailReversal] Probing corporate domain extracted from email: ${domain}`);
 
                 const url = `http://${domain}`;
                 const verification = await this.deepVerify(url, company);
@@ -628,7 +742,7 @@ export class UnifiedDiscoveryService {
                     };
                 }
             } catch (e) {
-                Logger.warn(`[EmailReversal] Error probing email ${email}`);
+                Logger.warn(`[EmailReversal] Error probing email domain ${domain}`);
             }
         }
         return null;
@@ -706,21 +820,30 @@ export class UnifiedDiscoveryService {
 
         Logger.info(`[Validation] Validating ${unique.length} candidates from ${wave}...`);
 
-        // Verify in parallel batches
+        // Verify in parallel batches with a strict timeout race (Law 104)
         const checks = unique.map(c => this.validatorLimit(async () => {
-            const verification = await this.deepVerify(c.url, company);
-            if (!verification) return null;
-            const reasonCode = this.reasonCodeForVerification(verification);
+            try {
+                const verification = await Promise.race([
+                    this.deepVerify(c.url, company),
+                    new Promise<any>((_, reject) => setTimeout(() => reject(new Error('VERIFY_TIMEOUT')), 9000))
+                ]);
 
-            return {
-                url: c.url,
-                status: verification.confidence >= threshold ? 'FOUND_VALID' : 'FOUND_INVALID',
-                method: c.source,
-                confidence: verification.confidence,
-                wave,
-                reason_code: reasonCode,
-                details: verification
-            } as DiscoveryResult;
+                if (!verification) return null;
+                const reasonCode = this.reasonCodeForVerification(verification);
+
+                return {
+                    url: c.url,
+                    status: verification.confidence >= threshold ? 'FOUND_VALID' : 'FOUND_INVALID',
+                    method: c.source,
+                    confidence: verification.confidence,
+                    wave,
+                    reason_code: reasonCode,
+                    details: verification
+                } as DiscoveryResult;
+            } catch (err: any) {
+                Logger.warn(`[Validation] Timeout or error verifying candidate ${c.url}: ${err.message}`);
+                return null;
+            }
         }));
 
         const results = (await Promise.all(checks)).filter(r => r !== null) as DiscoveryResult[];

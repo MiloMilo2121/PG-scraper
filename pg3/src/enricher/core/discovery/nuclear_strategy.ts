@@ -27,53 +27,85 @@ export class NuclearStrategy {
     public async execute(company: CompanyInput): Promise<{ url: string | null; method: string; confidence: number }> {
         Logger.info(`☢️ [Nuclear] Launching SMART search for "${company.company_name}"...`);
 
-        // 1. GENERATE QUERIES (Reduced set for AI - Quality over Quantity)
-        const query = `"${company.company_name}" ${company.city || ''} sito ufficiale`;
-
-        // 2. SEARCH (DDG first, then Serper)
-        let serpResults: any[] = [];
-        try {
-            // Try DDG First
-            const ddgProvider = new DDGSearchProvider();
-            serpResults = await ddgProvider.search(query);
-
-            // Fallback to Serper if DDG is empty
-            if (serpResults.length === 0) {
-                Logger.info(`[Nuclear] DDG empty. Escalating to Serper.dev...`);
-                const serperProvider = new SerperSearchProvider();
-                serpResults = await serperProvider.search(query);
-            }
-        } catch (e) {
-            Logger.warn(`[Nuclear] Search failed: ${(e as Error).message}`);
-            return { url: null, method: 'nuclear_failed', confidence: 0 };
+        // 🛡️ GATING 1: Input Quality
+        const quality = this.calculateInputQuality(company);
+        if (quality < 30) {
+            Logger.warn(`[Nuclear] Gating rejected: Input quality too low (${quality}%). Escalation denied.`);
+            return { url: null, method: 'nuclear_rejected_low_quality', confidence: 0 };
         }
 
-
-        if (serpResults.length === 0) {
-            Logger.warn(`[Nuclear] Initial search yielded NO results. Switching to LEGACY PROTOCOL immediately.`);
-            // Fall through to legacy...
-        } else {
-            // 3. SMART AI SELECTION (Only if we have results)
-            Logger.info(`[Nuclear] Analyzing ${serpResults.length} SERP results with AI...`);
+        // ☢️ GATING 2: Perplexity Feature Flag
+        if (config.features.perplexityEnabled && process.env.PERPLEXITY_API_KEY) {
+            Logger.info(`[Nuclear] Target authorized for Tier 8 Perplexity Oracle.`);
             try {
-                const aiDecision = await LLMValidator.selectBestUrl(company, serpResults);
-
-                if (aiDecision.bestUrl && aiDecision.confidence > 0.6) {
-                    Logger.info(`[Nuclear] AI selected: ${aiDecision.bestUrl} (Conf: ${aiDecision.confidence})`);
-                    return {
-                        url: aiDecision.bestUrl,
-                        method: 'nuclear_smart_ai',
-                        confidence: aiDecision.confidence
-                    };
+                const ppxUrl = await this.runPerplexity(company);
+                if (ppxUrl) {
+                    return { url: ppxUrl, method: 'perplexity_sonar', confidence: 0.90 };
                 }
-                Logger.info(`[Nuclear] AI unsure (Conf: ${aiDecision.confidence}). Falling back to heuristics.`);
-            } catch (aiError: any) {
-                Logger.warn(`[Nuclear] AI selection failed: ${aiError.message}. Falling back to heuristics.`);
+            } catch (e: any) {
+                Logger.warn(`[Nuclear] Perplexity failed: ${e.message}`);
             }
+        } else {
+            Logger.warn(`[Nuclear] Perplexity disabled or API key missing. Proceeding to legacy nuclear...`);
         }
 
+        // 3. LEGACY TRIANGULATION (if Perplexity is disabled or fails)
         const queries = this.generateNuclearQueries(company);
         return this.executeLegacy(company, queries);
+    }
+
+    /**
+     * Tier 8: Absolutely final oracle attempt using Sonar Pro via Perplexity.
+     */
+    private async runPerplexity(company: CompanyInput): Promise<string | null> {
+        const query = `Qual è il sito web ufficiale (www o https) dell'azienda italiana "${company.company_name}" situata a ${company.city || ''} (${company.province || ''}) che opera nel settore ${company.category || ''}? P.IVA: ${company.vat_code || 'Sconosciuta'}. Rispondi SOLO con l'URL senza nient'altro, e rispondi "NULL" se non ne sei assolutamente certo.`;
+
+        const response = await fetch('https://api.perplexity.ai/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'sonar-pro',
+                messages: [{ role: 'user', content: query }],
+                temperature: 0.1,
+                max_tokens: 50
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Perplexity API Error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const content = data.choices[0]?.message?.content?.trim();
+
+        if (content && content !== 'NULL' && content.includes('.')) {
+            let url = content.toLowerCase();
+            if (!url.startsWith('http')) {
+                url = 'https://' + url;
+            }
+            Logger.info(`[Nuclear] 🎯 PERPLEXITY FOUND WEBSITE: ${url}`);
+            return url;
+        }
+
+        return null;
+    }
+
+    /**
+     * Calculates the "richness" of the input data to prevent
+     * firing expensive LLM queries on empty/worthless PagineGialle stubs.
+     */
+    private calculateInputQuality(company: CompanyInput): number {
+        let score = 0;
+        if (company.company_name && company.company_name.trim().length > 3) score += 20;
+        if (company.city) score += 15;
+        if (company.province) score += 10;
+        if (company.vat_code || (company as any).piva || (company as any).vat) score += 40;
+        if (company.address) score += 10;
+        if (company.phone) score += 5;
+        return score;
     }
 
     private async executeLegacy(company: CompanyInput, queries: string[]) {

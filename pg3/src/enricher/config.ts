@@ -106,6 +106,19 @@ const EnvSchema = z.object({
   JINA_ENABLED: BooleanString.default(false),
   JINA_TIMEOUT_MS: z.coerce.number().min(5000).default(20000),
   JINA_MAX_CONTENT_LENGTH: z.coerce.number().min(1000).default(8000),
+
+  // 🚩 OMEGA 6.2 FEATURE FLAGS & GUARDRAILS
+  DISCOVERY_GOOGLE_BROWSER_ENABLED: BooleanString.default(true),
+  DISCOVERY_AI_VARIANTS_ENABLED: BooleanString.default(true),
+  DISCOVERY_PERPLEXITY_ENABLED: BooleanString.default(false), // Heavy fallback disabled by default
+
+  // 🛡️ GOOGLE BROWSER ENGINE GUARDRAILS
+  GOOGLE_BROWSER_MAX_QUERIES_PER_SEC: z.coerce.number().min(0.1).max(1).default(0.15), // roughly 1 query every 6.6s
+  GOOGLE_BROWSER_MAX_QUERIES_PER_COMPANY: z.coerce.number().min(1).max(5).default(2),
+  GOOGLE_BROWSER_CAPTCHA_AUTO_DISABLE_THRESHOLD: z.coerce.number().min(0.01).max(1).default(0.10), // Auto disable if > 10% hit rate
+
+  // 💰 BUDGET LIMITS
+  MAX_COST_PER_COMPANY_EUR: z.coerce.number().min(0.0001).max(0.1).default(0.0015),
 });
 
 // Parse and validate process.env
@@ -270,6 +283,25 @@ export const config = {
     enabled: env.JINA_ENABLED,
     timeoutMs: env.JINA_TIMEOUT_MS,
     maxContentLength: env.JINA_MAX_CONTENT_LENGTH,
+  },
+
+  // 🚩 OMEGA 6.2 FEATURE FLAGS & GUARDRAILS
+  features: {
+    googleBrowserEnabled: env.DISCOVERY_GOOGLE_BROWSER_ENABLED,
+    aiVariantsEnabled: env.DISCOVERY_AI_VARIANTS_ENABLED,
+    perplexityEnabled: env.DISCOVERY_PERPLEXITY_ENABLED,
+  },
+
+  // 🛡️ BROWSER ENGINE LIMITS
+  browserEngineLimits: {
+    maxQueriesPerSec: env.GOOGLE_BROWSER_MAX_QUERIES_PER_SEC,
+    maxQueriesPerCompany: env.GOOGLE_BROWSER_MAX_QUERIES_PER_COMPANY,
+    captchaAutoDisableThreshold: env.GOOGLE_BROWSER_CAPTCHA_AUTO_DISABLE_THRESHOLD,
+  },
+
+  // 💰 BUDGET LIMITS
+  budget: {
+    maxCostPerCompanyEur: env.MAX_COST_PER_COMPANY_EUR,
   }
 } as const;
 

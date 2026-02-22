@@ -41,6 +41,36 @@ const discoveryService = new UnifiedDiscoveryService();
 let isShuttingDown = false;
 let processHandlersRegistered = false;
 
+// 📊 GLOBAL KPIs (OMEGA v6.2-U)
+export const GlobalKPIs = {
+    totalProcessed: 0,
+    validWebsitesFound: 0,
+    paidEscalations: 0, // LLM Oracle usage
+    perplexityUsage: 0, // Layer 4 usage
+    totalCostEur: 0,
+    captchaHits: 0,
+
+    printReport() {
+        if (this.totalProcessed === 0) return;
+        const coverage = (this.validWebsitesFound / this.totalProcessed) * 100;
+        const paidRate = (this.paidEscalations / this.totalProcessed) * 100;
+        const perplRate = (this.perplexityUsage / this.totalProcessed) * 100;
+        const avgCost = this.totalCostEur / this.totalProcessed;
+        const captchaRate = (this.captchaHits / (this.totalProcessed * 2)) * 100; // rough est
+
+        Logger.info('\n=========================================');
+        Logger.info('📊 OMEGA v6.2-U: FINAL KPI REPORT');
+        Logger.info('=========================================');
+        Logger.info(`🎯 Coverage: ${coverage.toFixed(2)}% (Target >= 88%)`);
+        Logger.info(`💸 Paid Escalation: ${paidRate.toFixed(2)}% (Target <= 10%)`);
+        Logger.info(`☢️ Perplexity Usage: ${perplRate.toFixed(2)}% (Target <= 2%)`);
+        Logger.info(`💰 Avg Cost/Co: €${avgCost.toFixed(4)} (Target <= €0.0015)`);
+        Logger.info(`🛡️ CAPTCHA Rate: ${captchaRate.toFixed(2)}% (Target < 5%)`);
+        Logger.info(`Total Processed: ${this.totalProcessed} | Found: ${this.validWebsitesFound}`);
+        Logger.info('=========================================\n');
+    }
+};
+
 function mapErrorToReasonCode(error: Error): string {
     const category = Logger.categorizeError(error);
     switch (category) {
@@ -141,6 +171,9 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
                 discoveryConfidence = confidence;
                 discoveryReasonCode = verification?.reason_code || 'OK_CONFIRMED_INPUT_WEBSITE';
                 Logger.info(`[Worker] ✅ Provided website verified (${confidence.toFixed(2)}): ${company_name} -> ${website}`);
+
+                GlobalKPIs.totalProcessed++;
+                GlobalKPIs.validWebsitesFound++;
             } else {
                 Logger.warn(`[Worker] ⚠️ Provided website rejected (${confidence.toFixed(2)} < ${minValidWebsiteConfidence}): ${company_name} -> ${website}`);
                 website = undefined;
@@ -165,6 +198,20 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
                 );
             } else {
                 Logger.warn(`[Worker] ⚠️ Discovery failed for ${company_name} (Status: ${discoveryResult.status}, Reason: ${discoveryResult.reason_code})`);
+            }
+
+            // Track KPIs
+            GlobalKPIs.totalProcessed++;
+            if (website) GlobalKPIs.validWebsitesFound++;
+            if (discoveryResult.metrics) {
+                if (discoveryResult.metrics.layersAttempted?.includes('LAYER2_ORACLE')) {
+                    GlobalKPIs.paidEscalations++;
+                }
+                if (discoveryResult.metrics.layersAttempted?.includes('LAYER4_NUCLEAR')) {
+                    GlobalKPIs.perplexityUsage++;
+                }
+                GlobalKPIs.totalCostEur += discoveryResult.metrics.totalCostEur || 0;
+                GlobalKPIs.captchaHits += discoveryResult.metrics.captchaHits || 0;
             }
         }
 
@@ -324,6 +371,9 @@ async function gracefulShutdown(worker: Worker, signal: string, exitCode: number
     Logger.info(`🛑 ${signal} received. Starting graceful shutdown...`);
 
     try {
+        // Print Final Run KPIs
+        GlobalKPIs.printReport();
+
         // Stop accepting new jobs
         await worker.close();
         Logger.info('👷 Worker stopped accepting new jobs');
