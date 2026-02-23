@@ -246,65 +246,71 @@ export class BrowserFactory {
         this.activePages.add(page);
         page.once('close', () => this.activePages.delete(page));
 
-        // 🧬 GENETIC EVOLUTION: Task 1
-        const fingerprinter = GeneticFingerprinter.getInstance();
-        const gene = fingerprinter.getBestGene();
-
-        // Attach gene ID to page for feedback loop
-        (page as any).__geneId = gene.id;
-
-        await page.setUserAgent(gene.userAgent);
-
-        await page.setViewport({
-            width: gene.viewport.width,
-            height: gene.viewport.height,
-            isMobile: gene.userAgent.includes('Mobile') || gene.userAgent.includes('Android'),
-            hasTouch: gene.userAgent.includes('Mobile') || gene.userAgent.includes('Android')
-        });
-
-        // Add headers from gene locale
-        await page.setExtraHTTPHeaders({
-            'Accept-Language': gene.locale === 'it-IT'
-                ? 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
-                : 'en-US,en;q=0.9,it;q=0.8',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Ch-Ua-Platform': gene.userAgent.includes('Mac') ? '"macOS"' : '"Windows"'
-        });
-
-        // Mock Hardware Concurrency
-        await page.evaluateOnNewDocument((concurrency) => {
-            Object.defineProperty(navigator, 'hardwareConcurrency', {
-                get: () => concurrency,
-            });
-        }, gene.hardwareConcurrency);
-
-        // Task 12: Page timeout recovery
-        page.setDefaultTimeout(30000);
-        page.setDefaultNavigationTimeout(30000);
-
-        // Task: Anti-Fingerprinting
-        await BrowserEvasion.apply(page);
-
-        // Task 16: Proxy Authentication (for authenticated proxies)
-        if (process.env.DISABLE_PROXY !== 'true') {
-            const proxyManager = ProxyManager.getInstance();
-            await proxyManager.authenticateProxy(page, 'https://paginegialle.it');
-        }
-
-
-        // Task: Cookie Consent
         try {
-            await CookieConsent.handle(page);
-        } catch (e) {
-            Logger.warn(`[BrowserFactory] ⚠️ Cookie consent failed (non-critical): ${(e as Error).message}`);
+            // 🧬 GENETIC EVOLUTION: Task 1
+            const fingerprinter = GeneticFingerprinter.getInstance();
+            const gene = fingerprinter.getBestGene();
+
+            // Attach gene ID to page for feedback loop
+            (page as any).__geneId = gene.id;
+
+            await page.setUserAgent(gene.userAgent);
+
+            await page.setViewport({
+                width: gene.viewport.width,
+                height: gene.viewport.height,
+                isMobile: gene.userAgent.includes('Mobile') || gene.userAgent.includes('Android'),
+                hasTouch: gene.userAgent.includes('Mobile') || gene.userAgent.includes('Android')
+            });
+
+            // Add headers from gene locale
+            await page.setExtraHTTPHeaders({
+                'Accept-Language': gene.locale === 'it-IT'
+                    ? 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7'
+                    : 'en-US,en;q=0.9,it;q=0.8',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Ch-Ua-Platform': gene.userAgent.includes('Mac') ? '"macOS"' : '"Windows"'
+            });
+
+            // Mock Hardware Concurrency
+            await page.evaluateOnNewDocument((concurrency) => {
+                Object.defineProperty(navigator, 'hardwareConcurrency', {
+                    get: () => concurrency,
+                });
+            }, gene.hardwareConcurrency);
+
+            // Task 12: Page timeout recovery
+            page.setDefaultTimeout(30000);
+            page.setDefaultNavigationTimeout(30000);
+
+            // Task: Anti-Fingerprinting
+            await BrowserEvasion.apply(page);
+
+            // Task 16: Proxy Authentication (for authenticated proxies)
+            if (process.env.DISABLE_PROXY !== 'true') {
+                const proxyManager = ProxyManager.getInstance();
+                await proxyManager.authenticateProxy(page, 'https://paginegialle.it');
+            }
+
+
+            // Task: Cookie Consent
+            try {
+                await CookieConsent.handle(page);
+            } catch (e) {
+                Logger.warn(`[BrowserFactory] ⚠️ Cookie consent failed (non-critical): ${(e as Error).message}`);
+            }
+
+            // 🛡️ MONITOR DETACHED FRAMES
+            page.on('error', err => Logger.error(`[BrowserFactory] ❌ Page Error: ${err.message}`));
+            page.on('close', () => Logger.info(`[BrowserFactory] 🚪 Page Closed`));
+            // page.on('frame detached', ...) can be noisy, but good for debug if needed
+
+            return page;
+        } catch (error) {
+            Logger.error(`[BrowserFactory] Error during newPage setup`, { error: error as Error });
+            await this.closePage(page);
+            throw error;
         }
-
-        // 🛡️ MONITOR DETACHED FRAMES
-        page.on('error', err => Logger.error(`[BrowserFactory] ❌ Page Error: ${err.message}`));
-        page.on('close', () => Logger.info(`[BrowserFactory] 🚪 Page Closed`));
-        // page.on('frame detached', ...) can be noisy, but good for debug if needed
-
-        return page;
     }
 
     public async forceKill(): Promise<void> {

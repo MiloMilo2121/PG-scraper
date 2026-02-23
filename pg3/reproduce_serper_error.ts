@@ -2,7 +2,7 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-const API_KEY = process.env.SERPER_API_KEY;
+const API_KEY = process.env.SERPER_API_KEY as string;
 
 if (!API_KEY) {
     console.error("❌ SERPER_API_KEY is missing in .env");

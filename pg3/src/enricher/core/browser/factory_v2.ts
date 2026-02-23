@@ -258,50 +258,56 @@ export class BrowserFactory {
         this.activePages.add(page);
         page.once('close', () => this.activePages.delete(page));
 
-        // 🧬 GENETIC EVOLUTION v3: Full trait-consistent fingerprinting
-        const fingerprinter = GeneticFingerprinter.getInstance();
-        const gene = fingerprinter.getBestGene();
-        const geneConfig = GeneticFingerprinter.getInstance().geneToConfig(gene);
+        try {
+            // 🧬 GENETIC EVOLUTION v3: Full trait-consistent fingerprinting
+            const fingerprinter = GeneticFingerprinter.getInstance();
+            const gene = fingerprinter.getBestGene();
+            const geneConfig = GeneticFingerprinter.getInstance().geneToConfig(gene);
 
-        // Attach gene ID to page for feedback loop
-        (page as any).__geneId = gene.id;
+            // Attach gene ID to page for feedback loop
+            (page as any).__geneId = gene.id;
 
-        await page.setUserAgent(geneConfig.userAgent);
+            await page.setUserAgent(geneConfig.userAgent);
 
-        await page.setViewport({
-            width: geneConfig.viewport.width,
-            height: geneConfig.viewport.height,
-            isMobile: geneConfig.isMobile,
-            hasTouch: geneConfig.isMobile,
-        });
-
-        // Set headers: Accept-Language + Client Hints (Sec-CH-UA-*)
-        await page.setExtraHTTPHeaders({
-            'Accept-Language': geneConfig.acceptLanguage,
-            'Upgrade-Insecure-Requests': '1',
-            ...geneConfig.clientHintsHeaders,
-        });
-
-        // Mock Hardware Concurrency
-        await page.evaluateOnNewDocument((concurrency) => {
-            Object.defineProperty(navigator, 'hardwareConcurrency', {
-                get: () => concurrency,
+            await page.setViewport({
+                width: geneConfig.viewport.width,
+                height: geneConfig.viewport.height,
+                isMobile: geneConfig.isMobile,
+                hasTouch: geneConfig.isMobile,
             });
-        }, geneConfig.hardwareConcurrency);
 
-        // PROXY AUTHENTICATION
-        await ProxyManager.getInstance().authenticateProxy(page, 'https://www.google.com');
+            // Set headers: Accept-Language + Client Hints (Sec-CH-UA-*)
+            await page.setExtraHTTPHeaders({
+                'Accept-Language': geneConfig.acceptLanguage,
+                'Upgrade-Insecure-Requests': '1',
+                ...geneConfig.clientHintsHeaders,
+            });
 
-        // Page timeout recovery
-        page.setDefaultTimeout(config.scraping.timeout);
-        page.setDefaultNavigationTimeout(config.scraping.pageLoadTimeout);
+            // Mock Hardware Concurrency
+            await page.evaluateOnNewDocument((concurrency) => {
+                Object.defineProperty(navigator, 'hardwareConcurrency', {
+                    get: () => concurrency,
+                });
+            }, geneConfig.hardwareConcurrency);
 
-        // Anti-Fingerprinting v3: Full evasion with gene-derived config
-        await BrowserEvasion.apply(page, geneConfig.evasionConfig);
-        // Cookie Consent
-        await CookieConsent.handle(page);
+            // PROXY AUTHENTICATION
+            await ProxyManager.getInstance().authenticateProxy(page, 'https://www.google.com');
 
-        return page;
+            // Page timeout recovery
+            page.setDefaultTimeout(config.scraping.timeout);
+            page.setDefaultNavigationTimeout(config.scraping.pageLoadTimeout);
+
+            // Anti-Fingerprinting v3: Full evasion with gene-derived config
+            await BrowserEvasion.apply(page, geneConfig.evasionConfig);
+            // Cookie Consent
+            await CookieConsent.handle(page);
+
+            return page;
+        } catch (error) {
+            Logger.error(`[BrowserFactory] Error during newPage setup`, { error: error as Error });
+            await this.closePage(page);
+            throw error;
+        }
     }
 
     public async forceKill(targetBrowser: Browser | null = this.browser): Promise<void> {

@@ -254,11 +254,20 @@ export class GeneticFingerprinter {
 
     public geneToConfig(gene: BrowserGene): any {
         const ua = UA_DATABASE.find(u => u.ua === gene.userAgent) || UA_DATABASE[0];
+        const loc = this.getLocaleForUA(ua.ua);
+        const evasionConfig = this.getEvasionConfig(ua.ua);
+        const clientHintsHeaders = this.generateClientHints(ua);
+
         return {
             userAgent: gene.userAgent,
             viewport: gene.viewport,
             locale: gene.locale,
-            timezone: 'Europe/Rome', // Simplified for now
+            timezone: loc.timezone,
+            acceptLanguage: loc.acceptLanguage,
+            isMobile: ua.mobile,
+            hardwareConcurrency: gene.hardwareConcurrency,
+            evasionConfig: evasionConfig,
+            clientHintsHeaders: clientHintsHeaders,
             args: [
                 `--user-agent=${gene.userAgent}`,
                 `--window-size=${gene.viewport.width},${gene.viewport.height}`,
