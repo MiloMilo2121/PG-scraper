@@ -44,10 +44,13 @@ export class AgentBrain {
         });
 
         try {
+            // Use full fallback chain so Agent doesn't die on a single provider 429
+            const modelChain = ModelRouter.selectModelChain(TaskDifficulty.COMPLEX);
             const decision = await LLMService.completeStructured<AgentDecision>(
                 prompt,
                 AGENT_NAVIGATION_PROMPT.schema as Record<string, unknown>,
-                ModelRouter.selectModel(TaskDifficulty.COMPLEX) // 🧠 ROUTER: Complex task -> GLM-5
+                modelChain[0],
+                modelChain.slice(1)
             );
 
             // Log selection

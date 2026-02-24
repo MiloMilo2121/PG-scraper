@@ -1061,10 +1061,33 @@ export class UnifiedDiscoveryService {
                     });
                     lowConfidenceJinaResult = jinaResult;
                 }
-                // Jina failed — fall through to browser if available
+                // Jina failed — try httpVerify as intermediate step before browser (cheaper, no browser overhead)
+            }
+
+            // 🛡️ HTTP-VERIFY INTERMEDIATE: When Jina fails/returns null, try lightweight HTTP before launching browser.
+            // This catches cases where Jina's own infrastructure is blocked but direct/ScrapeDo HTTP works fine.
+            if (!lowConfidenceJinaResult) {
+                const httpIntermediate = await this.httpVerify(normalizedUrl, company);
+                if (httpIntermediate && httpIntermediate.confidence > 0) {
+                    // httpVerify succeeded — if strong enough, return it directly
+                    if (httpIntermediate.confidence >= THRESHOLDS.MINIMUM_VALID) {
+                        this.setCachedVerification(cacheKey, httpIntermediate);
+                        return httpIntermediate;
+                    }
+                    // Keep as low-confidence baseline for potential Agent escalation
+                    lowConfidenceJinaResult = httpIntermediate;
+                    Logger.info('[DeepVerify] httpVerify intermediate result', {
+                        url: normalizedUrl,
+                        confidence: httpIntermediate.confidence,
+                    });
+                }
             }
 
             if (!config.discovery.enableBrowser) {
+                if (lowConfidenceJinaResult) {
+                    this.setCachedVerification(cacheKey, lowConfidenceJinaResult);
+                    return lowConfidenceJinaResult;
+                }
                 const httpFallback = await this.httpVerify(normalizedUrl, company);
                 if (httpFallback) {
                     this.setCachedVerification(cacheKey, httpFallback);
@@ -1146,6 +1169,21 @@ export class UnifiedDiscoveryService {
                         url: normalizedUrl,
                         company_name: company.company_name,
                     });
+                    // FIX: When Agent fails on Jina-escalation path, apply domain coverage boost
+                    const domCov = CompanyMatcher.domainCoverage(company.company_name, normalizedUrl);
+                    if (domCov >= 0.6 && lowConfidenceJinaResult) {
+                        const boost = Math.min(0.15, domCov * 0.2);
+                        const boostedConf = Math.min(0.75, (lowConfidenceJinaResult.confidence || 0) + boost);
+                        const boostedResult = {
+                            ...lowConfidenceJinaResult,
+                            confidence: boostedConf,
+                            reason: `${lowConfidenceJinaResult.reason}; Agent failed but domain coverage ${domCov.toFixed(2)}`,
+                            final_url: this.normalizeUrl(page.url()) || normalizedUrl,
+                        };
+                        Logger.info(`[DeepVerify] 🛡️ Jina-Agent fallback: boosted to ${boostedConf.toFixed(2)} via domain coverage`);
+                        this.setCachedVerification(cacheKey, boostedResult);
+                        return boostedResult;
+                    }
                 }
             }
 
@@ -1290,6 +1328,17 @@ export class UnifiedDiscoveryService {
                     }
                 } catch (agentError) {
                     Logger.warn('[DeepVerify] Agent fallback failed', { error: agentError as Error });
+                    // FIX: When Agent fails (e.g., 429 rate limit), preserve existing evaluation
+                    // and give a modest confidence boost if domain name matches company name.
+                    // This prevents the system from discarding a correct URL (e.g., ferrari.com)
+                    // just because the Agent couldn't confirm the P.IVA.
+                    const domainCoverage = CompanyMatcher.domainCoverage(company.company_name, currentUrl);
+                    if (domainCoverage >= 0.6) {
+                        const boost = Math.min(0.15, domainCoverage * 0.2);
+                        evaluation.confidence = Math.min(0.75, evaluation.confidence + boost);
+                        evaluation.reason += `; Agent failed but domain coverage ${domainCoverage.toFixed(2)} (boost +${boost.toFixed(2)})`;
+                        Logger.info(`[DeepVerify] 🛡️ Agent failed but strong domain match — boosted confidence to ${evaluation.confidence.toFixed(2)}`);
+                    }
                 }
             }
 

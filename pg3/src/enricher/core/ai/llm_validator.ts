@@ -29,7 +29,8 @@ export class LLMValidator {
      * Uses structured prompts + Cheerio-cleaned HTML for better accuracy.
      */
     public static async validateCompany(company: CompanyInput, scrapedHtml: string): Promise<ValidationResult> {
-        if (!process.env.OPENAI_API_KEY && !process.env.Z_AI_API_KEY) {
+        const hasAnyLLMProvider = process.env.OPENAI_API_KEY || process.env.Z_AI_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.KIMI_API_KEY;
+        if (!hasAnyLLMProvider) {
             return {
                 isValid: false,
                 confidence: 0,
@@ -67,10 +68,12 @@ export class LLMValidator {
                 next_action: 'accept' | 'crawl_contact' | 'reject' | 'manual_review';
             };
 
+            const modelChain = ModelRouter.selectModelChain(TaskDifficulty.SIMPLE);
             const res = await LLMService.completeStructured<PromptResponse>(
                 prompt,
                 VALIDATE_COMPANY_PROMPT.schema as Record<string, unknown>,
-                ModelRouter.selectModel(TaskDifficulty.SIMPLE) // 🚦 ROUTER: Simple task -> FlashX
+                modelChain[0],
+                modelChain.slice(1)
             );
 
             // Log model usage for verification (Law 007)
@@ -126,7 +129,8 @@ export class LLMValidator {
         company: CompanyInput,
         serpResults: Array<{ url: string; title: string; snippet: string }>
     ): Promise<{ bestUrl: string | null; confidence: number; reasoning: string; thought?: string }> {
-        if (!process.env.OPENAI_API_KEY && !process.env.Z_AI_API_KEY) {
+        const hasAnyLLM = process.env.OPENAI_API_KEY || process.env.Z_AI_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.KIMI_API_KEY;
+        if (!hasAnyLLM) {
             Logger.warn('[LLMValidator] selectBestUrl: No LLM API key configured');
             return { bestUrl: null, confidence: 0, reasoning: 'LLM disabled (missing API key)' };
         }
@@ -150,10 +154,12 @@ export class LLMValidator {
                 reasoning: string;
             };
 
+            const selModelChain = ModelRouter.selectModelChain(TaskDifficulty.MODERATE);
             const res = await LLMService.completeStructured<SelectResponse>(
                 prompt,
                 SELECT_BEST_URL_PROMPT.schema as Record<string, unknown>,
-                ModelRouter.selectModel(TaskDifficulty.MODERATE) // 🚦 ROUTER: Selection -> DeepSeek V3.2 (more nuance)
+                selModelChain[0],
+                selModelChain.slice(1)
             );
 
             if (res && typeof res.confidence === 'number') {
