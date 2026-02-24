@@ -26,7 +26,7 @@ export const config = {
         apiKey: process.env.OPENAI_API_KEY || '',
         z_ai: {
             apiKey: process.env.Z_AI_API_KEY || '',
-            baseUrl: 'https://open.bigmodel.cn/api/paas/v4/',
+            baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
         },
         deepseek: {
             apiKey: process.env.DEEPSEEK_API_KEY || '',
@@ -37,7 +37,7 @@ export const config = {
             baseUrl: 'https://api.moonshot.cn/v1',
         },
         model: process.env.LLM_MODEL || 'glm-5',
-        fastModel: process.env.LLM_MODEL_FAST || 'glm-4-flash',
+        fastModel: process.env.LLM_MODEL_FAST || 'glm-4.7-flash',
     },
     google: {
         streetViewKey: process.env.GOOGLE_STREET_VIEW_KEY || '',

@@ -3,14 +3,16 @@ import { config } from '../../config';
 import { Logger } from '../../utils/logger';
 
 /**
- * 🚦 MODEL ROUTER — Intelligent AI Selection
+ * 🚦 MODEL ROUTER — Intelligent AI Selection (Updated Feb 2026)
  *
  * Decides which model to use based on the complexity of the task.
+ * Cost-optimized chains — cheapest viable model first, quality fallbacks after.
+ *
  * Strategies:
- * - SIMPLE: Speed & throughput (Flash models)
- * - MODERATE: Structured data extraction / Reasoning Lite (DeepSeek V3)
- * - COMPLEX: Planning, multi-step reasoning (GLM-5)
- * - HARD: Deep reasoning, coding, analyzing failures (Kimi K2)
+ * - SIMPLE: glm-4.7-flash (FREE!) → deepseek-chat ($0.14/$0.28) → gpt-4o-mini
+ * - MODERATE: deepseek-chat → glm-4.7-flash (FREE) → gpt-4o-mini
+ * - COMPLEX: glm-5 ($1/$3.2) → kimi-k2.5 ($0.6/$3) → deepseek-chat → gpt-4o
+ * - HARD: kimi-k2.5 → deepseek-reasoner ($0.55/$2.19) → glm-5 → gpt-4o
  */
 
 export enum TaskDifficulty {
@@ -27,51 +29,68 @@ export class ModelRouter {
      * Falls back to safer options if specific tier models aren't configured.
      */
     public static selectModel(difficulty: TaskDifficulty): string {
-        const pricing = config.llm.pricing;
+        return this.selectModelChain(difficulty)[0];
+    }
+
+    /**
+     * Returns an ordered fallback chain of models for the given difficulty tier.
+     * When the primary model returns 429/5xx, callers should try the next model in the chain.
+     * This prevents a single rate-limited provider from killing the entire pipeline.
+     */
+    public static selectModelChain(difficulty: TaskDifficulty): string[] {
+        const chain: string[] = [];
 
         switch (difficulty) {
             case TaskDifficulty.SIMPLE:
-                // TIER 1: Flash / Instant
-                // Prioritize DeepSeek if available (More reliable than Z.ai currently)
-                if (config.llm.deepseek?.apiKey) return 'deepseek-chat';
-
-                // Target: GLM-4.7-FlashX ($0.07/M)
-                if (config.llm.z_ai?.apiKey && pricing['glm-4.7-flash']) return 'glm-4.7-flash';
-                return 'gpt-4o-mini'; // Fallback to OpenAI if Z.ai missing
+                // Flash first (FREE), then cheapest paid
+                if (config.llm.z_ai?.apiKey) chain.push('glm-4.7-flash');
+                if (config.llm.deepseek?.apiKey) chain.push('deepseek-chat');
+                if (config.llm.apiKey) chain.push('gpt-4o-mini');
+                break;
 
             case TaskDifficulty.MODERATE:
-                // TIER 2: Smart & Cheap
-                // Target: DeepSeek V3.2 ($0.28/M)
-                if (config.llm.deepseek?.apiKey) return 'deepseek-v3.2';
-                // Fallback: GLM-4 Flash (Z.ai)
-                if (config.llm.z_ai?.apiKey) return 'glm-4-flash';
-                return 'gpt-4o-mini';
+                // DeepSeek best at structured JSON, flash as free fallback
+                if (config.llm.deepseek?.apiKey) chain.push('deepseek-chat');
+                if (config.llm.z_ai?.apiKey) chain.push('glm-4.7-flash');
+                if (config.llm.apiKey) chain.push('gpt-4o-mini');
+                break;
 
             case TaskDifficulty.COMPLEX:
-                // TIER 3: Reasoning Standard
-                // Target: GLM-5 ($1.00/M)
-                if (config.llm.z_ai?.apiKey) return 'glm-5';
-                return 'gpt-4o'; // Fallback
+                // GLM-5 flagship, then Kimi K2.5 (strong reasoning), then fallbacks
+                if (config.llm.z_ai?.apiKey) chain.push('glm-5');
+                if (config.llm.kimi?.apiKey) chain.push('kimi-k2.5');
+                if (config.llm.deepseek?.apiKey) chain.push('deepseek-chat');
+                if (config.llm.apiKey) chain.push('gpt-4o');
+                break;
 
             case TaskDifficulty.HARD:
-                // TIER 4: Maximum Intelligence
-                // Target: Kimi K2 Thinking or DeepSeek R1
-                if (config.llm.kimi?.apiKey) return 'moonshot-k2-thinking';
-                if (config.llm.deepseek?.apiKey) return 'deepseek-reasoner';
-                if (config.llm.z_ai?.apiKey) return 'glm-5';
-                return 'gpt-4o'; // Ultimate fallback
+                // K2.5 best for deep reasoning, then reasoning specialists
+                if (config.llm.kimi?.apiKey) chain.push('kimi-k2.5');
+                if (config.llm.deepseek?.apiKey) chain.push('deepseek-reasoner');
+                if (config.llm.z_ai?.apiKey) chain.push('glm-5');
+                if (config.llm.apiKey) chain.push('gpt-4o');
+                break;
 
             default:
                 Logger.warn(`[ModelRouter] Unknown difficulty ${difficulty}, defaulting to SIMPLE`);
-                return 'gpt-4o-mini';
+                if (config.llm.z_ai?.apiKey) chain.push('glm-4.7-flash');
+                if (config.llm.apiKey) chain.push('gpt-4o-mini');
+                break;
         }
+
+        // Guarantee at least one model in the chain
+        if (chain.length === 0) {
+            chain.push('gpt-4o-mini');
+        }
+
+        return chain;
     }
 
     /**
      * Logs the selection decision for observability.
      */
     public static logSelection(taskName: string, difficulty: TaskDifficulty): void {
-        const model = this.selectModel(difficulty);
-        Logger.info(`🚦 [ModelRouter] Task: "${taskName}" [${difficulty}] -> Using ${model}`);
+        const chain = this.selectModelChain(difficulty);
+        Logger.info(`🚦 [ModelRouter] Task: "${taskName}" [${difficulty}] -> Primary: ${chain[0]}, Fallbacks: [${chain.slice(1).join(', ')}]`);
     }
 }

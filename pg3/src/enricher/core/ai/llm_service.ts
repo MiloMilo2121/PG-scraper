@@ -32,7 +32,7 @@ export class LLMService {
             providerKey = 'z_ai';
         } else if (model.startsWith('deepseek-')) {
             providerKey = 'deepseek';
-        } else if (model.startsWith('moonshot-')) {
+        } else if (model.startsWith('moonshot-') || model.startsWith('kimi-')) {
             providerKey = 'kimi';
         } else {
             // Fallback for gpt-*, o1-*, etc. to OpenAI
@@ -93,11 +93,55 @@ export class LLMService {
      */
     public static getClient(): OpenAI {
         // Fallback for legacy calls that don't specify model
-        // Prefer Z.ai -> DeepSeek -> Kimi -> OpenAI
-        if (config.llm.z_ai.apiKey) return this.getClientForModel('glm-5');
+        // Prefer cheapest: Z.ai flash (FREE) -> DeepSeek -> Kimi -> OpenAI
+        if (config.llm.z_ai.apiKey) return this.getClientForModel('glm-4.7-flash');
         if (config.llm.deepseek?.apiKey) return this.getClientForModel('deepseek-chat');
-        if (config.llm.kimi?.apiKey) return this.getClientForModel('moonshot-v1-8k');
+        if (config.llm.kimi?.apiKey) return this.getClientForModel('kimi-k2.5');
         return this.getClientForModel('gpt-4o');
+    }
+
+    // ─────────────────────────────────────────────
+    // RESILIENCE: 429/5xx Detection & Backoff
+    // ─────────────────────────────────────────────
+
+    /**
+     * Checks if an error is a retryable rate-limit or server error (429, 5xx).
+     */
+    private static isRetryableError(error: unknown): boolean {
+        const msg = `${(error as any)?.message || ''} ${(error as any)?.status || ''} ${(error as any)?.code || ''}`.toLowerCase();
+        // 429 rate limit
+        if (msg.includes('429') || msg.includes('rate') || msg.includes('速率限制') || msg.includes('too many')) return true;
+        // 5xx server errors
+        if (msg.includes('500') || msg.includes('502') || msg.includes('503') || msg.includes('504')) return true;
+        // Connection/timeout errors (transient)
+        if (msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('socket hang up')) return true;
+        return false;
+    }
+
+    /**
+     * Exponential backoff delay: 1s, 2s, 4s for retries within same provider.
+     */
+    private static async backoff(attempt: number): Promise<void> {
+        const delayMs = Math.min(1000 * Math.pow(2, attempt), 4000);
+        Logger.info(`[LLM] ⏳ Backoff ${delayMs}ms before retry...`);
+        await new Promise(r => setTimeout(r, delayMs));
+    }
+
+    // ─────────────────────────────────────────────
+    // TEMPERATURE PER MODEL
+    // ─────────────────────────────────────────────
+
+    /**
+     * Returns optimal temperature for a model. Thinking/reasoning models need higher temp.
+     * - Kimi K2/K2.5 Thinking: 1.0 (official recommendation)
+     * - Kimi K2 Instruct: 0.6 (official recommendation)
+     * - DeepSeek Reasoner: 0.6
+     * - Everything else: config default (0.1)
+     */
+    private static getTemperature(model: string): number {
+        if (model.includes('thinking') || model.includes('reasoner')) return 1.0;
+        if (model.startsWith('kimi-k2')) return 0.6;
+        return config.llm.temperature;
     }
 
     // ─────────────────────────────────────────────
@@ -107,90 +151,142 @@ export class LLMService {
     /**
      * Standard text completion — returns raw string response.
      * Uses the configured smart model by default.
+     * On 429/5xx, retries once with backoff, then tries fallback models.
      */
-    public static async complete(prompt: string, model: string = config.llm.model): Promise<string> {
-        const client = this.getClientForModel(model);
+    public static async complete(prompt: string, model: string = config.llm.model, fallbackModels?: string[]): Promise<string> {
+        const modelsToTry = [model, ...(fallbackModels || [])];
 
-        try {
-            const response = await client.chat.completions.create({
-                model,
-                messages: [{ role: 'user', content: prompt }],
-                temperature: config.llm.temperature,
-                max_tokens: config.llm.maxTokens,
-            });
+        for (let mi = 0; mi < modelsToTry.length; mi++) {
+            const currentModel = modelsToTry[mi];
+            const isLastModel = mi === modelsToTry.length - 1;
 
-            const content = response.choices[0]?.message?.content || '';
-            this.trackUsage(response.usage, model);
+            // Up to 2 attempts per model (original + 1 backoff retry)
+            for (let attempt = 0; attempt < 2; attempt++) {
+                try {
+                    const client = this.getClientForModel(currentModel);
+                    const response = await client.chat.completions.create({
+                        model: currentModel,
+                        messages: [{ role: 'user', content: prompt }],
+                        temperature: this.getTemperature(currentModel),
+                        max_tokens: config.llm.maxTokens,
+                    });
 
-            return content;
-        } catch (error) {
-            Logger.error(`[LLM] complete() failed with model ${model}`, { error: error as Error });
-            throw error;
+                    const content = response.choices[0]?.message?.content || '';
+                    this.trackUsage(response.usage, currentModel);
+                    return content;
+                } catch (error) {
+                    const retryable = this.isRetryableError(error);
+                    Logger.warn(`[LLM] complete() failed with ${currentModel} (attempt ${attempt + 1}, retryable: ${retryable})`, { error: error as Error });
+
+                    if (retryable && attempt === 0) {
+                        // Retry same model once with backoff
+                        await this.backoff(attempt);
+                        continue;
+                    }
+
+                    if (retryable && !isLastModel) {
+                        // Move to next fallback model
+                        Logger.info(`[LLM] 🔄 Falling back from ${currentModel} to ${modelsToTry[mi + 1]}`);
+                        break;
+                    }
+
+                    // Non-retryable error or last model exhausted — throw
+                    throw error;
+                }
+            }
         }
+
+        throw new Error(`[LLM] All models exhausted for complete(): ${modelsToTry.join(' -> ')}`);
     }
 
     /**
      * 🧱 STRUCTURED COMPLETION — Force JSON Schema
      * Guaranteed to return a valid JSON object matching the schema.
+     * On 429/5xx, retries with backoff then tries fallback models.
      */
     public static async completeStructured<T>(
         prompt: string,
         schema: Record<string, unknown>,
-        model: string = config.llm.model
+        model: string = config.llm.model,
+        fallbackModels?: string[]
     ): Promise<T | null> {
-        const client = this.getClientForModel(model);
+        const modelsToTry = [model, ...(fallbackModels || [])];
 
-        // Optimization: Use `response_format: { type: "json_object" }` where supported
-        // But OpenAI SDK requires valid keys. We'll try standard way, fallback if 400.
-        // DeepSeek V3 supports standard tools/json objects usually.
+        for (let mi = 0; mi < modelsToTry.length; mi++) {
+            const currentModel = modelsToTry[mi];
+            const isLastModel = mi === modelsToTry.length - 1;
 
-        // DeepSeek supports "json_object" but NOT "json_schema" (Structured Outputs) yet.
-        const isDeepSeek = model.includes('deepseek');
-        const responseFormat = isDeepSeek
-            ? { type: 'json_object' as const }
-            : {
-                type: 'json_schema' as const,
-                json_schema: {
-                    name: 'validation_result',
-                    strict: true,
-                    schema,
-                },
-            };
+            // DeepSeek/Kimi support "json_object" but NOT "json_schema" (Structured Outputs)
+            const needsSimpleJsonMode = currentModel.includes('deepseek') || currentModel.includes('moonshot') || currentModel.includes('kimi-');
+            const responseFormat = needsSimpleJsonMode
+                ? { type: 'json_object' as const }
+                : {
+                    type: 'json_schema' as const,
+                    json_schema: {
+                        name: 'validation_result',
+                        strict: true,
+                        schema,
+                    },
+                };
 
-        try {
-            const response = await client.chat.completions.create({
-                model,
-                messages: [{ role: 'user', content: prompt }],
-                temperature: config.llm.temperature,
-                max_tokens: config.llm.maxTokens,
-                response_format: responseFormat as any,
-            });
+            // Up to 2 attempts per model (original + 1 backoff retry)
+            for (let attempt = 0; attempt < 2; attempt++) {
+                try {
+                    const client = this.getClientForModel(currentModel);
+                    const response = await client.chat.completions.create({
+                        model: currentModel,
+                        messages: [{ role: 'user', content: prompt }],
+                        temperature: this.getTemperature(currentModel),
+                        max_tokens: config.llm.maxTokens,
+                        response_format: responseFormat as any,
+                    });
 
-            const content = response.choices[0]?.message?.content;
-            if (!content) {
-                Logger.warn('[LLM] Structured output returned empty content');
-                return null;
-            }
+                    const content = response.choices[0]?.message?.content;
+                    if (!content) {
+                        Logger.warn(`[LLM] Structured output returned empty content from ${currentModel}`);
+                        return null;
+                    }
 
-            this.trackUsage(response.usage, model);
+                    this.trackUsage(response.usage, currentModel);
 
-            // GLM/DeepSeek models may wrap JSON in markdown blocks even with json_schema mode
-            const cleanContent = content.replace(/```json/g, '').replace(/```/g, '').trim();
-            return JSON.parse(cleanContent) as T;
+                    // GLM/DeepSeek models may wrap JSON in markdown blocks even with json_schema mode
+                    const cleanContent = content.replace(/```json/g, '').replace(/```/g, '').trim();
+                    return JSON.parse(cleanContent) as T;
 
-        } catch (error) {
-            Logger.warn(`[LLM] Structured output failed with model ${model}, trying pure JSON prompt...`, { error: error as Error });
+                } catch (error) {
+                    const retryable = this.isRetryableError(error);
+                    Logger.warn(`[LLM] completeStructured() failed with ${currentModel} (attempt ${attempt + 1}, retryable: ${retryable})`, { error: error as Error });
 
-            // Fallback: Try standard JSON mode or plaintext
-            try {
-                const legacyRes = await this.complete(prompt + "\n\nResponse MUST be valid JSON matching the schema.", model);
-                const cleanLegacy = legacyRes.replace(/```json/g, '').replace(/```/g, '').trim();
-                return JSON.parse(cleanLegacy) as T;
-            } catch (legacyError) {
-                Logger.error('[LLM] Legacy fallback failed', { error: legacyError as Error });
-                return null;
+                    if (retryable && attempt === 0) {
+                        await this.backoff(attempt);
+                        continue;
+                    }
+
+                    if (retryable && !isLastModel) {
+                        Logger.info(`[LLM] 🔄 Structured: falling back from ${currentModel} to ${modelsToTry[mi + 1]}`);
+                        break;
+                    }
+
+                    // Non-retryable or last model: try legacy JSON prompt as final attempt
+                    Logger.warn(`[LLM] Structured output failed with model ${currentModel}, trying pure JSON prompt...`, { error: error as Error });
+                    try {
+                        const legacyRes = await this.complete(
+                            prompt + "\n\nResponse MUST be valid JSON matching the schema.",
+                            currentModel,
+                            isLastModel ? undefined : modelsToTry.slice(mi + 1)
+                        );
+                        const cleanLegacy = legacyRes.replace(/```json/g, '').replace(/```/g, '').trim();
+                        return JSON.parse(cleanLegacy) as T;
+                    } catch (legacyError) {
+                        Logger.error('[LLM] Legacy fallback failed', { error: legacyError as Error });
+                        return null;
+                    }
+                }
             }
         }
+
+        Logger.error(`[LLM] All models exhausted for completeStructured(): ${modelsToTry.join(' -> ')}`);
+        return null;
     }
 
     /**
@@ -210,7 +306,7 @@ export class LLMService {
     ): Promise<string | null> {
         // Guard: DeepSeek Chat (V3) does NOT support vision. DeepSeek VL does but via different API usually? 
         // For now assume assume only GLM-4v/5 and GPT-4o support vision.
-        if (model.includes('deepseek') || model.includes('moonshot')) {
+        if (model.includes('deepseek') || model.includes('moonshot') || model.includes('kimi-')) {
             Logger.warn(`[LLM] Vision request sent to non-vision model (${model}). Fallback to GLM-4v/GPT-4o.`);
             // Fallback logic could be added here, or just let it fail/warn.
         }
@@ -233,7 +329,7 @@ export class LLMService {
                     }
                 ],
                 max_tokens: 300,
-                temperature: config.llm.temperature,
+                temperature: this.getTemperature(model),
             });
 
             const content = response.choices[0]?.message?.content;

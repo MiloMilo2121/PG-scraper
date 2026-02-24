@@ -27,7 +27,8 @@ JSON:
 `;
             // 1. Check Cache
             const cache = LLMCache.getInstance();
-            const model = ModelRouter.selectModel(TaskDifficulty.SIMPLE);
+            const modelChain = ModelRouter.selectModelChain(TaskDifficulty.SIMPLE);
+            const model = modelChain[0];
             const cachedUrl = await cache.get(prompt, model);
 
             if (cachedUrl) {
@@ -35,9 +36,8 @@ JSON:
                 return cachedUrl !== 'NULL' ? cachedUrl : null;
             }
 
-            // 2. Predict (if not cached)
-            // Using 'SIMPLE' model (Flash/Mini)
-            const response = await LLMService.complete(prompt, model);
+            // 2. Predict (if not cached) — with fallback chain for resilience
+            const response = await LLMService.complete(prompt, model, modelChain.slice(1));
             const clean = response.replace(/```json/g, '').replace(/```/g, '').trim();
 
             try {

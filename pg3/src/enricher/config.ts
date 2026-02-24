@@ -176,7 +176,7 @@ export const config = {
     apiKey: env.OPENAI_API_KEY,
     z_ai: {
       apiKey: env.Z_AI_API_KEY,
-      baseUrl: 'https://open.bigmodel.cn/api/paas/v4/',
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     },
     deepseek: {
       apiKey: env.DEEPSEEK_API_KEY,
@@ -187,18 +187,20 @@ export const config = {
       baseUrl: 'https://api.moonshot.cn/v1',
     },
     // Z.ai Models as defaults (GLM-5 released Feb 2026 — 745B MoE, 200K context)
-    model: env.LLM_MODEL_SMART || 'glm-5', // Flagship reasoning model (Replaces glm-4-plus/gpt-4o)
-    fastModel: env.LLM_MODEL_FAST || 'glm-4.7-flash', // Fast & Cheap (Replaces gpt-4o-mini)
+    model: env.LLM_MODEL_SMART || 'glm-5', // Flagship reasoning model
+    fastModel: env.LLM_MODEL_FAST || 'glm-4.7-flash', // FREE flash model
     smartModel: env.AI_MODEL_SMART, // Backward compat override
-    maxTokens: 4000,
+    maxTokens: env.AI_MAX_TOKENS,
     temperature: 0.1,
-    /** Per-model pricing in $/1M tokens. Law 006: No magic numbers. */
+    /** Per-model pricing in $/1M tokens. Law 006: No magic numbers. Updated Feb 2026. */
     pricing: {
-      // Z.ai (GLM) — Canonical prices
+      // Z.ai (GLM) — https://docs.z.ai/guides/overview/pricing
       'glm-5': { inputPer1M: 1.00, outputPer1M: 3.20 },
-      'glm-4-plus': { inputPer1M: 1.50, outputPer1M: 6.00 },
-      'glm-4.7-flash': { inputPer1M: 0.07, outputPer1M: 0.40 },
-      'glm-4-flash': { inputPer1M: 0.10, outputPer1M: 0.40 },
+      'glm-4.7': { inputPer1M: 0.60, outputPer1M: 2.20 },
+      'glm-4.7-flashx': { inputPer1M: 0.07, outputPer1M: 0.40 },
+      'glm-4.7-flash': { inputPer1M: 0, outputPer1M: 0 },    // FREE tier
+      'glm-4.5-flash': { inputPer1M: 0, outputPer1M: 0 },    // FREE tier
+      'glm-4.5': { inputPer1M: 0.60, outputPer1M: 2.20 },
       // OpenAI
       'gpt-4o-mini': { inputPer1M: 0.15, outputPer1M: 0.60 },
       'gpt-4o': { inputPer1M: 2.50, outputPer1M: 10.00 },
@@ -207,9 +209,10 @@ export const config = {
       'deepseek-chat': { inputPer1M: 0.14, outputPer1M: 0.28 },
       'deepseek-v3.2': { inputPer1M: 0.28, outputPer1M: 0.42 },
       'deepseek-reasoner': { inputPer1M: 0.55, outputPer1M: 2.19 },
-      // Kimi (Moonshot)
-      'moonshot-v1-8k': { inputPer1M: 1.70, outputPer1M: 1.70 },
-      'moonshot-k2-thinking': { inputPer1M: 0.60, outputPer1M: 2.50 },
+      // Kimi (Moonshot) — https://platform.moonshot.ai/docs/pricing/chat
+      'kimi-k2.5': { inputPer1M: 0.60, outputPer1M: 3.00 },
+      'kimi-k2-thinking': { inputPer1M: 0.60, outputPer1M: 2.50 },
+      'moonshot-v1-8k': { inputPer1M: 0.20, outputPer1M: 2.00 }, // LEGACY — avoid
     } as Record<string, { inputPer1M: number; outputPer1M: number }>,
   },
   google: {
