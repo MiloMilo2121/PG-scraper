@@ -19,6 +19,9 @@ vi.mock('../../src/enricher/utils/scraper_client', () => ({
 vi.mock('../../src/observability/antigravity_client', () => ({
     AntigravityClient: { getInstance: () => ({ trackCompanyUpdate: vi.fn() }) }
 }));
+vi.mock('../../src/enricher/core/ai/llm_validator', () => ({
+    LLMValidator: { validateCompany: vi.fn().mockResolvedValue({ isValid: false, confidence: 0, reason: 'Mocked LLM' }) }
+}));
 
 describe('UnifiedDiscoveryService - Agent Integration', () => {
     let service: UnifiedDiscoveryService;

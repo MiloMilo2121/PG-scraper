@@ -162,8 +162,8 @@ export class CompanyMatcher {
     }
 
     // ASSUMPTION: Hard cap at 0.35 should only trigger when BOTH name AND domain fail.
-    // Previously this killed valid candidates where domain matched but name tokenization failed.
-    if (!phoneMatch && nameCoverage < 0.4 && domainCoverage < 0.5) {
+    // Precedently this killed valid candidates. Now we also save it if the Title is a strong match.
+    if (!phoneMatch && nameCoverage < 0.4 && domainCoverage < 0.4 && !titleNameMatch) {
       confidence = Math.min(confidence, 0.35);
     }
 

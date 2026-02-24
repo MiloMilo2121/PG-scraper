@@ -44,8 +44,9 @@ export class AgentBrain {
         });
 
         try {
-            // Use full fallback chain so Agent doesn't die on a single provider 429
-            const modelChain = ModelRouter.selectModelChain(TaskDifficulty.COMPLEX);
+            // Use MODERATE tier so Agent uses fast/cheap/free models (glm-4.7-flash, deepseek-chat)
+            // instead of burning expensive GLM-5 calls. Modern flash models are smart enough for this agent.
+            const modelChain = ModelRouter.selectModelChain(TaskDifficulty.MODERATE);
             const decision = await LLMService.completeStructured<AgentDecision>(
                 prompt,
                 AGENT_NAVIGATION_PROMPT.schema as Record<string, unknown>,
@@ -54,7 +55,7 @@ export class AgentBrain {
             );
 
             // Log selection
-            ModelRouter.logSelection('AgentDecision', TaskDifficulty.COMPLEX);
+            ModelRouter.logSelection('AgentDecision', TaskDifficulty.MODERATE);
 
             if (!decision) {
                 return {
