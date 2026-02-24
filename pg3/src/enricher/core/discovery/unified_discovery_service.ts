@@ -42,6 +42,7 @@ import { ShadowRegistry } from './shadow_registry';
 import { EmailDomainMiner } from './email_domain_miner';
 import { GoogleBrowserProvider } from './google_browser_provider';
 import { AINameVariator } from './ai_name_variator';
+import { HyperGuesserVX } from './hyperguesser_vx/hyper_guesser_vx';
 
 // ============================================================================
 // INTERFACES & CONFIG
@@ -51,7 +52,8 @@ export enum DiscoveryMode {
     FAST_RUN1 = 'FAST_RUN1',
     DEEP_RUN2 = 'DEEP_RUN2',
     AGGRESSIVE_RUN3 = 'AGGRESSIVE_RUN3',
-    NUCLEAR_RUN4 = 'NUCLEAR_RUN4'
+    NUCLEAR_RUN4 = 'NUCLEAR_RUN4',
+    HYPERGUESSER_VX_ONLY = 'HYPERGUESSER_VX_ONLY'
 }
 
 export interface DiscoveryResult {
@@ -102,6 +104,11 @@ const MODE_PROFILES: Record<DiscoveryMode, ModeProfile> = {
         wave1MaxCandidates: 30,
         runNuclear: true,
     },
+    [DiscoveryMode.HYPERGUESSER_VX_ONLY]: {
+        wave1ThresholdDelta: 0,
+        wave1MaxCandidates: 0,
+        runNuclear: false,
+    }
 };
 
 const THRESHOLDS = {
@@ -188,6 +195,31 @@ export class UnifiedDiscoveryService {
                 Logger.info(`[Discovery] ✅ Identity Resolved: ${identity.legal_name} (${identity.vat_number})`);
             } else {
                 Logger.warn(`[Discovery] ⚠️ Identity resolution failed - proceeding with limited info`);
+            }
+
+            // =====================================================================
+            // 💣 HYPERGUESSER VX ONLY MODE (Nuclear Option Standalone)
+            // =====================================================================
+            if (mode === DiscoveryMode.HYPERGUESSER_VX_ONLY) {
+                metrics.layersAttempted.push('HYPERGUESSER_VX');
+                const vxResult = await HyperGuesserVX.blast(company);
+                if (vxResult) {
+                    metrics.durationMs = Date.now() - startTime;
+                    vxResult.metrics = metrics;
+                    return this.finalize(company, vxResult, identity);
+                }
+
+                // If VX fails, return NOT_FOUND immediately
+                metrics.durationMs = Date.now() - startTime;
+                return this.attachIdentity(this.withReasonCode({
+                    url: null,
+                    status: 'NOT_FOUND',
+                    method: 'hyper_guesser_vx',
+                    confidence: 0,
+                    wave: 'VX_PROTOCOL',
+                    details: { error: 'VX Protocol rejected all permutations' },
+                    metrics
+                }), identity);
             }
 
             // PRE-CHECK: Validate existing website
