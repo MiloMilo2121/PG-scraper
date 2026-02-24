@@ -32,7 +32,7 @@ export class LLMService {
             providerKey = 'z_ai';
         } else if (model.startsWith('deepseek-')) {
             providerKey = 'deepseek';
-        } else if (model.startsWith('moonshot-')) {
+        } else if (model.startsWith('moonshot-') || model.startsWith('kimi-')) {
             providerKey = 'kimi';
         } else {
             // Fallback for gpt-*, o1-*, etc. to OpenAI
@@ -93,10 +93,10 @@ export class LLMService {
      */
     public static getClient(): OpenAI {
         // Fallback for legacy calls that don't specify model
-        // Prefer Z.ai -> DeepSeek -> Kimi -> OpenAI
-        if (config.llm.z_ai.apiKey) return this.getClientForModel('glm-5');
+        // Prefer cheapest: Z.ai flash (FREE) -> DeepSeek -> Kimi -> OpenAI
+        if (config.llm.z_ai.apiKey) return this.getClientForModel('glm-4.7-flash');
         if (config.llm.deepseek?.apiKey) return this.getClientForModel('deepseek-chat');
-        if (config.llm.kimi?.apiKey) return this.getClientForModel('moonshot-v1-8k');
+        if (config.llm.kimi?.apiKey) return this.getClientForModel('kimi-k2.5');
         return this.getClientForModel('gpt-4o');
     }
 
@@ -128,6 +128,23 @@ export class LLMService {
     }
 
     // ─────────────────────────────────────────────
+    // TEMPERATURE PER MODEL
+    // ─────────────────────────────────────────────
+
+    /**
+     * Returns optimal temperature for a model. Thinking/reasoning models need higher temp.
+     * - Kimi K2/K2.5 Thinking: 1.0 (official recommendation)
+     * - Kimi K2 Instruct: 0.6 (official recommendation)
+     * - DeepSeek Reasoner: 0.6
+     * - Everything else: config default (0.1)
+     */
+    private static getTemperature(model: string): number {
+        if (model.includes('thinking') || model.includes('reasoner')) return 1.0;
+        if (model.startsWith('kimi-k2')) return 0.6;
+        return config.llm.temperature;
+    }
+
+    // ─────────────────────────────────────────────
     // COMPLETIONS
     // ─────────────────────────────────────────────
 
@@ -150,7 +167,7 @@ export class LLMService {
                     const response = await client.chat.completions.create({
                         model: currentModel,
                         messages: [{ role: 'user', content: prompt }],
-                        temperature: config.llm.temperature,
+                        temperature: this.getTemperature(currentModel),
                         max_tokens: config.llm.maxTokens,
                     });
 
@@ -200,7 +217,7 @@ export class LLMService {
             const isLastModel = mi === modelsToTry.length - 1;
 
             // DeepSeek/Kimi support "json_object" but NOT "json_schema" (Structured Outputs)
-            const needsSimpleJsonMode = currentModel.includes('deepseek') || currentModel.includes('moonshot');
+            const needsSimpleJsonMode = currentModel.includes('deepseek') || currentModel.includes('moonshot') || currentModel.includes('kimi-');
             const responseFormat = needsSimpleJsonMode
                 ? { type: 'json_object' as const }
                 : {
@@ -219,7 +236,7 @@ export class LLMService {
                     const response = await client.chat.completions.create({
                         model: currentModel,
                         messages: [{ role: 'user', content: prompt }],
-                        temperature: config.llm.temperature,
+                        temperature: this.getTemperature(currentModel),
                         max_tokens: config.llm.maxTokens,
                         response_format: responseFormat as any,
                     });
@@ -289,7 +306,7 @@ export class LLMService {
     ): Promise<string | null> {
         // Guard: DeepSeek Chat (V3) does NOT support vision. DeepSeek VL does but via different API usually? 
         // For now assume assume only GLM-4v/5 and GPT-4o support vision.
-        if (model.includes('deepseek') || model.includes('moonshot')) {
+        if (model.includes('deepseek') || model.includes('moonshot') || model.includes('kimi-')) {
             Logger.warn(`[LLM] Vision request sent to non-vision model (${model}). Fallback to GLM-4v/GPT-4o.`);
             // Fallback logic could be added here, or just let it fail/warn.
         }
@@ -312,7 +329,7 @@ export class LLMService {
                     }
                 ],
                 max_tokens: 300,
-                temperature: config.llm.temperature,
+                temperature: this.getTemperature(model),
             });
 
             const content = response.choices[0]?.message?.content;

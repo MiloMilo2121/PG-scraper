@@ -228,19 +228,20 @@ async function run() {
                 if (typeof payload === 'string' || !!payload.query) {
                     const query = typeof payload === 'string' ? payload : payload.query;
                     const c = await openai.chat.completions.create({
-                        model: 'moonshot-v1-8k',
+                        model: 'kimi-k2.5',
+                        temperature: 0.6,
                         messages: [{ role: 'user', content: `Search the web for: "${query}". Return the top result in this JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Output raw JSON only.` }]
                     });
                     const content = c.choices[0].message.content || '[]';
                     const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
                     try { return JSON.parse(jsonMatch ? jsonMatch[0] : '[]') as T; } catch { return [] as unknown as T; }
                 }
-                const finalPayload = { ...payload, model: 'moonshot-v1-8k' };
+                const finalPayload = { ...payload, model: 'kimi-k2.5' };
                 return (await openai.chat.completions.create(finalPayload)) as unknown as T;
             }
         } as any],
         ['ZAI-1', {
-            costPerRequest: 0.002,
+            costPerRequest: 0.000, // glm-4.7-flash is FREE
             tier: 7,
             execute: async <T>(payload: any): Promise<T> => {
                 const apiKey = process.env.Z_AI_API_KEY || '';
@@ -248,14 +249,14 @@ async function run() {
                 if (typeof payload === 'string' || !!payload.query) {
                     const query = typeof payload === 'string' ? payload : payload.query;
                     const c = await openai.chat.completions.create({
-                        model: 'glm-4-plus',
+                        model: 'glm-4.7-flash',
                         messages: [{ role: 'user', content: `Search the web for: "${query}". Return results in JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Raw JSON only.` }]
                     });
                     const content = c.choices[0].message.content || '[]';
                     const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
                     try { return JSON.parse(jsonMatch ? jsonMatch[0] : '[]') as T; } catch { return [] as unknown as T; }
                 }
-                const finalPayload = { ...payload, model: 'glm-4-plus' };
+                const finalPayload = { ...payload, model: 'glm-4.7-flash' };
                 return (await openai.chat.completions.create(finalPayload)) as unknown as T;
             }
         } as any]

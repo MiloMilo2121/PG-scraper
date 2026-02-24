@@ -98,7 +98,9 @@ export class CostRouter {
 
     private llmBuckets: Map<string, TokenBucketQueue> = new Map([
         ['deepseek-chat', new TokenBucketQueue(40, 10)],
-        ['moonshot-v1-8k', new TokenBucketQueue(20, 5)],
+        ['kimi-k2.5', new TokenBucketQueue(20, 5)],
+        ['glm-4.7-flash', new TokenBucketQueue(60, 15)],  // FREE tier — generous limits
+        ['glm-5', new TokenBucketQueue(20, 5)],
         ['gpt-4o-mini', new TokenBucketQueue(15, 3)],
     ]);
 

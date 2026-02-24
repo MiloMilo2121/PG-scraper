@@ -3,14 +3,16 @@ import { config } from '../../config';
 import { Logger } from '../../utils/logger';
 
 /**
- * 🚦 MODEL ROUTER — Intelligent AI Selection
+ * 🚦 MODEL ROUTER — Intelligent AI Selection (Updated Feb 2026)
  *
  * Decides which model to use based on the complexity of the task.
+ * Cost-optimized chains — cheapest viable model first, quality fallbacks after.
+ *
  * Strategies:
- * - SIMPLE: Speed & throughput (Flash models)
- * - MODERATE: Structured data extraction / Reasoning Lite (DeepSeek V3)
- * - COMPLEX: Planning, multi-step reasoning (GLM-5)
- * - HARD: Deep reasoning, coding, analyzing failures (Kimi K2)
+ * - SIMPLE: glm-4.7-flash (FREE!) → deepseek-chat ($0.14/$0.28) → gpt-4o-mini
+ * - MODERATE: deepseek-chat → glm-4.7-flash (FREE) → gpt-4o-mini
+ * - COMPLEX: glm-5 ($1/$3.2) → kimi-k2.5 ($0.6/$3) → deepseek-chat → gpt-4o
+ * - HARD: kimi-k2.5 → deepseek-reasoner ($0.55/$2.19) → glm-5 → gpt-4o
  */
 
 export enum TaskDifficulty {
@@ -40,28 +42,30 @@ export class ModelRouter {
 
         switch (difficulty) {
             case TaskDifficulty.SIMPLE:
+                // Flash first (FREE), then cheapest paid
+                if (config.llm.z_ai?.apiKey) chain.push('glm-4.7-flash');
                 if (config.llm.deepseek?.apiKey) chain.push('deepseek-chat');
-                if (config.llm.z_ai?.apiKey) chain.push('glm-4-flash');
-                if (config.llm.kimi?.apiKey) chain.push('moonshot-v1-8k');
                 if (config.llm.apiKey) chain.push('gpt-4o-mini');
                 break;
 
             case TaskDifficulty.MODERATE:
-                if (config.llm.deepseek?.apiKey) chain.push('deepseek-v3.2');
-                if (config.llm.z_ai?.apiKey) chain.push('glm-4-flash');
-                if (config.llm.kimi?.apiKey) chain.push('moonshot-v1-8k');
+                // DeepSeek best at structured JSON, flash as free fallback
+                if (config.llm.deepseek?.apiKey) chain.push('deepseek-chat');
+                if (config.llm.z_ai?.apiKey) chain.push('glm-4.7-flash');
                 if (config.llm.apiKey) chain.push('gpt-4o-mini');
                 break;
 
             case TaskDifficulty.COMPLEX:
+                // GLM-5 flagship, then Kimi K2.5 (strong reasoning), then fallbacks
                 if (config.llm.z_ai?.apiKey) chain.push('glm-5');
+                if (config.llm.kimi?.apiKey) chain.push('kimi-k2.5');
                 if (config.llm.deepseek?.apiKey) chain.push('deepseek-chat');
-                if (config.llm.kimi?.apiKey) chain.push('moonshot-k2-thinking');
                 if (config.llm.apiKey) chain.push('gpt-4o');
                 break;
 
             case TaskDifficulty.HARD:
-                if (config.llm.kimi?.apiKey) chain.push('moonshot-k2-thinking');
+                // K2.5 best for deep reasoning, then reasoning specialists
+                if (config.llm.kimi?.apiKey) chain.push('kimi-k2.5');
                 if (config.llm.deepseek?.apiKey) chain.push('deepseek-reasoner');
                 if (config.llm.z_ai?.apiKey) chain.push('glm-5');
                 if (config.llm.apiKey) chain.push('gpt-4o');
@@ -69,6 +73,7 @@ export class ModelRouter {
 
             default:
                 Logger.warn(`[ModelRouter] Unknown difficulty ${difficulty}, defaulting to SIMPLE`);
+                if (config.llm.z_ai?.apiKey) chain.push('glm-4.7-flash');
                 if (config.llm.apiKey) chain.push('gpt-4o-mini');
                 break;
         }

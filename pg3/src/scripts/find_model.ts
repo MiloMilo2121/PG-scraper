@@ -6,12 +6,11 @@ import { config } from '../enricher/config';
 dotenv.config();
 
 const CANDIDATES = [
-    'glm-4-flash',
-    'glm-4-flash-001',
-    'glm-4.7-flash',
-    'glm-4-air',
-    'glm-4-plus',
-    'glm-4-0520'
+    'glm-4.7-flash',      // FREE
+    'glm-4.5-flash',      // FREE
+    'glm-4.7-flashx',     // Paid flash
+    'glm-4.7',            // Mid-tier
+    'glm-5',              // Flagship
 ];
 
 async function findWorkingModel() {

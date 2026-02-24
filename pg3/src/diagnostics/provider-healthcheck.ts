@@ -183,7 +183,7 @@ const providers: ProviderTest[] = [
                     signal: AbortSignal.timeout(15000),
                     headers: { 'Authorization': `Bearer ${key.trim()}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        model: 'moonshot-v1-8k',
+                        model: 'kimi-k2.5',
                         messages: [{ role: 'user', content: 'Rispondi solo "OK"' }],
                         max_tokens: 5,
                     }),
