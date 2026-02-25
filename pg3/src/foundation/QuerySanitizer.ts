@@ -81,18 +81,22 @@ export class QuerySanitizer {
         const cleanCity = this.sanitizeForQuery(input.city || '');
 
         if (target === 'company') {
-            // Variant 1: Exact
+            // Variant 1: Exact name + city (highest precision)
+            if (cleanCity) {
+                variants.push(`"${cleanName}" ${cleanCity} sito ufficiale`);
+            } else {
+                variants.push(`"${cleanName}" sito ufficiale`);
+            }
+            // Variant 2: Exact name + city without "sito ufficiale" (broader)
             if (cleanCity) {
                 variants.push(`"${cleanName}" ${cleanCity}`);
-            } else {
-                variants.push(`"${cleanName}"`);
             }
-            // Variant 2: Broad
+            // Variant 3: Broad name + city (catches partial matches)
             if (cleanCity) {
                 variants.push(`${cleanName} ${cleanCity}`);
+            } else {
+                variants.push(`${cleanName} sito web`);
             }
-            // Variant 3: Domain probe
-            variants.push(`"${cleanName}" site:.it`);
         } else if (target === 'linkedin') {
             const v1 = this.buildCompanyQuery(input, { target: 'linkedin', includeDomain: 'site:linkedin.com/in' });
             if (v1) variants.push(v1);

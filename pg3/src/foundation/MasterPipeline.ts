@@ -103,17 +103,27 @@ export class MasterPipeline {
                         }
                         // Fallback: company name match in browser HTML
                         const htmlLower = nav.html.toLowerCase();
-                        const nameTokens = companyNameForGate
+                        const strippedForBrowser = companyNameForGate
                             .toLowerCase()
                             .replace(/s\.?r\.?l\.?|s\.?n\.?c\.?|s\.?p\.?a\.?|srl|snc|spa|sas|unipersonale|in liquidazione/gi, '')
-                            .trim()
-                            .split(/\s+/)
-                            .filter(t => t.length >= 3);
+                            .trim();
+                        const allBrowserTokens = strippedForBrowser.split(/\s+/).filter(t => t.length >= 2);
+                        // Use 4-char minimum unless company has very few tokens
+                        const nameTokens = allBrowserTokens.length <= 2
+                            ? allBrowserTokens.filter(t => t.length >= 3)
+                            : allBrowserTokens.filter(t => t.length >= 4);
                         const matched = nameTokens.filter(t => htmlLower.includes(t));
-                        if (nameTokens.length > 0 && (matched.length / nameTokens.length) >= 0.5) {
+                        // Also check <title> tag for stronger signal
+                        const titleTagMatch = nav.html.match(/<title[^>]*>([^<]+)<\/title>/i);
+                        const titleText = titleTagMatch ? titleTagMatch[1].toLowerCase() : '';
+                        const titleMatched = nameTokens.filter(t => titleText.includes(t));
+                        const bodyRatio = nameTokens.length > 0 ? matched.length / nameTokens.length : 0;
+                        const titleRatio = nameTokens.length > 0 ? titleMatched.length / nameTokens.length : 0;
+                        // Accept if body match >= 0.5 OR title match >= 0.4 with some body overlap
+                        if (nameTokens.length > 0 && (bodyRatio >= 0.5 || (titleRatio >= 0.4 && bodyRatio >= 0.3))) {
                             discoveredUrl = url;
                             discoveryLayer = layerName + '_WAF_SEMANTIC';
-                            console.log(`[MasterPipeline] 🧠 Browser semantic match: ${matched.join('+')} for "${companyNameForGate}" on ${url}`);
+                            console.log(`[MasterPipeline] 🧠 Browser semantic match: body=${matched.join('+')}(${(bodyRatio * 100).toFixed(0)}%) title=${titleMatched.join('+')}(${(titleRatio * 100).toFixed(0)}%) for "${companyNameForGate}" on ${url}`);
                             return true;
                         }
                     }
@@ -149,10 +159,25 @@ export class MasterPipeline {
             // STAGE 3: Hyper Guesser (Direct Domain Probe)
             if (!discoveredUrl && input.company_name_variants.length > 0) {
                 layersAttempted.push('STAGE_3_HYPER_GUESSER');
-                const baseGuess = input.company_name_variants[0].replace(/[^a-z0-9]/g, '');
-                if (baseGuess.length >= 3) {
-                    const guessUrl = `https://www.${baseGuess}.it`;
-                    await checkUrlWithTimeout(guessUrl, 'HYPER_GUESSER');
+                const tlds = ['.it', '.com', '.eu'];
+                // Try each variant with multiple TLDs
+                const variantsToTry = input.company_name_variants.slice(0, 2);
+                for (const variant of variantsToTry) {
+                    if (discoveredUrl) break;
+                    const baseGuess = variant.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    if (baseGuess.length < 3) continue;
+                    for (const tld of tlds) {
+                        if (discoveredUrl) break;
+                        const guessUrl = `https://www.${baseGuess}${tld}`;
+                        await checkUrlWithTimeout(guessUrl, 'HYPER_GUESSER');
+                    }
+                    // Also try hyphenated form: "bar sport" -> "bar-sport.it"
+                    const hyphenated = variant.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim().replace(/\s+/g, '-');
+                    if (hyphenated !== baseGuess && hyphenated.length >= 3) {
+                        if (!discoveredUrl) {
+                            await checkUrlWithTimeout(`https://www.${hyphenated}.it`, 'HYPER_GUESSER');
+                        }
+                    }
                 }
             }
 
@@ -163,11 +188,27 @@ export class MasterPipeline {
 
                 console.log(`[MasterPipeline] 🔎 SERP returned ${serpRes.results.length} candidates for "${input.company_name}" (providers: ${serpRes.providers_used.join(',')})`);
 
+                // PRE-FILTER: Extract P.IVA from SERP snippets to boost verification
+                // Many SERP results contain "P.IVA 01234567890" in the snippet text
+                if (piva) {
+                    const cleanPiva = piva.replace(/[^0-9]/g, '');
+                    for (const cand of serpRes.results) {
+                        const snippetDigits = (cand.snippet + ' ' + cand.title).replace(/[^0-9]/g, ' ');
+                        if (snippetDigits.includes(cleanPiva)) {
+                            console.log(`[MasterPipeline] 🎯 P.IVA found in SERP snippet for ${cand.url} — fast-tracking verification`);
+                            const found = await checkUrlWithTimeout(cand.url, 'SERP_PIVA_SNIPPET');
+                            if (found) break;
+                        }
+                    }
+                }
+
                 // Only check top 3 candidates to avoid timeout cascade
-                const topCandidates = serpRes.results.slice(0, 3);
-                for (const cand of topCandidates) {
-                    const found = await checkUrlWithTimeout(cand.url, 'SERP_COMPANY');
-                    if (found) break;
+                if (!discoveredUrl) {
+                    const topCandidates = serpRes.results.slice(0, 3);
+                    for (const cand of topCandidates) {
+                        const found = await checkUrlWithTimeout(cand.url, 'SERP_COMPANY');
+                        if (found) break;
+                    }
                 }
 
                 // STAGE 5: SERP Registry Search
@@ -175,7 +216,27 @@ export class MasterPipeline {
                     layersAttempted.push('STAGE_5_SERP_REGISTRY');
                     const regSerpRes = await this.dedup.search(companyId, input, 'registry', { maxTier: 1 });
                     if (regSerpRes.results.length > 0) {
-                        // Fallback logic for registry extraction goes here
+                        // Extract website URLs from registry page snippets
+                        // Registry pages (registroimprese.it, informazione-aziende.it) often contain
+                        // the company's official website in their listings
+                        for (const regResult of regSerpRes.results.slice(0, 3)) {
+                            // Try to extract a website URL from the snippet
+                            const urlMatch = regResult.snippet.match(/(?:sito|web|website|www)[:\s]*(?:https?:\/\/)?([a-z0-9][-a-z0-9]*(?:\.[a-z0-9][-a-z0-9]*)+)/i);
+                            if (urlMatch) {
+                                const extractedDomain = urlMatch[1].replace(/^www\./i, '');
+                                const candidateUrl = `https://www.${extractedDomain}`;
+                                const found = await checkUrlWithTimeout(candidateUrl, 'REGISTRY_EXTRACT');
+                                if (found) break;
+                            }
+                            // Also check if the registry page itself can be fetched for website info
+                            // by looking at the title for domain clues
+                            const titleDomainMatch = regResult.title.match(/([a-z0-9][-a-z0-9]+\.(?:it|com|eu|net|org))/i);
+                            if (titleDomainMatch && !regResult.domain.includes(titleDomainMatch[1])) {
+                                const candidateUrl = `https://www.${titleDomainMatch[1]}`;
+                                const found = await checkUrlWithTimeout(candidateUrl, 'REGISTRY_TITLE');
+                                if (found) break;
+                            }
+                        }
                     }
                 }
             }

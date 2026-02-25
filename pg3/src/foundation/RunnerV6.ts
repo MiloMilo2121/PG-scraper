@@ -123,13 +123,38 @@ async function run() {
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
                 const res = await axios.post('https://lite.duckduckgo.com/lite/', `q=${encodeURIComponent(query)}&kl=it-it`, {
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0' }, timeout: 8000
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' }, timeout: 8000
                 });
                 const $ = cheerio.load(res.data);
                 const results: any[] = [];
-                $('a.result-url').each((_: any, el: any) => {
+                // DDG Lite uses table rows with result links and snippets
+                $('a.result-link').each((_: any, el: any) => {
                     const url = $(el).attr('href');
-                    if (url) results.push({ url, title: url, snippet: '' });
+                    const title = $(el).text().trim();
+                    if (url) results.push({ url, title: title || url, snippet: '' });
+                });
+                // Also try the result-url class (different DDG Lite versions)
+                if (results.length === 0) {
+                    $('a.result-url').each((_: any, el: any) => {
+                        const url = $(el).attr('href');
+                        if (url) results.push({ url, title: url, snippet: '' });
+                    });
+                }
+                // Fallback: extract any http(s) links from result table rows
+                if (results.length === 0) {
+                    $('table tr td a[href^="http"]').each((_: any, el: any) => {
+                        const url = $(el).attr('href');
+                        const title = $(el).text().trim();
+                        if (url && !url.includes('duckduckgo.com')) {
+                            results.push({ url, title: title || url, snippet: '' });
+                        }
+                    });
+                }
+                // Extract snippets from adjacent td.result-snippet elements
+                $('td.result-snippet').each((i: any, el: any) => {
+                    if (results[i]) {
+                        results[i].snippet = $(el).text().trim().substring(0, 300);
+                    }
                 });
                 return results as unknown as T;
             }
@@ -168,7 +193,11 @@ async function run() {
                     const query = typeof payload === 'string' ? payload : payload.query;
                     const c = await openai.chat.completions.create({
                         model: 'gpt-4o-mini',
-                        messages: [{ role: 'user', content: `Perform a web search for: "${query}". Return the top 3 best exact matches in this JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Output raw JSON only.` }]
+                        messages: [
+                            { role: 'system', content: 'You are an Italian business domain expert. Given a company name and optionally a city, you MUST return the most likely official website URL. Italian companies typically use .it, .com, or .eu domains. Consider common patterns: company name without spaces + .it, hyphenated name + .it, abbreviated name + .it. Only output URLs you are confident about. Output ONLY a raw JSON array, no markdown, no explanation.' },
+                            { role: 'user', content: `Company: "${query}"\n\nReturn the top 3 most likely official website URLs in this exact JSON format: [{"title":"Company Name","url":"https://www.example.it","snippet":"Official website"}]. If unsure, return fewer results or an empty array []. Raw JSON only.` }
+                        ],
+                        temperature: 0.1
                     });
                     const content = c.choices[0].message.content || '[]';
                     const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
@@ -188,14 +217,19 @@ async function run() {
                 if (typeof payload === 'string' || !!payload.query) {
                     const query = typeof payload === 'string' ? payload : payload.query;
                     const c = await openai.chat.completions.create({
-                        model: 'sonar-reasoning-pro',
-                        messages: [{ role: 'user', content: `Search the web for: "${query}". Return the top 3 best results in this JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Output raw JSON only and DO NOT use reasoning tags in the final output.` }]
+                        model: 'sonar-pro',
+                        messages: [
+                            { role: 'system', content: 'You search the web and return official company websites. Return ONLY a raw JSON array. No markdown fences, no reasoning, no explanation.' },
+                            { role: 'user', content: `Find the official website for Italian company: "${query}". Return the top 3 results in this exact JSON format: [{"title":"...","url":"...","snippet":"..."}]. Raw JSON array only.` }
+                        ]
                     });
                     const content = c.choices[0].message.content || '[]';
-                    const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
+                    // Strip <think> tags that sonar models sometimes emit
+                    const cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+                    const jsonMatch = cleaned.match(/\[[\s\S]*\]/) || cleaned.match(/\{[\s\S]*\}/);
                     try { return JSON.parse(jsonMatch ? jsonMatch[0] : '[]') as T; } catch { return [] as unknown as T; }
                 }
-                const finalPayload = { ...payload, model: 'sonar-reasoning-pro' };
+                const finalPayload = { ...payload, model: 'sonar-pro' };
                 return (await openai.chat.completions.create(finalPayload)) as unknown as T;
             }
         } as any],
@@ -209,10 +243,16 @@ async function run() {
                     const query = typeof payload === 'string' ? payload : payload.query;
                     const c = await openai.chat.completions.create({
                         model: 'deepseek-chat',
-                        messages: [{ role: 'user', content: `Find the official website for: "${query}". Return the best result in this JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Output raw JSON only.` }]
+                        messages: [
+                            { role: 'system', content: 'You are an Italian business domain expert. Given a company name and city, return the most likely official website URL. Use your knowledge of Italian business naming conventions (.it, .com, .eu domains). Only return URLs you are confident about. Output ONLY raw JSON, no markdown.' },
+                            { role: 'user', content: `Company: "${query}"\n\nReturn the most likely official website URLs in JSON format: [{"title":"...","url":"...","snippet":"..."}]. If unsure, return []. Raw JSON only.` }
+                        ],
+                        temperature: 0.1
                     });
                     const content = c.choices[0].message.content || '[]';
-                    const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
+                    // Strip <think> tags from DeepSeek reasoning models
+                    const cleaned = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+                    const jsonMatch = cleaned.match(/\[[\s\S]*\]/) || cleaned.match(/\{[\s\S]*\}/);
                     try { return JSON.parse(jsonMatch ? jsonMatch[0] : '[]') as T; } catch { return [] as unknown as T; }
                 }
                 const finalPayload = { ...payload, model: 'deepseek-chat' };
@@ -229,7 +269,11 @@ async function run() {
                     const query = typeof payload === 'string' ? payload : payload.query;
                     const c = await openai.chat.completions.create({
                         model: 'moonshot-v1-8k',
-                        messages: [{ role: 'user', content: `Search the web for: "${query}". Return the top result in this JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Output raw JSON only.` }]
+                        messages: [
+                            { role: 'system', content: 'You are an Italian business domain expert. Given a company name and city, return the most likely official website URL. Use your knowledge of Italian business naming conventions. Output ONLY raw JSON, no markdown.' },
+                            { role: 'user', content: `Company: "${query}"\n\nReturn the most likely official website in JSON format: [{"title":"...","url":"...","snippet":"..."}]. If unsure, return []. Raw JSON only.` }
+                        ],
+                        temperature: 0.1
                     });
                     const content = c.choices[0].message.content || '[]';
                     const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
@@ -248,14 +292,18 @@ async function run() {
                 if (typeof payload === 'string' || !!payload.query) {
                     const query = typeof payload === 'string' ? payload : payload.query;
                     const c = await openai.chat.completions.create({
-                        model: 'glm-4-plus',
-                        messages: [{ role: 'user', content: `Search the web for: "${query}". Return results in JSON array format: [{"title":"...","url":"...","snippet":"..."}]. Raw JSON only.` }]
+                        model: 'glm-4-flash',
+                        messages: [
+                            { role: 'system', content: 'You are an Italian business domain expert. Given a company name and city, return the most likely official website URL. Use your knowledge of Italian business naming conventions. Output ONLY raw JSON, no markdown.' },
+                            { role: 'user', content: `Company: "${query}"\n\nReturn the most likely official website in JSON format: [{"title":"...","url":"...","snippet":"..."}]. If unsure, return []. Raw JSON only.` }
+                        ],
+                        temperature: 0.1
                     });
                     const content = c.choices[0].message.content || '[]';
                     const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
                     try { return JSON.parse(jsonMatch ? jsonMatch[0] : '[]') as T; } catch { return [] as unknown as T; }
                 }
-                const finalPayload = { ...payload, model: 'glm-4-plus' };
+                const finalPayload = { ...payload, model: 'glm-4-flash' };
                 return (await openai.chat.completions.create(finalPayload)) as unknown as T;
             }
         } as any]
