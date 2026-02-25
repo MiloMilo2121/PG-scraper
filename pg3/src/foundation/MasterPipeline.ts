@@ -9,6 +9,7 @@ import { BilancioHunter } from './BilancioHunter';
 import { LinkedInSniper } from './LinkedInSniper';
 import { BrowserPool } from './BrowserPool';
 import { CostRouter } from './CostRouter';
+import { HyperGuesser } from '../enricher/core/discovery/hyper_guesser_v2';
 import crypto from 'crypto';
 
 export class MasterPipeline {
@@ -157,27 +158,20 @@ export class MasterPipeline {
             }
 
             // STAGE 3: Hyper Guesser (Direct Domain Probe)
-            if (!discoveredUrl && input.company_name_variants.length > 0) {
+            if (!discoveredUrl) {
                 layersAttempted.push('STAGE_3_HYPER_GUESSER');
-                const tlds = ['.it', '.com', '.eu'];
-                // Try each variant with multiple TLDs
-                const variantsToTry = input.company_name_variants.slice(0, 2);
-                for (const variant of variantsToTry) {
+                const candidates = HyperGuesser.generate(
+                    input.company_name,
+                    input.city,
+                    input.provincia || '',
+                    (rawInput as any).category || ''
+                );
+
+                // Limit to top 40 candidates to stay within reasonable time/resource bounds per company
+                const topCandidates = candidates.slice(0, 40);
+                for (const candidateUrl of topCandidates) {
                     if (discoveredUrl) break;
-                    const baseGuess = variant.toLowerCase().replace(/[^a-z0-9]/g, '');
-                    if (baseGuess.length < 3) continue;
-                    for (const tld of tlds) {
-                        if (discoveredUrl) break;
-                        const guessUrl = `https://www.${baseGuess}${tld}`;
-                        await checkUrlWithTimeout(guessUrl, 'HYPER_GUESSER');
-                    }
-                    // Also try hyphenated form: "bar sport" -> "bar-sport.it"
-                    const hyphenated = variant.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim().replace(/\s+/g, '-');
-                    if (hyphenated !== baseGuess && hyphenated.length >= 3) {
-                        if (!discoveredUrl) {
-                            await checkUrlWithTimeout(`https://www.${hyphenated}.it`, 'HYPER_GUESSER');
-                        }
-                    }
+                    await checkUrlWithTimeout(candidateUrl, 'HYPER_GUESSER');
                 }
             }
 
