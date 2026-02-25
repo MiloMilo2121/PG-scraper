@@ -24,7 +24,13 @@ const NOISE_DOMAINS = new Set([
     'facebook.com', 'instagram.com', 'linkedin.com', 'twitter.com', 'x.com',
     'paginegialle.it', 'infoimprese.it', 'registroimprese.it', 'tuttocitta.it',
     'google.com', 'youtube.com', 'tripadvisor.com', 'tiktok.com',
-    'amazon.it', 'subito.it', 'ebay.it', 'kijiji.it'
+    'amazon.it', 'subito.it', 'ebay.it', 'kijiji.it',
+    'kompass.com', 'europages.it', 'europages.com', 'cylex.it',
+    'trovaprezzi.it', 'pinterest.com', 'pinterest.it',
+    'yelp.com', 'yelp.it', 'trustpilot.com', 'trustpilot.it',
+    'wikipedia.org', 'it.wikipedia.org', 'dnb.com',
+    'informazione-aziende.it', 'impresaitalia.info',
+    'atoka.io', 'cerved.com', 'cribis.com',
 ]);
 
 export class SerpDeduplicator {
