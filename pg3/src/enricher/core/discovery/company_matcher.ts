@@ -327,25 +327,39 @@ export class CompanyMatcher {
   private static extractVatNumbers(text: string): string[] {
     const results = new Set<string>();
 
-    // Pattern 1: Standalone 11-digit numbers (validate as Italian VAT)
-    const standalone = text.match(/\b\d{11}\b/g) || [];
-    standalone.filter(m => this.isValidItalianVat(m)).forEach(m => results.add(m));
+    const cleanAndAdd = (match: string) => {
+      const digits = match.replace(/[^0-9]/g, '');
+      if (digits.length === 11 && this.isValidItalianVat(digits)) {
+        results.add(digits);
+      }
+    };
 
-    // Pattern 2: P.IVA / Partita IVA followed by IT prefix + 11 digits
-    const labeled = text.match(/(?:P\.?\s*I\.?\s*V\.?\s*A\.?|Partita\s*Iva|C\.?\s*F\.?\s*(?:\/|\s*e\s*)\s*P\.?\s*I\.?\s*V\.?\s*A\.?)[:\s]*(?:IT)?[\s]?(\d{11})/gi) || [];
-    for (const match of labeled) {
-      const digits = match.match(/(\d{11})/);
-      if (digits) results.add(digits[1]);
-    }
+    // THE 15-PATTERN BATTERY FOR P.IVA EXTRACTION
 
-    // Pattern 3: IT prefix followed by 11 digits (common in structured data)
-    const itPrefixed = text.match(/\bIT\s?(\d{11})\b/g) || [];
-    for (const match of itPrefixed) {
-      const digits = match.match(/(\d{11})/);
-      if (digits) results.add(digits[1]);
-    }
+    // 1-5. Explicit Labels with optional "IT", separators, and spacing
+    // Covers: P.IVA, Partita IVA, P.I., VAT N., C.F. e P.IVA with spaces, dots, or dashes
+    const prefixRegex = /(?:P\.?\s*I\.?\s*V\.?\s*A\.?|Partita\s+Iva|P\.?\s*I\.?|VAT\s*(?:N\.?|No\.?)?|C\.?\s*F\.?\s*(?:e|\/|\\|&)\s*P\.?\s*I\.?\s*(?:V\.?\s*A\.?)?)[\s:;-]*(?:IT)?[\s]*([\d\s\.\-]{11,16})/gi;
 
-    return [...results];
+    // 6-8. "IT" Prefix variants
+    const itRegex = /\bIT[\s:-]*([\d\s\.\-]{11,16})\b/gi;
+
+    // 9. Strict standalone 11 consecutive digits
+    const standalone11 = /\b(\d{11})\b/g;
+
+    // 10-13. Standalone strictly formatted digits (common formatting groupings on websites)
+    const standaloneSpaced = /\b(\d{3}[\s\.\-]\d{3}[\s\.\-]\d{3}[\s\.\-]\d{2}|\d{5}[\s\.\-]\d{5}[\s\.\-]\d{1}|\d{2}[\s\.\-]\d{9})\b/g;
+
+    // 14-15. Proximity Matching (Handling weird HTML tables or <div> spans where label is separated from value)
+    const proximityRegex = /P\.?\s*I\.?\s*V\.?\s*A\.?.{0,60}?\b(\d{11})\b/gis;
+
+    let m;
+    while ((m = prefixRegex.exec(text)) !== null) cleanAndAdd(m[1]);
+    while ((m = itRegex.exec(text)) !== null) cleanAndAdd(m[1]);
+    while ((m = standalone11.exec(text)) !== null) cleanAndAdd(m[1]);
+    while ((m = standaloneSpaced.exec(text)) !== null) cleanAndAdd(m[1]);
+    while ((m = proximityRegex.exec(text)) !== null) cleanAndAdd(m[1]);
+
+    return Array.from(results);
   }
 
   private static extractPhones(text: string): string[] {

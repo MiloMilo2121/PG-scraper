@@ -58,8 +58,8 @@ export class SerpDeduplicator {
         }
     }
 
-    public async search(companyId: string, input: NormalizedInput, target: 'company' | 'linkedin' | 'registry' | 'bilancio', options?: { maxTier?: number }): Promise<SearchOutput> {
-        const variants = this.querySanitizer.buildQueryVariants(input, target);
+    public async search(companyId: string, input: NormalizedInput, target: 'company' | 'linkedin' | 'registry' | 'bilancio', options?: { maxTier?: number, piva?: string }): Promise<SearchOutput> {
+        const variants = this.querySanitizer.buildQueryVariants(input, target, options?.piva);
 
         const rawResults: any[] = [];
         const queriesTried: string[] = [];

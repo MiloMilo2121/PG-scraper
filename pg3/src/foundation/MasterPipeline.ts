@@ -73,6 +73,9 @@ export class MasterPipeline {
             let discoveredUrl: string | null = null;
             let discoveryLayer = '';
 
+            // THE BEST LOSER TRACKER
+            let bestLoser: { url: string; layer: string; score: number } | null = null;
+
             // In a perfect system, if Registry returns URL, we take it. 
             // Since ShadowRegistry only returns PIVA right now, we use that for later verification.
 
@@ -100,6 +103,33 @@ export class MasterPipeline {
                                 discoveredUrl = url;
                                 discoveryLayer = layerName + '_WAF_PIVA';
                                 return true;
+                            } else {
+                                // ASYNC DEEP-SCRAPING FALLBACK
+                                // If PIVA is completely missing from Homepage, we spin up parallel workers to check legal pages.
+                                const checkSubUrl = async (path: string): Promise<boolean> => {
+                                    try {
+                                        const subUrl = url.replace(/\/$/, '') + path;
+                                        const subNav = await this.browserPool.navigateSafe(subUrl);
+                                        if (subNav.status === 'OK' && subNav.html && subNav.html.replace(/[^0-9]/g, '').includes(cleanPiva)) {
+                                            console.log(`[MasterPipeline] 🕵️ P.IVA hidden on homepage, but FOUND on ${subUrl}`);
+                                            return true;
+                                        }
+                                    } catch (e) {
+                                        // Ignore sub-page errors
+                                    }
+                                    return false;
+                                };
+
+                                const deepResults = await Promise.all([
+                                    checkSubUrl('/contatti'),
+                                    checkSubUrl('/privacy')
+                                ]);
+
+                                if (deepResults.includes(true)) {
+                                    discoveredUrl = url;
+                                    discoveryLayer = layerName + '_WAF_PIVA_DEEP';
+                                    return true;
+                                }
                             }
                         }
                         // Fallback: company name match in browser HTML
@@ -120,12 +150,25 @@ export class MasterPipeline {
                         const titleMatched = nameTokens.filter(t => titleText.includes(t));
                         const bodyRatio = nameTokens.length > 0 ? matched.length / nameTokens.length : 0;
                         const titleRatio = nameTokens.length > 0 ? titleMatched.length / nameTokens.length : 0;
+
+                        // Domain similarity check for Best Loser logic
+                        let domainStr = '';
+                        try { domainStr = new URL(url).hostname.replace('www.', '').split('.')[0].toLowerCase(); } catch { }
+                        const compactName = strippedForBrowser.replace(/\s+/g, '');
+                        const isHighDomainSim = compactName.length >= 4 && (domainStr.includes(compactName) || compactName.includes(domainStr));
+                        const combinedScore = (bodyRatio * 0.6) + (titleRatio * 0.4);
+
                         // Accept if body match >= 0.5 OR title match >= 0.4 with some body overlap
                         if (nameTokens.length > 0 && (bodyRatio >= 0.5 || (titleRatio >= 0.4 && bodyRatio >= 0.3))) {
                             discoveredUrl = url;
                             discoveryLayer = layerName + '_WAF_SEMANTIC';
                             console.log(`[MasterPipeline] 🧠 Browser semantic match: body=${matched.join('+')}(${(bodyRatio * 100).toFixed(0)}%) title=${titleMatched.join('+')}(${(titleRatio * 100).toFixed(0)}%) for "${companyNameForGate}" on ${url}`);
                             return true;
+                        } else if (nameTokens.length > 0 && isHighDomainSim && combinedScore > 0.1) {
+                            if (!bestLoser || combinedScore > bestLoser.score) {
+                                bestLoser = { url, layer: layerName + '_BEST_LOSER', score: combinedScore };
+                                console.log(`[MasterPipeline] 🥉 Potential BEST LOSER logged: ${url} (score ${combinedScore.toFixed(2)})`);
+                            }
                         }
                     }
                 }
@@ -188,7 +231,7 @@ export class MasterPipeline {
             // STAGE 4: SERP Company Search
             if (!discoveredUrl) {
                 layersAttempted.push('STAGE_4_SERP_COMPANY');
-                const serpRes = await this.dedup.search(companyId, input, 'company', { maxTier: isBleeding ? 1 : undefined });
+                const serpRes = await this.dedup.search(companyId, input, 'company', { maxTier: isBleeding ? 1 : undefined, piva });
 
                 console.log(`[MasterPipeline] 🔎 SERP returned ${serpRes.results.length} candidates for "${input.company_name}" (providers: ${serpRes.providers_used.join(',')})`);
 
@@ -245,8 +288,16 @@ export class MasterPipeline {
                 }
             }
 
+            // ===== BEST LOSER RESCUE =====
+            if (!discoveredUrl && bestLoser) {
+                const loser = bestLoser as { url: string; layer: string; score: number };
+                discoveredUrl = loser.url;
+                discoveryLayer = loser.layer;
+                console.log(`[MasterPipeline] 🦅 RESCUING BEST LOSER candidate for "${input.company_name}": ${discoveredUrl} (score: ${loser.score.toFixed(2)})`);
+            }
+
             // ===== STAGE 6: LLM ORACLE VERIFICATION =====
-            // If SERP found candidates but regex PIVA matching failed,
+            // If SERP found candidates but regex PIVA/Semantic matching failed,
             // ask an LLM to semantically verify the best URL candidate.
             if (!discoveredUrl && !isBleeding) {
                 const guardResult = await this.oracleGuard.evaluate(companyId, {

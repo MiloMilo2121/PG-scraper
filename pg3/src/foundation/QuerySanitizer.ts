@@ -73,7 +73,7 @@ export class QuerySanitizer {
         return query;
     }
 
-    public buildQueryVariants(input: NormalizedInput, target: 'company' | 'linkedin' | 'registry' | 'bilancio'): string[] {
+    public buildQueryVariants(input: NormalizedInput, target: 'company' | 'linkedin' | 'registry' | 'bilancio', piva?: string): string[] {
         const variants: string[] = [];
 
         const cleanName = this.sanitizeForQuery(input.company_name);
@@ -81,6 +81,15 @@ export class QuerySanitizer {
         const cleanCity = this.sanitizeForQuery(input.city || '');
 
         if (target === 'company') {
+            // THE GOD-TIER OVERRIDE: 1st Priority is the raw P.IVA
+            if (piva) {
+                const cleanPiva = piva.replace(/[^0-9]/g, '');
+                if (cleanPiva.length === 11) {
+                    variants.push(`"${cleanPiva}"`);
+                    variants.push(`"IT${cleanPiva}"`);
+                }
+            }
+
             // Variant 1: Exact name + city (highest precision)
             if (cleanCity) {
                 variants.push(`"${cleanName}" ${cleanCity} sito ufficiale`);
