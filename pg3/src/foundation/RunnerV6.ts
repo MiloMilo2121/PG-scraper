@@ -190,7 +190,8 @@ async function run() {
                 const query = typeof payload === 'string' ? payload : payload.query;
                 const apiKey = process.env.SERPER_API_KEY || '';
                 const res = await axios.post('https://google.serper.dev/search', { q: query, gl: 'it', hl: 'it' }, {
-                    headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' }
+                    headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+                    timeout: 10000
                 });
                 return (res.data.organic || []).map((r: any) => ({ url: r.link, title: r.title, snippet: r.snippet })) as unknown as T;
             }
@@ -199,11 +200,22 @@ async function run() {
             costPerRequest: 0.002,
             tier: 2,
             execute: async <T>(payload: any): Promise<T> => {
-                const url = typeof payload === 'string' ? payload : payload.url;
+                // Determine if we are doing a SERP search or a URL read
+                const isUrl = typeof payload === 'string' ? payload.startsWith('http') : !!payload.url;
+                const target = typeof payload === 'string' ? payload : (payload.query || payload.url);
                 const apiKey = process.env.JINA_API_KEY || '';
-                const res = await axios.get(`https://r.jina.ai/${encodeURIComponent(url)}`, {
-                    headers: { 'Authorization': `Bearer ${apiKey}`, 'Accept': 'application/json' }
-                });
+
+                const endpoint = isUrl ? `https://r.jina.ai/${target}` : `https://s.jina.ai/${encodeURIComponent(target)}`;
+                const headers: any = { 'Authorization': `Bearer ${apiKey}` };
+                if (!isUrl) {
+                    headers['Accept'] = 'application/json';
+                }
+
+                const res = await axios.get(endpoint, { headers, timeout: 15000 });
+
+                if (!isUrl && res.data && res.data.data) {
+                    return res.data.data.map((r: any) => ({ url: r.url, title: r.title, snippet: r.description })) as unknown as T;
+                }
                 return res.data as unknown as T;
             }
         } as any],
@@ -212,14 +224,15 @@ async function run() {
             tier: 3,
             execute: async <T>(payload: any): Promise<T> => {
                 const apiKey = process.env.OPENAI_API_KEY || '';
+                if (!apiKey || apiKey.includes('your-')) throw new Error('OPENAI_API_KEY missing');
                 const openai = new OpenAI({ apiKey });
                 if (typeof payload === 'string' || !!payload.query) {
                     const query = typeof payload === 'string' ? payload : payload.query;
                     const c = await openai.chat.completions.create({
                         model: 'gpt-4o-mini',
                         messages: [
-                            { role: 'system', content: 'You are an Italian business domain expert. Given a company name and optionally a city, you MUST return the most likely official website URL. Italian companies typically use .it, .com, or .eu domains. Consider common patterns: company name without spaces + .it, hyphenated name + .it, abbreviated name + .it. Only output URLs you are confident about. Output ONLY a raw JSON array, no markdown, no explanation.' },
-                            { role: 'user', content: `Company: "${query}"\n\nReturn the top 3 most likely official website URLs in this exact JSON format: [{"title":"Company Name","url":"https://www.example.it","snippet":"Official website"}]. If unsure, return fewer results or an empty array []. Raw JSON only.` }
+                            { role: 'system', content: 'You are an Italian business domain expert. Return a JSON array.' },
+                            { role: 'user', content: `Company: "${query}"\n\nReturn URLs in JSON format: [{"title":"...","url":"...","snippet":"..."}]. Raw JSON only.` }
                         ],
                         temperature: 0.1
                     });
@@ -227,9 +240,7 @@ async function run() {
                     const jsonMatch = content.match(/\[[\s\S]*\]/) || content.match(/\{[\s\S]*\}/);
                     try { return JSON.parse(jsonMatch ? jsonMatch[0] : '[]') as T; } catch { return [] as unknown as T; }
                 }
-                const finalPayload = { ...payload, model: 'gpt-4o-mini' };
-                const completion = await openai.chat.completions.create(finalPayload);
-                return completion as unknown as T;
+                return (await openai.chat.completions.create({ ...payload, model: 'gpt-4o-mini' })) as unknown as T;
             }
         } as any],
         ['PERPLEXITY-1', {
