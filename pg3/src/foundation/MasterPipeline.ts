@@ -167,8 +167,8 @@ export class MasterPipeline {
                     (rawInput as any).category || ''
                 );
 
-                // Limit to top 40 candidates to stay within reasonable time/resource bounds per company
-                const topCandidates = candidates.slice(0, 40);
+                // Limit to top 200 candidates per the Zero-Cost Phase 2 strategy
+                const topCandidates = candidates.slice(0, 200);
                 for (const candidateUrl of topCandidates) {
                     if (discoveredUrl) break;
                     await checkUrlWithTimeout(candidateUrl, 'HYPER_GUESSER');

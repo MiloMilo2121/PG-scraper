@@ -3,6 +3,7 @@ import * as path from 'path';
 require('dotenv').config();
 import { parse } from 'csv-parse/sync';
 import axios from 'axios';
+import { SocksProxyAgent } from 'socks-proxy-agent';
 import * as cheerio from 'cheerio';
 import { OpenAI } from 'openai';
 import { MasterPipeline } from './MasterPipeline';
@@ -99,20 +100,22 @@ async function run() {
 
     const router = new CostRouter(cache, ledger, new Map([
         ['BING-HTML-1', {
-            costPerRequest: 0.0005, // Approximation for scrape.do generic cost
+            costPerRequest: 0,
             tier: 0,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const scrapeDoToken = process.env.SCRAPE_DO_TOKEN || '';
                 const targetUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=it`;
 
                 let res;
-                if (scrapeDoToken) {
-                    res = await axios.get('http://api.scrape.do', {
-                        params: { token: scrapeDoToken, url: targetUrl, geoCode: 'it' },
-                        timeout: 15000
+                try {
+                    const agent = new SocksProxyAgent('socks5://127.0.0.1:9050');
+                    res = await axios.get(targetUrl, {
+                        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' },
+                        timeout: 10000,
+                        httpAgent: agent,
+                        httpsAgent: agent
                     });
-                } else {
+                } catch (e) {
                     res = await axios.get(targetUrl, {
                         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' }, timeout: 8000
                     });
@@ -130,20 +133,21 @@ async function run() {
             }
         } as any],
         ['DDG-LITE-1', {
-            costPerRequest: 0.0005,
+            costPerRequest: 0,
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const scrapeDoToken = process.env.SCRAPE_DO_TOKEN || '';
-                const targetUrl = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}&kl=it-it`;
 
                 let res;
-                if (scrapeDoToken) {
-                    res = await axios.get('http://api.scrape.do', {
-                        params: { token: scrapeDoToken, url: targetUrl, geoCode: 'it' },
-                        timeout: 15000
+                try {
+                    const agent = new SocksProxyAgent('socks5://127.0.0.1:9050');
+                    res = await axios.post('https://lite.duckduckgo.com/lite/', `q=${encodeURIComponent(query)}&kl=it-it`, {
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' },
+                        timeout: 10000,
+                        httpAgent: agent,
+                        httpsAgent: agent
                     });
-                } else {
+                } catch (e) {
                     res = await axios.post('https://lite.duckduckgo.com/lite/', `q=${encodeURIComponent(query)}&kl=it-it`, {
                         headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' }, timeout: 8000
                     });
