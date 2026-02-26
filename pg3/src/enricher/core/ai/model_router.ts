@@ -48,18 +48,18 @@ export class ModelRouter {
                 break;
 
             case TaskDifficulty.MODERATE:
-                // DeepSeek best at structured JSON, flash as free fallback
-                if (config.llm.deepseek?.apiKey) chain.push('deepseek-chat');
+                // Zero-cost dominance: Force GLM-4.7-Flash as absolute primary everywhere
                 if (config.llm.z_ai?.apiKey) chain.push('glm-4.7-flash');
+                if (config.llm.deepseek?.apiKey) chain.push('deepseek-chat');
                 if (config.llm.apiKey) chain.push('gpt-4o-mini');
                 break;
 
             case TaskDifficulty.COMPLEX:
-                // GLM-5 flagship, then Kimi K2.5 (strong reasoning), then fallbacks
-                if (config.llm.z_ai?.apiKey) chain.push('glm-5');
-                if (config.llm.kimi?.apiKey) chain.push('kimi-k2.5');
+                // ZERO COST OVERRIDE: AgentBrain uses COMPLEX, force it to Flash to save money!
+                if (config.llm.z_ai?.apiKey) chain.push('glm-4.7-flash');
                 if (config.llm.deepseek?.apiKey) chain.push('deepseek-chat');
-                if (config.llm.apiKey) chain.push('gpt-4o');
+                if (config.llm.kimi?.apiKey) chain.push('kimi-k2.5');
+                if (config.llm.apiKey) chain.push('gpt-4o-mini');
                 break;
 
             case TaskDifficulty.HARD:

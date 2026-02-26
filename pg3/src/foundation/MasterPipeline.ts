@@ -167,11 +167,21 @@ export class MasterPipeline {
                     (rawInput as any).category || ''
                 );
 
-                // Limit to top 200 candidates per the Zero-Cost Phase 2 strategy
+                // Use Parallel Batching to test 200 candidates efficiently (Zero-Cost Phase 2 strategy)
                 const topCandidates = candidates.slice(0, 200);
-                for (const candidateUrl of topCandidates) {
+                const BATCH_SIZE = 20;
+
+                for (let i = 0; i < topCandidates.length; i += BATCH_SIZE) {
                     if (discoveredUrl) break;
-                    await checkUrlWithTimeout(candidateUrl, 'HYPER_GUESSER');
+
+                    const batch = topCandidates.slice(i, i + BATCH_SIZE);
+                    const promises = batch.map(async (candidateUrl) => {
+                        // Skip if already discovered by another thread in the batch
+                        if (discoveredUrl) return;
+                        await checkUrlWithTimeout(candidateUrl, 'HYPER_GUESSER');
+                    });
+
+                    await Promise.allSettled(promises);
                 }
             }
 
