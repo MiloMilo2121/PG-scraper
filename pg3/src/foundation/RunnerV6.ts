@@ -99,13 +99,25 @@ async function run() {
 
     const router = new CostRouter(cache, ledger, new Map([
         ['BING-HTML-1', {
-            costPerRequest: 0,
+            costPerRequest: 0.0005, // Approximation for scrape.do generic cost
             tier: 0,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const res = await axios.get(`https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=it`, {
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' }, timeout: 8000
-                });
+                const scrapeDoToken = process.env.SCRAPE_DO_TOKEN || '';
+                const targetUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=it`;
+
+                let res;
+                if (scrapeDoToken) {
+                    res = await axios.get('http://api.scrape.do', {
+                        params: { token: scrapeDoToken, url: targetUrl, geoCode: 'it' },
+                        timeout: 15000
+                    });
+                } else {
+                    res = await axios.get(targetUrl, {
+                        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' }, timeout: 8000
+                    });
+                }
+
                 const $ = cheerio.load(res.data);
                 const results: any[] = [];
                 $('li.b_algo').each((_: any, el: any) => {
@@ -118,13 +130,25 @@ async function run() {
             }
         } as any],
         ['DDG-LITE-1', {
-            costPerRequest: 0,
+            costPerRequest: 0.0005,
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const res = await axios.post('https://lite.duckduckgo.com/lite/', `q=${encodeURIComponent(query)}&kl=it-it`, {
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' }, timeout: 8000
-                });
+                const scrapeDoToken = process.env.SCRAPE_DO_TOKEN || '';
+                const targetUrl = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}&kl=it-it`;
+
+                let res;
+                if (scrapeDoToken) {
+                    res = await axios.get('http://api.scrape.do', {
+                        params: { token: scrapeDoToken, url: targetUrl, geoCode: 'it' },
+                        timeout: 15000
+                    });
+                } else {
+                    res = await axios.post('https://lite.duckduckgo.com/lite/', `q=${encodeURIComponent(query)}&kl=it-it`, {
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' }, timeout: 8000
+                    });
+                }
+
                 const $ = cheerio.load(res.data);
                 const results: any[] = [];
                 // DDG Lite uses table rows with result links and snippets
