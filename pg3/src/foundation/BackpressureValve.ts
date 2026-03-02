@@ -87,13 +87,13 @@ export class BackpressureValve {
                 this.adjustmentsMade++;
                 console.warn('[BackpressureValve] EMERGENCY MODE ACTIVATED: error_rate > 30%. Concurrency locked to 1.');
             }
-        } else if (health.error_rate > 0.15 || health.avg_duration_ms > 8000) {
+        } else if (health.error_rate > 0.15 || health.avg_duration_ms > 25000) {
             // Multiplicative Decrease
             const newTarget = Math.floor(this.targetConcurrency / 2);
             this.targetConcurrency = Math.max(this.minConcurrency, newTarget);
             this.adjustmentsMade++;
             console.warn(`[BackpressureValve] THROTTLING: error_rate=${(health.error_rate * 100).toFixed(1)}%, avg_ms=${health.avg_duration_ms.toFixed(0)}. Concurrency halved to ${this.targetConcurrency}.`);
-        } else if (health.error_rate < 0.05 && health.avg_duration_ms < 3000) {
+        } else if (health.error_rate < 0.05 && health.avg_duration_ms < 12000) {
             // Additive Increase
             if (this.targetConcurrency < this.maxConcurrency) {
                 this.targetConcurrency++;

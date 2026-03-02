@@ -9,7 +9,8 @@ import { BilancioHunter } from './BilancioHunter';
 import { LinkedInSniper } from './LinkedInSniper';
 import { BrowserPool } from './BrowserPool';
 import { CostRouter } from './CostRouter';
-import { HyperGuesser } from '../enricher/core/discovery/hyper_guesser_v2';
+import { HyperGuesserVX } from '../enricher/core/discovery/hyperguesser_vx/hyper_guesser_vx';
+import { RdapValidator } from '../enricher/core/discovery/rdap_validator';
 import crypto from 'crypto';
 
 export class MasterPipeline {
@@ -200,38 +201,33 @@ export class MasterPipeline {
                 await checkUrlWithTimeout(candidateUrl, 'EMAIL_DOMAIN');
             }
 
-            // STAGE 3: Hyper Guesser (Direct Domain Probe)
+            // STAGE 3: Hyper Guesser VX (Massive Generation + DNS Ping + AI Triage)
             if (!discoveredUrl) {
-                layersAttempted.push('STAGE_3_HYPER_GUESSER');
-                const candidates = HyperGuesser.generate(
-                    input.company_name,
-                    input.city,
-                    input.provincia || '',
-                    (rawInput as any).category || ''
-                );
+                layersAttempted.push('STAGE_3_HYPER_GUESSER_VX');
 
-                // Use Parallel Batching to test 200 candidates efficiently (Zero-Cost Phase 2 strategy)
-                const topCandidates = candidates.slice(0, 200);
-                const BATCH_SIZE = 20;
-
-                for (let i = 0; i < topCandidates.length; i += BATCH_SIZE) {
-                    if (discoveredUrl) break;
-
-                    const batch = topCandidates.slice(i, i + BATCH_SIZE);
-                    const promises = batch.map(async (candidateUrl) => {
-                        // Skip if already discovered by another thread in the batch
-                        if (discoveredUrl) return;
-                        await checkUrlWithTimeout(candidateUrl, 'HYPER_GUESSER');
+                try {
+                    const vxResult = await HyperGuesserVX.blast({
+                        company_name: input.company_name,
+                        city: input.city,
+                        province: input.provincia || '',
+                        category: (rawInput as any).category || ''
                     });
 
-                    await Promise.allSettled(promises);
+                    if (vxResult && vxResult.status === 'FOUND_VALID' && vxResult.url) {
+                        // The VX protocol already performs deep AI triage, we accept its output
+                        discoveredUrl = vxResult.url;
+                        discoveryLayer = 'HYPER_GUESSER_VX';
+                        console.log(`[MasterPipeline] ✅ FOUND via VX Protocol: ${discoveredUrl}`);
+                    }
+                } catch (err: any) {
+                    console.warn(`[MasterPipeline] ⚠️ HyperGuesserVX error: ${err.message}`);
                 }
             }
 
             // STAGE 4: SERP Company Search
             if (!discoveredUrl) {
                 layersAttempted.push('STAGE_4_SERP_COMPANY');
-                const serpRes = await this.dedup.search(companyId, input, 'company', { maxTier: isBleeding ? 1 : undefined, piva });
+                const serpRes = await this.dedup.search(companyId, input, 'company', { maxTier: isBleeding ? 2 : undefined, piva });
 
                 console.log(`[MasterPipeline] 🔎 SERP returned ${serpRes.results.length} candidates for "${input.company_name}" (providers: ${serpRes.providers_used.join(',')})`);
 
@@ -258,10 +254,24 @@ export class MasterPipeline {
                     }
                 }
 
+                // STAGE 4B: RDAP WHOIS VERIFICATION ON UNVERIFIED TOP CANDIDATES
+                if (!discoveredUrl && serpRes.results.length > 0) {
+                    layersAttempted.push('STAGE_4B_RDAP_VALIDATION');
+                    for (const cand of serpRes.results.slice(0, 2)) {
+                        const rdapScore = await RdapValidator.checkDomainOwnership(cand.url, input as any);
+                        if (rdapScore >= 0.8) {
+                            discoveredUrl = cand.url;
+                            discoveryLayer = 'SERP_RDAP_BINGO';
+                            console.log(`[MasterPipeline] 🎯 RDAP WHOIS BINGO! Found exact identity in domain registry for: ${discoveredUrl}`);
+                            break;
+                        }
+                    }
+                }
+
                 // STAGE 5: SERP Registry Search
                 if (!discoveredUrl && !isBleeding) {
                     layersAttempted.push('STAGE_5_SERP_REGISTRY');
-                    const regSerpRes = await this.dedup.search(companyId, input, 'registry', { maxTier: 1 });
+                    const regSerpRes = await this.dedup.search(companyId, input, 'registry', { maxTier: 2 });
                     if (regSerpRes.results.length > 0) {
                         // Extract website URLs from registry page snippets
                         // Registry pages (registroimprese.it, informazione-aziende.it) often contain
@@ -291,9 +301,18 @@ export class MasterPipeline {
             // ===== BEST LOSER RESCUE =====
             if (!discoveredUrl && bestLoser) {
                 const loser = bestLoser as { url: string; layer: string; score: number };
-                discoveredUrl = loser.url;
-                discoveryLayer = loser.layer;
-                console.log(`[MasterPipeline] 🦅 RESCUING BEST LOSER candidate for "${input.company_name}": ${discoveredUrl} (score: ${loser.score.toFixed(2)})`);
+
+                // 🌐 Try RDAP validation before fully accepting a weak loser
+                const rdapScore = await RdapValidator.checkDomainOwnership(loser.url, input as any);
+                if (rdapScore >= 0.8) {
+                    discoveredUrl = loser.url;
+                    discoveryLayer = loser.layer + '_RDAP_BINGO';
+                    console.log(`[MasterPipeline] 🎯 BEST LOSER VERIFIED VIA RDAP WHOIS: ${discoveredUrl}`);
+                } else if (loser.score > 0.15) {
+                    discoveredUrl = loser.url;
+                    discoveryLayer = loser.layer;
+                    console.log(`[MasterPipeline] 🦅 RESCUING BEST LOSER candidate for "${input.company_name}": ${discoveredUrl} (score: ${loser.score.toFixed(2)})`);
+                }
             }
 
             // ===== STAGE 6: LLM ORACLE VERIFICATION =====

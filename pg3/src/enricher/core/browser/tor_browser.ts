@@ -245,6 +245,7 @@ export class TorBrowser {
         return new Promise((resolve, reject) => {
             const socket = net.createConnection({ port: 9051, host: '127.0.0.1' }, () => {
                 socket.write('AUTHENTICATE ""\r\n');
+                socket.write('SIGNAL RELOAD\r\n'); // SIGHUP push equivalent
                 socket.write('SIGNAL NEWNYM\r\n');
             });
 

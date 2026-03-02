@@ -2,6 +2,7 @@
 import { config } from '../../config';
 import { Logger } from '../../utils/logger';
 import OpenAI from 'openai';
+import pLimit from 'p-limit';
 
 /**
  * 🧠 LLM SERVICE — Centralized AI Gateway
@@ -14,7 +15,12 @@ import OpenAI from 'openai';
  */
 export class LLMService {
     private static totalCost = 0;
-    private static clients: Map<string, OpenAI> = new Map();
+    private static clients: Map<string, OpenAI> = new Map(); // key is apiKey
+
+    // Hydra Router State
+    private static keyCooldowns: Map<string, number> = new Map(); // apiKey -> unlockTimestamp (Jail)
+    private static keyIndices: Map<string, number> = new Map(); // providerKey -> currentIndex
+    private static llmLimit = pLimit(20); // Max 20 concurrent LLM requests globally
 
     // ─────────────────────────────────────────────
     // CLIENT MANAGEMENT
@@ -22,69 +28,79 @@ export class LLMService {
 
     /**
      * Factory: Get the correct OpenAI-compatible client for the requested model.
-     * Route based on model prefix or explicit mapping.
+     * Round-Robins through healthy API keys for the chosen provider.
      */
-    private static getClientForModel(model: string): OpenAI {
-        let providerKey = 'openai'; // Default
+    private static getClientForModel(model: string): { client: OpenAI, apiKey: string, providerKey: string } {
+        let providerKey = 'openai';
 
-        // 1. Determine Provider based on Model Name
-        if (model.startsWith('glm-')) {
-            providerKey = 'z_ai';
-        } else if (model.startsWith('deepseek-')) {
-            providerKey = 'deepseek';
-        } else if (model.startsWith('moonshot-') || model.startsWith('kimi-')) {
-            providerKey = 'kimi';
-        } else {
-            // Fallback for gpt-*, o1-*, etc. to OpenAI
-            providerKey = 'openai';
-        }
+        if (model.startsWith('glm-')) providerKey = 'z_ai';
+        else if (model.startsWith('deepseek-')) providerKey = 'deepseek';
+        else if (model.startsWith('moonshot-') || model.startsWith('kimi-')) providerKey = 'kimi';
+        else providerKey = 'openai';
 
-        // 2. Return cached client if exists
-        if (this.clients.has(providerKey)) {
-            return this.clients.get(providerKey)!;
-        }
-
-        // 3. Initialize new client
-        let newClient: OpenAI;
+        let keys: string[] = [];
+        let baseUrl: string | undefined;
 
         switch (providerKey) {
             case 'z_ai':
-                if (!config.llm.z_ai.apiKey) throw new Error(`⛔ Z.ai (GLM) API Key missing! Cannot use model ${model}`);
-                Logger.info(`🧠 [LLMService] Initializing Z.ai Client for ${model}...`);
-                newClient = new OpenAI({
-                    apiKey: config.llm.z_ai.apiKey,
-                    baseURL: config.llm.z_ai.baseUrl,
-                });
+                keys = config.llm.z_ai.apiKeys;
+                baseUrl = config.llm.z_ai.baseUrl;
                 break;
-
             case 'deepseek':
-                if (!config.llm.deepseek?.apiKey) throw new Error(`⛔ DeepSeek API Key missing! Cannot use model ${model}`);
-                Logger.info(`🧠 [LLMService] Initializing DeepSeek Client for ${model}...`);
-                newClient = new OpenAI({
-                    apiKey: config.llm.deepseek.apiKey,
-                    baseURL: config.llm.deepseek.baseUrl,
-                });
+                keys = config.llm.deepseek.apiKeys;
+                baseUrl = config.llm.deepseek.baseUrl;
                 break;
-
             case 'kimi':
-                if (!config.llm.kimi?.apiKey) throw new Error(`⛔ Kimi (Moonshot) API Key missing! Cannot use model ${model}`);
-                Logger.info(`🧠 [LLMService] Initializing Kimi Client for ${model}...`);
-                newClient = new OpenAI({
-                    apiKey: config.llm.kimi.apiKey,
-                    baseURL: config.llm.kimi.baseUrl,
-                });
+                keys = config.llm.kimi.apiKeys;
+                baseUrl = config.llm.kimi.baseUrl;
                 break;
-
             case 'openai':
             default:
-                if (!config.llm.apiKey) throw new Error(`⛔ OpenAI API Key missing! Cannot use model ${model}`);
-                Logger.info(`🧠 [LLMService] Initializing OpenAI Client for ${model}...`);
-                newClient = new OpenAI({ apiKey: config.llm.apiKey });
+                keys = config.llm.apiKeys;
                 break;
         }
 
-        this.clients.set(providerKey, newClient);
-        return newClient;
+        if (!keys || keys.length === 0) {
+            throw new Error(`⛔ No API Keys configured for provider ${providerKey} (model: ${model})`);
+        }
+
+        // Find a healthy key (Round-Robin)
+        const startIndex = this.keyIndices.get(providerKey) || 0;
+        let selectedKey: string | null = null;
+        let attempts = 0;
+
+        while (attempts < keys.length) {
+            const index = (startIndex + attempts) % keys.length;
+            const candidateKey = keys[index];
+            const unlockTime = this.keyCooldowns.get(candidateKey) || 0;
+
+            if (Date.now() > unlockTime) {
+                selectedKey = candidateKey;
+                this.keyIndices.set(providerKey, (index + 1) % keys.length);
+                break;
+            }
+            attempts++;
+        }
+
+        // If all keys are in jail, just use the first one (or wait/throw, but throwing is aggressive)
+        if (!selectedKey) {
+            Logger.warn(`⚠️ [Hydra Router] All keys for ${providerKey} are in Cooldown Jail! Forcing use of key 0.`);
+            selectedKey = keys[0];
+        }
+
+        // Initialize client if not cached
+        if (!this.clients.has(selectedKey)) {
+            Logger.info(`🧠 [LLMService] Initializing ${providerKey} Client with key prefix: ${selectedKey.substring(0, 6)}...`);
+            const client = new OpenAI({
+                apiKey: selectedKey,
+                baseURL: baseUrl,
+                timeout: 15000,   // 15 seconds max (Law 104 corollary)
+                maxRetries: 0     // We handle retries and rotations externally in Hydra
+            });
+            this.clients.set(selectedKey, client);
+        }
+
+        return { client: this.clients.get(selectedKey)!, apiKey: selectedKey, providerKey };
     }
 
     /**
@@ -94,10 +110,10 @@ export class LLMService {
     public static getClient(): OpenAI {
         // Fallback for legacy calls that don't specify model
         // Prefer cheapest: Z.ai flash (FREE) -> DeepSeek -> Kimi -> OpenAI
-        if (config.llm.z_ai.apiKey) return this.getClientForModel('glm-4.7-flash');
-        if (config.llm.deepseek?.apiKey) return this.getClientForModel('deepseek-chat');
-        if (config.llm.kimi?.apiKey) return this.getClientForModel('kimi-k2.5');
-        return this.getClientForModel('gpt-4o');
+        if (config.llm.z_ai.apiKeys.length) return this.getClientForModel('glm-4.7-flash').client;
+        if (config.llm.deepseek.apiKeys.length) return this.getClientForModel('deepseek-chat').client;
+        if (config.llm.kimi.apiKeys.length) return this.getClientForModel('kimi-k2.5').client;
+        return this.getClientForModel('gpt-4o').client;
     }
 
     // ─────────────────────────────────────────────
@@ -105,16 +121,20 @@ export class LLMService {
     // ─────────────────────────────────────────────
 
     /**
-     * Checks if an error is a retryable rate-limit or server error (429, 5xx).
+     * Checks if an error is a retryable rate-limit or server error (429, 5xx, timeout).
      */
     private static isRetryableError(error: unknown): boolean {
-        const msg = `${(error as any)?.message || ''} ${(error as any)?.status || ''} ${(error as any)?.code || ''}`.toLowerCase();
-        // 429 rate limit
-        if (msg.includes('429') || msg.includes('rate') || msg.includes('速率限制') || msg.includes('too many')) return true;
-        // 5xx server errors
-        if (msg.includes('500') || msg.includes('502') || msg.includes('503') || msg.includes('504')) return true;
-        // Connection/timeout errors (transient)
-        if (msg.includes('econnreset') || msg.includes('etimedout') || msg.includes('socket hang up')) return true;
+        const msg = `${(error as any)?.message || ''} ${(error as any)?.status || ''} ${(error as any)?.code || ''} ${(error as any)?.type || ''}`.toLowerCase();
+
+        // Rate limits
+        if (msg.includes('429') || msg.includes('rate') || msg.includes('速率限制') || msg.includes('too many') || msg.includes('insufficient_quota')) return true;
+
+        // Server errors
+        if (msg.includes('500') || msg.includes('502') || msg.includes('503') || msg.includes('504') || msg.includes('overloaded') || msg.includes('server_error')) return true;
+
+        // Timeout & Connection Drops
+        if (msg.includes('timeout') || msg.includes('etimedout') || msg.includes('econnreset') || msg.includes('socket hang up') || msg.includes('terminated') || msg.includes('econnaborted')) return true;
+
         return false;
     }
 
@@ -162,14 +182,17 @@ export class LLMService {
 
             // Up to 2 attempts per model (original + 1 backoff retry)
             for (let attempt = 0; attempt < 2; attempt++) {
+                let currentApiKey = '';
                 try {
-                    const client = this.getClientForModel(currentModel);
-                    const response = await client.chat.completions.create({
+                    const { client, apiKey } = this.getClientForModel(currentModel);
+                    currentApiKey = apiKey;
+
+                    const response = await this.llmLimit(() => client.chat.completions.create({
                         model: currentModel,
                         messages: [{ role: 'user', content: prompt }],
                         temperature: this.getTemperature(currentModel),
                         max_tokens: config.llm.maxTokens,
-                    });
+                    }));
 
                     const content = response.choices[0]?.message?.content || '';
                     this.trackUsage(response.usage, currentModel);
@@ -178,19 +201,25 @@ export class LLMService {
                     const retryable = this.isRetryableError(error);
                     Logger.warn(`[LLM] complete() failed with ${currentModel} (attempt ${attempt + 1}, retryable: ${retryable})`, { error: error as Error });
 
+                    if (retryable) {
+                        // Put key in Cooldown Jail for 60 seconds
+                        Logger.warn(`🚨 [Hydra Router] 429 detected! Jailing key ${currentApiKey.substring(0, 6)}... for 60s.`);
+                        this.keyCooldowns.set(currentApiKey, Date.now() + 60000);
+                    }
+
                     if (retryable && attempt === 0) {
                         // Retry same model once with backoff
                         await this.backoff(attempt);
                         continue;
                     }
 
-                    if (retryable && !isLastModel) {
-                        // Move to next fallback model
+                    if (!isLastModel) {
+                        // Move to next fallback model regardless of whether it's retryable or we exhausted attempts
                         Logger.info(`[LLM] 🔄 Falling back from ${currentModel} to ${modelsToTry[mi + 1]}`);
                         break;
                     }
 
-                    // Non-retryable error or last model exhausted — throw
+                    // Non-retryable error on the LAST model, or we exhausted retries on the LAST model — throw
                     throw error;
                 }
             }
@@ -231,15 +260,18 @@ export class LLMService {
 
             // Up to 2 attempts per model (original + 1 backoff retry)
             for (let attempt = 0; attempt < 2; attempt++) {
+                let currentApiKey = '';
                 try {
-                    const client = this.getClientForModel(currentModel);
-                    const response = await client.chat.completions.create({
+                    const { client, apiKey } = this.getClientForModel(currentModel);
+                    currentApiKey = apiKey;
+
+                    const response = await this.llmLimit(() => client.chat.completions.create({
                         model: currentModel,
                         messages: [{ role: 'user', content: prompt }],
                         temperature: this.getTemperature(currentModel),
                         max_tokens: config.llm.maxTokens,
                         response_format: responseFormat as any,
-                    });
+                    }));
 
                     const content = response.choices[0]?.message?.content;
                     if (!content) {
@@ -257,17 +289,23 @@ export class LLMService {
                     const retryable = this.isRetryableError(error);
                     Logger.warn(`[LLM] completeStructured() failed with ${currentModel} (attempt ${attempt + 1}, retryable: ${retryable})`, { error: error as Error });
 
+                    if (retryable) {
+                        // Put key in Cooldown Jail for 60 seconds
+                        Logger.warn(`🚨 [Hydra Router] 429 detected! Jailing key ${currentApiKey.substring(0, 6)}... for 60s.`);
+                        this.keyCooldowns.set(currentApiKey, Date.now() + 60000);
+                    }
+
                     if (retryable && attempt === 0) {
                         await this.backoff(attempt);
                         continue;
                     }
 
-                    if (retryable && !isLastModel) {
+                    if (!isLastModel) {
                         Logger.info(`[LLM] 🔄 Structured: falling back from ${currentModel} to ${modelsToTry[mi + 1]}`);
                         break;
                     }
 
-                    // Non-retryable or last model: try legacy JSON prompt as final attempt
+                    // Non-retryable or exhaust on the LAST model: try legacy JSON prompt as final attempt
                     Logger.warn(`[LLM] Structured output failed with model ${currentModel}, trying pure JSON prompt...`, { error: error as Error });
                     try {
                         const legacyRes = await this.complete(
@@ -311,10 +349,12 @@ export class LLMService {
             // Fallback logic could be added here, or just let it fail/warn.
         }
 
-        const client = this.getClientForModel(model);
-
+        let currentApiKey = '';
         try {
-            const response = await client.chat.completions.create({
+            const { client, apiKey } = this.getClientForModel(model);
+            currentApiKey = apiKey;
+
+            const response = await this.llmLimit(() => client.chat.completions.create({
                 model,
                 messages: [
                     { role: 'system', content: prompt },
@@ -330,15 +370,20 @@ export class LLMService {
                 ],
                 max_tokens: 300,
                 temperature: this.getTemperature(model),
-            });
+            }));
 
             const content = response.choices[0]?.message?.content;
             this.trackUsage(response.usage, model);
-
             return content || null;
 
         } catch (error) {
+            const retryable = this.isRetryableError(error);
             Logger.error('[LLM] completeVision() failed', { error: error as Error });
+
+            if (retryable) {
+                Logger.warn(`🚨 [Hydra Router] 429 detected on Vision Model! Jailing key ${currentApiKey.substring(0, 6)}... for 60s.`);
+                this.keyCooldowns.set(currentApiKey, Date.now() + 60000);
+            }
             return null;
         }
     }

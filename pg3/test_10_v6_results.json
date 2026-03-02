@@ -1,0 +1,208 @@
+[
+  {
+    "input": {
+      "company_name": "Autofficina Coffani di Coffani Massimiliano & Alberto SNC",
+      "city": "Brescia",
+      "normalized_name": "Autofficina Coffani di Coffani Massimiliano & Alberto"
+    },
+    "meta": {
+      "duration_ms": 8104,
+      "layers_attempted": [
+        "STAGE_1_SHADOW_REGISTRY",
+        "STAGE_2_EMAIL_DOMAIN",
+        "STAGE_3_HYPER_GUESSER_VX",
+        "STAGE_4_SERP_COMPANY",
+        "STAGE_5_SERP_REGISTRY",
+        "STAGE_6_LLM_ORACLE"
+      ],
+      "timestamp": "2026-02-28T17:45:15.100Z"
+    },
+    "status": "NOT_FOUND"
+  },
+  {
+    "input": {
+      "company_name": "Autosoccorso Costermano srl",
+      "city": "Brescia",
+      "normalized_name": "Autosoccorso Costermano"
+    },
+    "website": {
+      "url": "https://autosoccorsocostermano.it/",
+      "confidence": 0.95,
+      "discovery_layer": "HYPER_GUESSER_VX"
+    },
+    "meta": {
+      "duration_ms": 9329,
+      "layers_attempted": [
+        "STAGE_1_SHADOW_REGISTRY",
+        "STAGE_2_EMAIL_DOMAIN",
+        "STAGE_3_HYPER_GUESSER_VX"
+      ],
+      "timestamp": "2026-02-28T17:45:16.325Z"
+    },
+    "status": "FOUND_COMPLETE"
+  },
+  {
+    "input": {
+      "company_name": "Carrozzeria Goitese di Nolli Massimo Srl",
+      "city": "Brescia",
+      "normalized_name": "Carrozzeria Goitese di Nolli Massimo"
+    },
+    "meta": {
+      "duration_ms": 8653,
+      "layers_attempted": [
+        "STAGE_1_SHADOW_REGISTRY",
+        "STAGE_2_EMAIL_DOMAIN",
+        "STAGE_3_HYPER_GUESSER_VX",
+        "STAGE_4_SERP_COMPANY",
+        "STAGE_5_SERP_REGISTRY",
+        "STAGE_6_LLM_ORACLE"
+      ],
+      "timestamp": "2026-02-28T17:45:15.649Z"
+    },
+    "status": "NOT_FOUND"
+  },
+  {
+    "input": {
+      "company_name": "Bessi Motors",
+      "city": "Brescia",
+      "normalized_name": "Bessi Motors"
+    },
+    "website": {
+      "url": "https://www.bessimotors.com/",
+      "confidence": 0.95,
+      "discovery_layer": "HYPER_GUESSER_VX"
+    },
+    "meta": {
+      "duration_ms": 9876,
+      "layers_attempted": [
+        "STAGE_1_SHADOW_REGISTRY",
+        "STAGE_2_EMAIL_DOMAIN",
+        "STAGE_3_HYPER_GUESSER_VX"
+      ],
+      "timestamp": "2026-02-28T17:45:16.872Z"
+    },
+    "status": "FOUND_COMPLETE"
+  },
+  {
+    "input": {
+      "company_name": "ITS Lombardia Meccatronica Academy",
+      "city": "Local Area",
+      "normalized_name": "ITS Lombardia Meccatronica Academy"
+    },
+    "meta": {
+      "duration_ms": 12699,
+      "layers_attempted": [
+        "STAGE_1_SHADOW_REGISTRY",
+        "STAGE_2_EMAIL_DOMAIN",
+        "STAGE_3_HYPER_GUESSER_VX",
+        "STAGE_4_SERP_COMPANY",
+        "STAGE_5_SERP_REGISTRY",
+        "STAGE_6_LLM_ORACLE"
+      ],
+      "timestamp": "2026-02-28T17:45:21.079Z"
+    },
+    "status": "NOT_FOUND"
+  },
+  {
+    "input": {
+      "company_name": "Meccatronica S.R.L.",
+      "city": "Local Area",
+      "normalized_name": "Meccatronica"
+    },
+    "website": {
+      "url": "https://meccatronica.srl/",
+      "confidence": 0.95,
+      "discovery_layer": "HYPER_GUESSER_VX"
+    },
+    "meta": {
+      "duration_ms": 6815,
+      "layers_attempted": [
+        "STAGE_1_SHADOW_REGISTRY",
+        "STAGE_2_EMAIL_DOMAIN",
+        "STAGE_3_HYPER_GUESSER_VX"
+      ],
+      "timestamp": "2026-02-28T17:45:17.195Z"
+    },
+    "status": "FOUND_COMPLETE"
+  },
+  {
+    "input": {
+      "company_name": "Elettronave",
+      "city": "Brescia",
+      "normalized_name": "Elettronave"
+    },
+    "meta": {
+      "duration_ms": 3344,
+      "layers_attempted": [
+        "STAGE_1_SHADOW_REGISTRY",
+        "STAGE_2_EMAIL_DOMAIN",
+        "STAGE_3_HYPER_GUESSER_VX",
+        "STAGE_4_SERP_COMPANY",
+        "STAGE_5_SERP_REGISTRY",
+        "STAGE_6_LLM_ORACLE"
+      ],
+      "timestamp": "2026-02-28T17:45:15.724Z"
+    },
+    "status": "NOT_FOUND"
+  },
+  {
+    "input": {
+      "company_name": "Autofficina Bertelli Autoriparazioni dal 1960",
+      "city": "Local Area",
+      "normalized_name": "Autofficina Bertelli Autoriparazioni dal 1960"
+    },
+    "meta": {
+      "duration_ms": 8997,
+      "layers_attempted": [
+        "STAGE_1_SHADOW_REGISTRY",
+        "STAGE_2_EMAIL_DOMAIN",
+        "STAGE_3_HYPER_GUESSER_VX",
+        "STAGE_4_SERP_COMPANY",
+        "STAGE_5_SERP_REGISTRY",
+        "STAGE_6_LLM_ORACLE"
+      ],
+      "timestamp": "2026-02-28T17:45:23.379Z"
+    },
+    "status": "NOT_FOUND"
+  },
+  {
+    "input": {
+      "company_name": "HR meccatronica SrlsNo reviews",
+      "city": "Local Area",
+      "normalized_name": "HR meccatronica SrlsNo reviews"
+    },
+    "meta": {
+      "duration_ms": 12720,
+      "layers_attempted": [
+        "STAGE_1_SHADOW_REGISTRY",
+        "STAGE_2_EMAIL_DOMAIN",
+        "STAGE_3_HYPER_GUESSER_VX",
+        "STAGE_4_SERP_COMPANY",
+        "STAGE_5_SERP_REGISTRY",
+        "STAGE_6_LLM_ORACLE"
+      ],
+      "timestamp": "2026-02-28T17:45:27.820Z"
+    },
+    "status": "NOT_FOUND"
+  },
+  {
+    "input": {
+      "company_name": "Campetella Robotic Center",
+      "city": "Brescia",
+      "normalized_name": "Campetella Robotic Center"
+    },
+    "meta": {
+      "duration_ms": 8238,
+      "layers_attempted": [
+        "STAGE_1_SHADOW_REGISTRY",
+        "STAGE_2_EMAIL_DOMAIN",
+        "STAGE_3_HYPER_GUESSER_VX",
+        "STAGE_4_SERP_COMPANY",
+        "STAGE_5_SERP_REGISTRY",
+        "STAGE_6_LLM_ORACLE"
+      ],
+      "timestamp": "2026-02-28T17:45:23.887Z"
+    },
+    "status": "NOT_FOUND"
+  }
+]

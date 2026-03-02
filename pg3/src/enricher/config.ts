@@ -20,10 +20,10 @@ const EnvSchema = z.object({
   HEALTH_PORT: z.coerce.number().min(1).max(65535).default(3000),
 
   // 🤖 AI / LLM
-  OPENAI_API_KEY: z.string().optional(),
-  Z_AI_API_KEY: z.string().optional(),
-  DEEPSEEK_API_KEY: z.string().optional(),
-  KIMI_API_KEY: z.string().optional(),
+  OPENAI_API_KEY: CommaSeparatedString.optional(),
+  Z_AI_API_KEY: CommaSeparatedString.optional(),
+  DEEPSEEK_API_KEY: CommaSeparatedString.optional(),
+  KIMI_API_KEY: CommaSeparatedString.optional(),
   LLM_MODEL: z.string().default('glm-5'),
   LLM_MODEL_FAST: z.string().optional(),
   LLM_MODEL_SMART: z.string().optional(),
@@ -173,17 +173,21 @@ export const config = {
   },
   redis: deriveRedis(),
   llm: {
-    apiKey: env.OPENAI_API_KEY,
+    apiKey: env.OPENAI_API_KEY?.[0],
+    apiKeys: env.OPENAI_API_KEY || [],
     z_ai: {
-      apiKey: env.Z_AI_API_KEY,
+      apiKey: env.Z_AI_API_KEY?.[0],
+      apiKeys: env.Z_AI_API_KEY || [],
       baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     },
     deepseek: {
-      apiKey: env.DEEPSEEK_API_KEY,
+      apiKey: env.DEEPSEEK_API_KEY?.[0],
+      apiKeys: env.DEEPSEEK_API_KEY || [],
       baseUrl: 'https://api.deepseek.com',
     },
     kimi: {
-      apiKey: env.KIMI_API_KEY,
+      apiKey: env.KIMI_API_KEY?.[0],
+      apiKeys: env.KIMI_API_KEY || [],
       baseUrl: 'https://api.moonshot.cn/v1',
     },
     // Z.ai Models as defaults (GLM-5 released Feb 2026 — 745B MoE, 200K context)

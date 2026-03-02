@@ -31,55 +31,57 @@ export class ModelRouter {
         return this.selectModelChain(difficulty)[0];
     }
 
+    private static roundRobinIndex = 0;
+
     /**
      * Returns an ordered fallback chain of models for the given difficulty tier.
      * When the primary model returns 429/5xx, callers should try the next model in the chain.
-     * This prevents a single rate-limited provider from killing the entire pipeline.
+     * Implements Round-Robin across free tier providers to distribute load.
      */
     public static selectModelChain(difficulty: TaskDifficulty): string[] {
         const chain: string[] = [];
 
+        const freeModels: string[] = [];
+        if (config.llm.z_ai.apiKeys.length > 0) freeModels.push('glm-4.7-flash');
+        if (config.llm.deepseek.apiKeys.length > 0) freeModels.push('deepseek-chat');
+        if (config.llm.kimi.apiKeys.length > 0) freeModels.push('kimi-k2.5');
+
+        let rotatedFreeModels: string[] = [];
+        if (freeModels.length > 0) {
+            this.roundRobinIndex = (this.roundRobinIndex + 1) % freeModels.length;
+            rotatedFreeModels = [
+                ...freeModels.slice(this.roundRobinIndex),
+                ...freeModels.slice(0, this.roundRobinIndex)
+            ];
+        }
+
         switch (difficulty) {
             case TaskDifficulty.SIMPLE:
-                // Flash first (FREE), then cheapest paid
-                if (config.llm.z_ai?.apiKey) chain.push('glm-4.7-flash');
-                if (config.llm.deepseek?.apiKey) chain.push('deepseek-chat');
-                if (config.llm.apiKey) chain.push('gpt-4o-mini');
-                break;
-
             case TaskDifficulty.MODERATE:
-                // Zero-cost dominance: Force GLM-4.7-Flash as absolute primary everywhere
-                if (config.llm.z_ai?.apiKey) chain.push('glm-4.7-flash');
-                if (config.llm.deepseek?.apiKey) chain.push('deepseek-chat');
-                if (config.llm.apiKey) chain.push('gpt-4o-mini');
-                break;
-
             case TaskDifficulty.COMPLEX:
-                // ZERO COST OVERRIDE: AgentBrain uses COMPLEX, force it to Flash to save money!
-                if (config.llm.z_ai?.apiKey) chain.push('glm-4.7-flash');
-                if (config.llm.deepseek?.apiKey) chain.push('deepseek-chat');
-                if (config.llm.kimi?.apiKey) chain.push('kimi-k2.5');
-                if (config.llm.apiKey) chain.push('gpt-4o-mini');
+                // ZERO COST OVERRIDE: Distribute all load across free models evenly!
+                chain.push(...rotatedFreeModels);
+                if (config.llm.apiKeys && config.llm.apiKeys.length > 0) chain.push('gpt-4o-mini');
                 break;
 
             case TaskDifficulty.HARD:
                 // K2.5 best for deep reasoning, then reasoning specialists
-                if (config.llm.kimi?.apiKey) chain.push('kimi-k2.5');
-                if (config.llm.deepseek?.apiKey) chain.push('deepseek-reasoner');
-                if (config.llm.z_ai?.apiKey) chain.push('glm-5');
-                if (config.llm.apiKey) chain.push('gpt-4o');
+                if (config.llm.kimi.apiKeys.length > 0) chain.push('kimi-k2.5');
+                if (config.llm.deepseek.apiKeys.length > 0) chain.push('deepseek-reasoner');
+                if (config.llm.z_ai.apiKeys.length > 0) chain.push('glm-5');
+                if (config.llm.apiKeys && config.llm.apiKeys.length > 0) chain.push('gpt-4o');
                 break;
 
             default:
                 Logger.warn(`[ModelRouter] Unknown difficulty ${difficulty}, defaulting to SIMPLE`);
-                if (config.llm.z_ai?.apiKey) chain.push('glm-4.7-flash');
-                if (config.llm.apiKey) chain.push('gpt-4o-mini');
+                chain.push(...rotatedFreeModels);
+                if (config.llm.apiKeys && config.llm.apiKeys.length > 0) chain.push('gpt-4o-mini');
                 break;
         }
 
         // Guarantee at least one model in the chain
         if (chain.length === 0) {
-            chain.push('gpt-4o-mini');
+            chain.push('gpt-4o-mini'); // Final safety catch
         }
 
         return chain;

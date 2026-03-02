@@ -3,12 +3,13 @@ import { QuerySanitizer } from './QuerySanitizer';
 import { EnrichmentBuffer } from './EnrichmentBuffer';
 import { NormalizedInput } from './InputNormalizer';
 import { RateLimitError } from 'openai'; // or our own
+import { PagineGialleHarvester } from '../enricher/core/directories/paginegialle';
 
 export interface CleanSearchResult {
     title: string;
     snippet: string;
     url: string;
-    source: 'jina' | 'ddg' | 'bing';
+    source: 'jina' | 'ddg' | 'bing' | 'brave' | 'serper_google' | 'crtsh' | 'searxng' | 'dns_mx' | 'free_aggr';
     normalized_url: string;
     domain: string;
 }
@@ -96,7 +97,7 @@ export class SerpDeduplicator {
         for (const raw of rawResults) {
             if (!raw.url) continue;
 
-            const { normalized, domain } = this.normalizeUrl(raw.url);
+            let { normalized, domain } = this.normalizeUrl(raw.url);
 
             if (uniqueDomains.has(domain)) continue;
 
@@ -116,16 +117,41 @@ export class SerpDeduplicator {
                 continue;
             }
 
-            if (target === 'company' && isNoise) {
-                continue;
+            let finalUrl = raw.url;
+            let finalNormalized = normalized;
+            let isJunk = isNoise;
+
+            if (target === 'company' && isJunk) {
+                // 🦠 DIRECTORY PARASITE: Hijack PagineGialle to extract the real website
+                if (domain.includes('paginegialle.it') && !normalized.includes('/ricerca/')) {
+                    console.log(`[SerpDeduplicator] 🦠 Directory Parasite attached to: ${normalized}`);
+                    try {
+                        const harvest = await PagineGialleHarvester.harvestByPhone({ ...input, pg_url: normalized } as any);
+                        if (harvest && harvest.officialWebsite) {
+                            console.log(`[SerpDeduplicator] 💉 Parasite successfully extracted real website: ${harvest.officialWebsite}`);
+                            finalUrl = harvest.officialWebsite;
+                            const newParsed = this.normalizeUrl(finalUrl);
+                            finalNormalized = newParsed.normalized;
+                            domain = newParsed.domain;
+                            isJunk = false; // It's no longer noise
+                            // Note: We deliberately fall back down to uniqueDomains check!
+                        }
+                    } catch (e) {
+                        // ignore parasite failures
+                    }
+                }
+
+                if (isJunk) continue;
             }
+
+            if (uniqueDomains.has(domain)) continue;
 
             cleanResults.push({
                 title: raw.title || '',
                 snippet: raw.snippet || '',
-                url: raw.url,
-                source: raw.source || 'ddg',
-                normalized_url: normalized,
+                url: finalUrl,
+                source: finalUrl !== raw.url ? 'parasite_pg' : (raw.source || 'ddg'),
+                normalized_url: finalNormalized,
                 domain
             });
             uniqueDomains.add(domain);

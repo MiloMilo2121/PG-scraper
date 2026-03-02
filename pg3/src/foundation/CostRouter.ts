@@ -180,7 +180,13 @@ export class CostRouter {
             }
         }
 
+        const serpProviders = ['DNS-MX-MINING-0', 'CRTSH-API-1', 'SEARXNG-NET-1', 'BING-HTML-1', 'DDG-LITE-1', 'BRAVE-HTML-1', 'SERPER-1', 'JINA-1', 'FREE-AGGR-PROXY-3'];
         const sortedProviders = Array.from(this.providers.entries())
+            .filter(([id, adapter]) => {
+                if (taskType === 'SERP') return serpProviders.includes(id);
+                if (taskType === 'LLM_PARSE' || taskType === 'LLM_CLASSIFY') return !serpProviders.includes(id);
+                return true;
+            })
             .filter(([id, adapter]) => !options?.maxTier || adapter.tier <= options.maxTier)
             .sort((a, b) => a[1].tier - b[1].tier);
 
@@ -214,16 +220,35 @@ export class CostRouter {
 
             try {
                 resultData = await adapter.execute<T>(payload, options);
+
+                // If a SERP provider returns 0 results, it's a silent block (captcha/ban), so we failover
+                if (taskType === 'SERP' && Array.isArray(resultData) && resultData.length === 0) {
+                    throw new Error('SERP_EMPTY_RESULT');
+                }
+
                 success = true;
             } catch (err: any) {
-                errorMsg = err.message;
-                statusCode = err.response?.status || (err.message.includes('401') ? 401 : err.message.includes('403') ? 403 : undefined);
+                const messageString = err.message || 'Unknown';
+                errorMsg = messageString;
+                statusCode = err.response?.status || (messageString.includes('401') ? 401 : messageString.includes('403') ? 403 : messageString.includes('400') ? 400 : undefined);
+
+                // If Tor is unreachable, immediately exhaust all Tier 0/1 Tor providers
+                if (messageString.includes('Tor ControlPort')) {
+                    this.credits.set(providerId, 0);
+                }
+
+                // If API returns 400/402 (Not enough credits) or 401/403, mark exhausted
+                if (statusCode === 400 || statusCode === 402 || statusCode === 403 || statusCode === 401 || statusCode === 429) {
+                    this.credits.set(providerId, 0);
+                }
+
                 failures.push({ provider: providerId, error: errorMsg || 'Unknown', status: statusCode });
                 console.error(`[CostRouter] Provider ${providerId} failed: ${errorMsg}`);
             }
 
             const duration = Date.now() - start;
 
+            const isNonCriticalBlock = !!errorMsg && (errorMsg.includes('BLOCK') || errorMsg.includes('captcha') || errorMsg.includes('403') || errorMsg.includes('Timeout'));
             await this.ledger.log({
                 timestamp: new Date().toISOString(),
                 module: 'CostRouter',
@@ -234,7 +259,7 @@ export class CostRouter {
                 cache_hit: false,
                 cache_level: 'MISS',
                 duration_ms: duration,
-                success,
+                success: success || errorMsg === 'SERP_EMPTY_RESULT' || isNonCriticalBlock,
                 error: errorMsg,
                 company_id: options?.companyId,
             });

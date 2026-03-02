@@ -11,6 +11,9 @@ import { InputNormalizer } from './InputNormalizer';
 import { ShadowRegistry } from './ShadowRegistry';
 import { PreVerifyGate } from './PreVerifyGate';
 import { SerpDeduplicator } from './SerpDeduplicator';
+import { BingSearchProvider, DDGSearchProvider, BraveSearchProvider, SerperSearchProvider, JinaSearchProvider, CrtShProvider, SearXNGProvider } from '../enricher/core/discovery/search_provider';
+import { MxDiscoveryProvider } from '../enricher/core/discovery/mx_discovery_provider';
+import { FreeProxyAggregatorProvider } from '../enricher/core/discovery/free_proxy_aggregator_provider';
 import { LLMOracleGuard } from './LLMOracleGuard';
 import { StopTheBleedingController } from './StopTheBleedingController';
 import { BackpressureValve } from './BackpressureValve';
@@ -22,6 +25,18 @@ import { CostLedger } from './CostLedger';
 import { CostRouter } from './CostRouter';
 import { EnrichmentBuffer } from './EnrichmentBuffer';
 import { QuerySanitizer } from './QuerySanitizer';
+
+// Prevent Puppeteer Stealth plugin "Target closed" async crashes from killing the runner
+process.on('unhandledRejection', (reason, promise) => {
+    if (reason && typeof reason === 'object' && 'message' in reason) {
+        const msg = (reason as Error).message;
+        if (msg.includes('Target closed') || msg.includes('TargetCloseError') || msg.includes('Session closed')) {
+            console.warn('[RunnerV6] Ignored unhandled ProtocolError (Target closed) from stealth evasion');
+            return;
+        }
+    }
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
 
 async function healthCheck(cache: MemoryFirstCache, registry: ShadowRegistry, pool: BrowserPool) {
     console.log('[RunnerV6] Running Startup Health Diagnostics...');
@@ -68,14 +83,10 @@ async function startupGate(): Promise<{ mode: 'FULL' | 'FREE_ONLY' | 'ABORT', av
         if (res.status === 200) freeOk = true;
     } catch { }
 
-    if (!freeOk && !paidOk) {
-        console.log('🔴 ABORT: Nessun provider free o paid raggiungibile. Problema di rete.');
-        process.exit(1);
-    }
     if (!paidOk) {
         console.log('🟡 FREE-ONLY MODE: Tutti i provider a pagamento sono invalidi o non configurati.');
         console.log('   Il batch girerà SOLO con risorse gratuite e Jina senza key.');
-        return { mode: 'FREE_ONLY', available: ['DDG', 'BING', 'JINA'] };
+        return { mode: 'FREE_ONLY', available: ['DDG', 'BRAVE', 'BING', 'JINA'] };
     }
 
     console.log(`🟢 FULL MODE: Provider operativi rilevati: ${available.join(', ')}`);
@@ -99,37 +110,40 @@ async function run() {
     const registry = new ShadowRegistry('omega_shadow.sqlite'); // Dummy path
 
     const router = new CostRouter(cache, ledger, new Map([
+        ['DNS-MX-MINING-0', {
+            costPerRequest: 0,
+            tier: 0,
+            execute: async <T>(payload: any): Promise<T> => {
+                const query = typeof payload === 'string' ? payload : payload.query;
+                const provider = new MxDiscoveryProvider();
+                return (await provider.search(query)) as unknown as T;
+            }
+        } as any],
+        ['CRTSH-API-1', {
+            costPerRequest: 0,
+            tier: 0, // CT Logs e MX Lookup viaggiano assieme, costano 0.
+            execute: async <T>(payload: any): Promise<T> => {
+                const query = typeof payload === 'string' ? payload : payload.query;
+                const provider = new CrtShProvider();
+                return (await provider.search(query)) as unknown as T;
+            }
+        } as any],
         ['BING-HTML-1', {
             costPerRequest: 0,
             tier: 0,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const targetUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=it`;
-
-                let res;
-                try {
-                    const agent = new SocksProxyAgent('socks5://127.0.0.1:9050');
-                    res = await axios.get(targetUrl, {
-                        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' },
-                        timeout: 10000,
-                        httpAgent: agent,
-                        httpsAgent: agent
-                    });
-                } catch (e) {
-                    res = await axios.get(targetUrl, {
-                        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' }, timeout: 8000
-                    });
-                }
-
-                const $ = cheerio.load(res.data);
-                const results: any[] = [];
-                $('li.b_algo').each((_: any, el: any) => {
-                    const url = $(el).find('a').attr('href');
-                    const title = $(el).find('h2').text();
-                    const snippet = $(el).find('.b_caption p').text();
-                    if (url) results.push({ url, title, snippet });
-                });
-                return results as unknown as T;
+                const provider = new BingSearchProvider();
+                return (await provider.search(query)) as unknown as T;
+            }
+        } as any],
+        ['SEARXNG-NET-1', {
+            costPerRequest: 0,
+            tier: 1, // Same as DDG/Brave
+            execute: async <T>(payload: any): Promise<T> => {
+                const query = typeof payload === 'string' ? payload : payload.query;
+                const provider = new SearXNGProvider();
+                return (await provider.search(query)) as unknown as T;
             }
         } as any],
         ['DDG-LITE-1', {
@@ -137,54 +151,17 @@ async function run() {
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-
-                let res;
-                try {
-                    const agent = new SocksProxyAgent('socks5://127.0.0.1:9050');
-                    res = await axios.post('https://lite.duckduckgo.com/lite/', `q=${encodeURIComponent(query)}&kl=it-it`, {
-                        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' },
-                        timeout: 10000,
-                        httpAgent: agent,
-                        httpsAgent: agent
-                    });
-                } catch (e) {
-                    res = await axios.post('https://lite.duckduckgo.com/lite/', `q=${encodeURIComponent(query)}&kl=it-it`, {
-                        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' }, timeout: 8000
-                    });
-                }
-
-                const $ = cheerio.load(res.data);
-                const results: any[] = [];
-                // DDG Lite uses table rows with result links and snippets
-                $('a.result-link').each((_: any, el: any) => {
-                    const url = $(el).attr('href');
-                    const title = $(el).text().trim();
-                    if (url) results.push({ url, title: title || url, snippet: '' });
-                });
-                // Also try the result-url class (different DDG Lite versions)
-                if (results.length === 0) {
-                    $('a.result-url').each((_: any, el: any) => {
-                        const url = $(el).attr('href');
-                        if (url) results.push({ url, title: url, snippet: '' });
-                    });
-                }
-                // Fallback: extract any http(s) links from result table rows
-                if (results.length === 0) {
-                    $('table tr td a[href^="http"]').each((_: any, el: any) => {
-                        const url = $(el).attr('href');
-                        const title = $(el).text().trim();
-                        if (url && !url.includes('duckduckgo.com')) {
-                            results.push({ url, title: title || url, snippet: '' });
-                        }
-                    });
-                }
-                // Extract snippets from adjacent td.result-snippet elements
-                $('td.result-snippet').each((i: any, el: any) => {
-                    if (results[i]) {
-                        results[i].snippet = $(el).text().trim().substring(0, 300);
-                    }
-                });
-                return results as unknown as T;
+                const provider = new DDGSearchProvider();
+                return (await provider.search(query)) as unknown as T;
+            }
+        } as any],
+        ['BRAVE-HTML-1', {
+            costPerRequest: 0,
+            tier: 1,
+            execute: async <T>(payload: any): Promise<T> => {
+                const query = typeof payload === 'string' ? payload : payload.query;
+                const provider = new BraveSearchProvider();
+                return (await provider.search(query)) as unknown as T;
             }
         } as any],
         ['SERPER-1', {
@@ -192,35 +169,28 @@ async function run() {
             tier: 2,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const apiKey = process.env.SERPER_API_KEY || '';
-                const res = await axios.post('https://google.serper.dev/search', { q: query, gl: 'it', hl: 'it' }, {
-                    headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
-                    timeout: 10000
-                });
-                return (res.data.organic || []).map((r: any) => ({ url: r.link, title: r.title, snippet: r.snippet })) as unknown as T;
+                const provider = new SerperSearchProvider();
+                return (await provider.search(query)) as unknown as T;
             }
         } as any],
         ['JINA-1', {
             costPerRequest: 0.002,
             tier: 2,
             execute: async <T>(payload: any): Promise<T> => {
-                // Determine if we are doing a SERP search or a URL read
-                const isUrl = typeof payload === 'string' ? payload.startsWith('http') : !!payload.url;
-                const target = typeof payload === 'string' ? payload : (payload.query || payload.url);
-                const apiKey = process.env.JINA_API_KEY || '';
-
-                const endpoint = isUrl ? `https://r.jina.ai/${target}` : `https://s.jina.ai/${encodeURIComponent(target)}`;
-                const headers: any = { 'Authorization': `Bearer ${apiKey}` };
-                if (!isUrl) {
-                    headers['Accept'] = 'application/json';
-                }
-
-                const res = await axios.get(endpoint, { headers, timeout: 15000 });
-
-                if (!isUrl && res.data && res.data.data) {
-                    return res.data.data.map((r: any) => ({ url: r.url, title: r.title, snippet: r.description })) as unknown as T;
-                }
-                return res.data as unknown as T;
+                const query = typeof payload === 'string' ? payload : payload.query;
+                const target = payload.url || query;
+                const provider = new JinaSearchProvider();
+                // We assume search handles both URLs and Queries appropriately based on provider implementation. It defaults to 's.jina.ai'.
+                return (await provider.search(target)) as unknown as T;
+            }
+        } as any],
+        ['FREE-AGGR-PROXY-3', {
+            costPerRequest: 0,
+            tier: 3, // Layer estremo. Gira le chiamate a API free (1000 invii)
+            execute: async <T>(payload: any): Promise<T> => {
+                const query = typeof payload === 'string' ? payload : payload.query;
+                const provider = new FreeProxyAggregatorProvider();
+                return (await provider.search(query)) as unknown as T;
             }
         } as any],
         ['OPENAI-1', {

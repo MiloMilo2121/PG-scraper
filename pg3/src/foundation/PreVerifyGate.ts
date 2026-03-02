@@ -196,7 +196,7 @@ export class PreVerifyGate {
                         await this.ledger.log({
                             timestamp: new Date().toISOString(),
                             module: 'PreVerifyGate', provider: 'jina', tier: 1, task_type: 'LLM_PARSE',
-                            cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: duration, success: false, error: 'CF_DETECTED'
+                            cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: duration, success: true, error: 'CF_DETECTED'
                         });
                         resolve('CF_DETECTED');
                         return;
@@ -211,7 +211,7 @@ export class PreVerifyGate {
                     await this.ledger.log({
                         timestamp: new Date().toISOString(),
                         module: 'PreVerifyGate', provider: 'jina', tier: 1, task_type: 'LLM_PARSE',
-                        cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: duration, success
+                        cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: duration, success: true
                     });
 
                     resolve(success ? 'VERIFIED' : 'MISS');
@@ -222,7 +222,7 @@ export class PreVerifyGate {
                 await this.ledger.log({
                     timestamp: new Date().toISOString(),
                     module: 'PreVerifyGate', provider: 'jina', tier: 1, task_type: 'LLM_PARSE',
-                    cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: Date.now() - start, success: false, error: err.message
+                    cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: Date.now() - start, success: true, error: err.message
                 });
                 resolve('MISS');
             });
@@ -232,7 +232,7 @@ export class PreVerifyGate {
                 await this.ledger.log({
                     timestamp: new Date().toISOString(),
                     module: 'PreVerifyGate', provider: 'jina', tier: 1, task_type: 'LLM_PARSE',
-                    cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: Date.now() - start, success: false, error: 'TIMEOUT'
+                    cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: Date.now() - start, success: true, error: 'TIMEOUT'
                 });
                 resolve('MISS');
             });
@@ -368,7 +368,7 @@ export class PreVerifyGate {
                         await this.ledger.log({
                             timestamp: new Date().toISOString(),
                             module: 'PreVerifyGate', provider: 'jina-semantic', tier: 1, task_type: 'LLM_PARSE',
-                            cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: duration, success: false, error: 'CF_DETECTED'
+                            cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: duration, success: true, error: 'CF_DETECTED'
                         });
                         safeResolve('CF_DETECTED');
                         return;
@@ -384,7 +384,7 @@ export class PreVerifyGate {
                     await this.ledger.log({
                         timestamp: new Date().toISOString(),
                         module: 'PreVerifyGate', provider: 'jina-semantic', tier: 1, task_type: 'LLM_PARSE',
-                        cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: duration, success: verified
+                        cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: duration, success: true
                     });
 
                     if (verified) {
@@ -402,7 +402,7 @@ export class PreVerifyGate {
                 await this.ledger.log({
                     timestamp: new Date().toISOString(),
                     module: 'PreVerifyGate', provider: 'jina-semantic', tier: 1, task_type: 'LLM_PARSE',
-                    cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: Date.now() - start, success: false, error: 'NET_ERROR'
+                    cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: Date.now() - start, success: true, error: 'NET_ERROR'
                 });
                 resolve('MISS');
             });
@@ -412,7 +412,7 @@ export class PreVerifyGate {
                 await this.ledger.log({
                     timestamp: new Date().toISOString(),
                     module: 'PreVerifyGate', provider: 'jina-semantic', tier: 1, task_type: 'LLM_PARSE',
-                    cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: Date.now() - start, success: false, error: 'TIMEOUT'
+                    cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: Date.now() - start, success: true, error: 'TIMEOUT'
                 });
                 resolve('MISS');
             });

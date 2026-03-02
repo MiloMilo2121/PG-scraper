@@ -115,9 +115,24 @@ export class BingSerpAnalyzer {
         const $ = cheerio.load(html);
         const results: SerpResult[] = [];
 
+        const extractUrl = (el: any): string | undefined => {
+            let url = $(el).attr('href');
+            if (!url) return undefined;
+            if (url.includes('/ck/a?!') && url.includes('u=')) {
+                try {
+                    const match = url.match(/u=([a-zA-Z0-9_-]+)/);
+                    if (match && match[1].length > 2) {
+                        const b64 = match[1].substring(2);
+                        url = Buffer.from(b64, 'base64').toString('utf8');
+                    }
+                } catch { /* ignore */ }
+            }
+            return url;
+        };
+
         // Bing standard results: <li class="b_algo"><h2><a href="...">...</a></h2>
         $('.b_algo h2 a').each((_, el) => {
-            const url = $(el).attr('href');
+            const url = extractUrl(el);
             const title = $(el).text().trim();
             if (url && url.startsWith('http') && !url.includes('microsoft.com') && !url.includes('bing.com')) {
                 results.push({ url, title });
@@ -126,9 +141,9 @@ export class BingSerpAnalyzer {
 
         // Bing "b_m" (mobile?) or other variations
         $('.b_m .b_header a').each((_, el) => {
-            const url = $(el).attr('href');
+            const url = extractUrl(el);
             const title = $(el).text().trim();
-            if (url && url.startsWith('http')) results.push({ url, title });
+            if (url && url.startsWith('http') && !url.includes('microsoft.com') && !url.includes('bing.com')) results.push({ url, title });
         });
 
         // Deduplicate
