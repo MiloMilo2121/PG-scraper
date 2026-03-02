@@ -71,6 +71,17 @@ export class PreVerifyGate {
                 return 'PARKED';
             }
 
+            // STAGE 2.5: THE GOLDEN GATE (Fast Deterministic Rules)
+            // Fetch raw HTML (capped to 500KB) and apply Zero-Cost heuristics.
+            const goldenStatus = await this.performGoldenGateCheck(url, piva, companyName);
+            if (goldenStatus === 'CF_DETECTED') {
+                await this.cache.setRedisOnly('omega:cloudflare', domain, true, 86400 * 7);
+                return 'NEEDS_BROWSER';
+            }
+            if (goldenStatus === 'VERIFIED') {
+                return 'VERIFIED';
+            }
+
             // STAGE 3: Quick Jina Fetch (P.IVA match if available)
             if (piva) {
                 const jinaHit = await this.checkJinaForPiva(url, piva);
@@ -176,6 +187,117 @@ export class PreVerifyGate {
             req.on('error', () => safeResolve(false));
             req.on('timeout', () => { req.destroy(); safeResolve(false); });
             req.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+            req.end();
+        });
+    }
+
+    /**
+     * STAGE 2.5: THE GOLDEN GATE
+     * Downloads raw HTML (fast) to run zero-cost heuristics without AI or external APIs.
+     * Implements Gemma 1 (VAT check), Gemma 4 (OG:Image), and Gemma 6 (Strict Domain Match).
+     */
+    private async performGoldenGateCheck(url: string, piva?: string, companyName?: string): Promise<'VERIFIED' | 'CF_DETECTED' | 'MISS'> {
+        const start = Date.now();
+        return new Promise((resolve) => {
+            let resolved = false;
+            const safeResolve = async (val: 'VERIFIED' | 'CF_DETECTED' | 'MISS', reason?: string) => {
+                if (!resolved) {
+                    resolved = true;
+                    if (val === 'VERIFIED') {
+                        console.log(`[GoldenGate] 🏆 INSTANT VERIFY for ${url} (Reason: ${reason})`);
+                        await this.ledger.log({
+                            timestamp: new Date().toISOString(),
+                            module: 'PreVerifyGate', provider: 'golden-check', tier: 0, task_type: 'HEAD',
+                            cost_eur: 0, cache_hit: false, cache_level: 'MISS', duration_ms: Date.now() - start, success: true
+                        });
+                    }
+                    resolve(val);
+                }
+            };
+
+            const parsed = new URL(url);
+            const lib = parsed.protocol === 'https:' ? https : http;
+
+            const req = lib.request(url, { method: 'GET', timeout: 5000 }, (res) => {
+                const headers = res.headers;
+                // Cloudflare Fingerprint Check
+                if (headers['cf-ray'] || (headers['server'] && headers['server'].toString().toLowerCase() === 'cloudflare')) {
+                    safeResolve('CF_DETECTED');
+                    return;
+                }
+
+                let data = '';
+                res.on('data', (chunk) => {
+                    data += chunk;
+                    if (data.length > 500000) { // Read max 500KB to prevent memory flood
+                        res.destroy();
+                    }
+                });
+
+                const handleData = () => {
+                    if (data.includes('Checking your browser') || data.includes('Just a moment...')) {
+                        safeResolve('CF_DETECTED');
+                        return;
+                    }
+
+                    const bodyText = data.toLowerCase();
+
+                    // --- 1. THE GOLDEN VAT SIGNAL ---
+                    if (piva) {
+                        const cleanPiva = piva.replace(/[^0-9]/g, '');
+                        // Fast regex-free stripping for html -> number
+                        const bodyNumbers = bodyText.replace(/[^0-9]/g, '');
+                        if (cleanPiva.length === 11 && bodyNumbers.includes(cleanPiva)) {
+                            safeResolve('VERIFIED', 'GOLDEN_VAT_MATCH');
+                            return;
+                        }
+                    }
+
+                    // --- 2. OG:IMAGE BRAND DETECTOR ---
+                    if (companyName) {
+                        const ogImageRegex = /<meta\s+(?:property|name)=["']og:image["']\s+content=["']([^"']+)["']/i;
+                        const match = data.match(ogImageRegex);
+                        if (match) {
+                            const imgUrl = match[1].toLowerCase();
+                            // Simplify company name (remove srl, spa, and alphanumeric only)
+                            const simplifiedName = companyName
+                                .toLowerCase()
+                                .replace(/s\.?r\.?l\.?|s\.?n\.?c\.?|s\.?p\.?a\.?|s\.?a\.?s\.?|s\.?r\.?l\.?s\.?|unipersonale|in liquidazione|di |\&|snc|srl|sas|spa/gi, '')
+                                .replace(/[^a-z0-9]/g, '');
+
+                            if (simplifiedName.length >= 4 && imgUrl.includes(simplifiedName)) {
+                                safeResolve('VERIFIED', 'OG_IMAGE_BRAND_MATCH');
+                                return;
+                            }
+                        }
+
+                        // --- 3. DOMAIN STRICT SYNTAX ---
+                        // Re-implemented here because it's deterministic.
+                        const simplifiedName = companyName
+                            .toLowerCase()
+                            .replace(/s\.?r\.?l\.?|s\.?n\.?c\.?|s\.?p\.?a\.?|s\.?a\.?s\.?|s\.?r\.?l\.?s\.?|unipersonale|in liquidazione|di |\&|snc|srl|sas|spa/gi, '')
+                            .replace(/[^a-z0-9]/g, '');
+                        const domainHost = parsed.hostname.replace('www.', '').split('.')[0];
+
+                        if (simplifiedName.length >= 4 && domainHost === simplifiedName) {
+                            // Domain is a perfect match. If we find at least a contact signal or privacy policy, confirm it.
+                            if (bodyText.includes('partita iva') || bodyText.includes('p.iva') || bodyText.includes('privacy policy')) {
+                                safeResolve('VERIFIED', 'DOMAIN_STRICT_SYNTAX');
+                                return;
+                            }
+                        }
+                    }
+
+                    safeResolve('MISS');
+                };
+
+                res.on('end', handleData);
+                res.on('close', handleData);
+            });
+
+            req.on('error', () => safeResolve('MISS'));
+            req.on('timeout', () => { req.destroy(); safeResolve('MISS'); });
+            req.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
             req.end();
         });
     }

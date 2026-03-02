@@ -180,7 +180,7 @@ export class CostRouter {
             }
         }
 
-        const serpProviders = ['DNS-MX-MINING-0', 'CRTSH-API-1', 'SEARXNG-NET-1', 'BING-HTML-1', 'DDG-LITE-1', 'BRAVE-HTML-1', 'SERPER-1', 'JINA-1', 'FREE-AGGR-PROXY-3'];
+        const serpProviders = ['DNS-MX-MINING-0', 'CRTSH-API-1', 'SEARXNG-NET-1', 'BING-HTML-1', 'DDG-LITE-1', 'BRAVE-HTML-1', 'SERPER-1', 'JINA-1', 'FREE-AGGR-PROXY-3', 'PERPLEXITY-API-4'];
         const sortedProviders = Array.from(this.providers.entries())
             .filter(([id, adapter]) => {
                 if (taskType === 'SERP') return serpProviders.includes(id);

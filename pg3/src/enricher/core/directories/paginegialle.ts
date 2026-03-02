@@ -3,7 +3,6 @@ import * as cheerio from 'cheerio';
 
 import { CompanyInput } from '../../types';
 import { Logger } from '../../utils/logger';
-import { CompanyMatcher } from '../discovery/company_matcher';
 
 export interface PagineGialleHarvest {
   pgUrl: string;
@@ -100,8 +99,29 @@ async function withRetry<T>(fn: () => Promise<T>, retries: number, baseDelayMs: 
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
+function tokenizeCompanyName(name: string): string[] {
+  if (!name) return [];
+  return name
+    .toLowerCase()
+    .replace(/s\.?r\.?l\.?|s\.?n\.?c\.?|s\.?p\.?a\.?|s\.?a\.?s\.?|s\.?r\.?l\.?s\.?|unipersonale|in liquidazione|di |\&/gi, '')
+    .replace(/[^a-z0-9\s]/g, '')
+    .split(/\s+/)
+    .filter(t => t.length > 2);
+}
+
+function normalizePhoneLocally(phone: string): string {
+  if (!phone) return '';
+  let cleaned = phone.replace(/[^0-9+]/g, '');
+  if (cleaned.startsWith('00')) cleaned = '+' + cleaned.substring(2);
+  if (!cleaned.startsWith('+')) {
+    if (cleaned.startsWith('3')) cleaned = '+39' + cleaned;
+    else if (cleaned.startsWith('0')) cleaned = '+39' + cleaned;
+  }
+  return cleaned;
+}
+
 function scoreNameMatch(companyName: string, candidateName: string): number {
-  const tokens = CompanyMatcher.tokenizeCompanyName(companyName);
+  const tokens = tokenizeCompanyName(companyName);
   if (tokens.length === 0) return 0;
   const hay = ` ${normalizeText(candidateName)} `;
   let matched = 0;
@@ -145,7 +165,7 @@ export class PagineGialleHarvester {
       }
     }
 
-    const normalizedPhone = CompanyMatcher.normalizePhone(company.phone);
+    const normalizedPhone = normalizePhoneLocally(company.phone || '');
     if (!normalizedPhone || normalizedPhone.length < 7) return null;
 
     const cacheKey = `phone:${normalizedPhone}`;

@@ -14,6 +14,7 @@ import { SerpDeduplicator } from './SerpDeduplicator';
 import { BingSearchProvider, DDGSearchProvider, BraveSearchProvider, SerperSearchProvider, JinaSearchProvider, CrtShProvider, SearXNGProvider } from '../enricher/core/discovery/search_provider';
 import { MxDiscoveryProvider } from '../enricher/core/discovery/mx_discovery_provider';
 import { FreeProxyAggregatorProvider } from '../enricher/core/discovery/free_proxy_aggregator_provider';
+import { PerplexityProvider } from '../enricher/core/discovery/perplexity_provider';
 import { LLMOracleGuard } from './LLMOracleGuard';
 import { StopTheBleedingController } from './StopTheBleedingController';
 import { BackpressureValve } from './BackpressureValve';
@@ -25,6 +26,7 @@ import { CostLedger } from './CostLedger';
 import { CostRouter } from './CostRouter';
 import { EnrichmentBuffer } from './EnrichmentBuffer';
 import { QuerySanitizer } from './QuerySanitizer';
+import { EnrichmentPostProcessor } from './EnrichmentPostProcessor';
 
 // Prevent Puppeteer Stealth plugin "Target closed" async crashes from killing the runner
 process.on('unhandledRejection', (reason, promise) => {
@@ -193,6 +195,15 @@ async function run() {
                 return (await provider.search(query)) as unknown as T;
             }
         } as any],
+        ['PERPLEXITY-API-4', {
+            costPerRequest: 0.010,
+            tier: 4,
+            execute: async <T>(payload: any): Promise<T> => {
+                const query = typeof payload === 'string' ? payload : payload.query;
+                const provider = new PerplexityProvider();
+                return (await provider.search(query)) as unknown as T;
+            }
+        } as any],
         ['OPENAI-1', {
             costPerRequest: 0.005,
             tier: 3,
@@ -332,7 +343,8 @@ async function run() {
         bilancioHunter: new BilancioHunter(dedup),
         linkedinSniper: new LinkedInSniper(dedup, valve),
         browserPool: pool,
-        costRouter: router
+        costRouter: router,
+        postProcessor: new EnrichmentPostProcessor(pool)
     });
 
     const fileContent = fs.readFileSync(csvPath, 'utf8');

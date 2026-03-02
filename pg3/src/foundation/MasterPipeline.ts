@@ -9,6 +9,7 @@ import { BilancioHunter } from './BilancioHunter';
 import { LinkedInSniper } from './LinkedInSniper';
 import { BrowserPool } from './BrowserPool';
 import { CostRouter } from './CostRouter';
+import { EnrichmentPostProcessor } from './EnrichmentPostProcessor';
 import { HyperGuesserVX } from '../enricher/core/discovery/hyperguesser_vx/hyper_guesser_vx';
 import { RdapValidator } from '../enricher/core/discovery/rdap_validator';
 import crypto from 'crypto';
@@ -25,6 +26,7 @@ export class MasterPipeline {
     private linkedinSniper: LinkedInSniper;
     private browserPool: BrowserPool;
     private costRouter: CostRouter;
+    private postProcessor: EnrichmentPostProcessor;
 
     constructor(deps: {
         normalizer: InputNormalizer,
@@ -37,7 +39,8 @@ export class MasterPipeline {
         bilancioHunter: BilancioHunter,
         linkedinSniper: LinkedInSniper,
         browserPool: BrowserPool,
-        costRouter: CostRouter
+        costRouter: CostRouter,
+        postProcessor: EnrichmentPostProcessor
     }) {
         this.normalizer = deps.normalizer;
         this.registry = deps.registry;
@@ -50,6 +53,7 @@ export class MasterPipeline {
         this.linkedinSniper = deps.linkedinSniper;
         this.browserPool = deps.browserPool;
         this.costRouter = deps.costRouter;
+        this.postProcessor = deps.postProcessor;
     }
 
     public async processCompany(rawInput: Record<string, string>, companyIdx: number): Promise<any> {
@@ -64,7 +68,7 @@ export class MasterPipeline {
             // STAGE 0: Normalize Input
             const input = this.normalizer.normalize(rawInput);
             if (input.quality_score < 0.3) {
-                return this.buildResult(input, 'NOT_FOUND', null, '', null, null, layersAttempted, start);
+                return this.buildResult(input, 'NOT_FOUND', null, '', null, null, null, layersAttempted, start);
             }
 
             // STAGE 1: ShadowRegistry Local Lookup
@@ -366,20 +370,23 @@ export class MasterPipeline {
             // ENRICHMENT PHASE (Parallel via Valve)
             let financial = null;
             let decisionMaker = null;
+            let employees = null;
 
             if (discoveredUrl) {
                 // If we found it, spawn enrichments safely through priority queue
-                const [finRes, dmRes] = await Promise.all([
+                const [finRes, dmRes, empRes] = await Promise.all([
                     this.bilancioHunter.hunt(companyId, input).catch(() => null),
-                    this.linkedinSniper.snipe(companyId, input).catch(() => null)
+                    this.linkedinSniper.snipe(companyId, input).catch(() => null),
+                    this.postProcessor.estimateEmployees(companyId, input, discoveredUrl).catch(() => null)
                 ]);
                 financial = finRes;
                 decisionMaker = dmRes;
+                employees = empRes;
             }
 
             const status = discoveredUrl ? 'FOUND_COMPLETE' : 'NOT_FOUND';
 
-            return this.buildResult(input, status, discoveredUrl, discoveryLayer, financial, decisionMaker, layersAttempted, start);
+            return this.buildResult(input, status, discoveredUrl, discoveryLayer, financial, decisionMaker, employees, layersAttempted, start);
         }, 1); // Priority 1 (Core Pipeline)
     }
 
@@ -390,6 +397,7 @@ export class MasterPipeline {
         discoveryLayer: string,
         fin: any,
         dm: any,
+        employees: any,
         layers: string[],
         start: number
     ) {
@@ -409,6 +417,7 @@ export class MasterPipeline {
                 confidence,
                 discovery_layer: discoveryLayer || layers[layers.length - 1]
             } : undefined,
+            employees: employees || undefined,
             financial: fin || undefined,
             decision_maker: dm || undefined,
             meta: {

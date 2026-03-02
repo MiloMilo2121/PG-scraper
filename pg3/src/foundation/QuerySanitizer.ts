@@ -3,6 +3,11 @@ import { NormalizedInput } from './InputNormalizer';
 export class QuerySanitizer {
     private stopWords = new Set(['srl', 'spa', 'snc', 'sas', 'scarl', 'srls', 'di', 'e', 'il', 'la', 'le', 'i', 'un', 'una', 'da', 'per', 'con', 'su']);
 
+    // THE EXCLUSION DORK ENGINE (Gemma 2)
+    // Rimuove pesantemente il rumore dalle query prima ancora che vengano processate dal motore di ricerca.
+    private exclusionDorks = '-site:facebook.com -site:instagram.com -site:linkedin.com -site:paginegialle.it -site:registroimprese.it -site:tuttocitta.it -site:tripadvisor.com -site:kompass.com -site:europages.it -site:yelp.it -site:trustpilot.com -site:informazione-aziende.it -site:impresaitalia.info -site:dnb.com -site:prontopro.it -site:misterimprese.it';
+
+
     public sanitizeForQuery(text: string): string {
         if (!text) return '';
 
@@ -81,31 +86,34 @@ export class QuerySanitizer {
         const cleanCity = this.sanitizeForQuery(input.city || '');
 
         if (target === 'company') {
+            const exclusions = this.exclusionDorks;
+
             // THE GOD-TIER OVERRIDE: 1st Priority is the raw P.IVA
             if (piva) {
                 const cleanPiva = piva.replace(/[^0-9]/g, '');
                 if (cleanPiva.length === 11) {
-                    variants.push(`"${cleanPiva}"`);
-                    variants.push(`"IT${cleanPiva}"`);
+                    variants.push(`"${cleanPiva}" ${exclusions}`);
                 }
             }
 
-            // Variant 1: Exact name + city (highest precision)
+            // Variant 1: Exact name + city + Exclusions (High Precision Sniper)
             if (cleanCity) {
-                variants.push(`"${cleanName}" ${cleanCity} sito ufficiale`);
+                variants.push(`"${cleanName}" "${cleanCity}" ${exclusions}`);
             } else {
-                variants.push(`"${cleanName}" sito ufficiale`);
+                variants.push(`"${cleanName}" ${exclusions}`);
             }
-            // Variant 2: Exact name + city without "sito ufficiale" (broader)
+
+            // Variant 2: Contact Vector / Intitle Match
             if (cleanCity) {
-                variants.push(`"${cleanName}" ${cleanCity}`);
-            }
-            // Variant 3: Broad name + city (catches partial matches)
-            if (cleanCity) {
-                variants.push(`${cleanName} ${cleanCity}`);
+                variants.push(`intitle:"${cleanName}" "contatti" "${cleanCity}" ${exclusions}`);
+                // Privacy / Note Legali Vector
+                variants.push(`"${cleanName}" "${cleanCity}" ("privacy policy" OR "note legali") ${exclusions}`);
             } else {
-                variants.push(`${cleanName} sito web`);
+                variants.push(`intitle:"${cleanName}" "contatti" ${exclusions}`);
             }
+
+            // Variant 3: Standard Fallback
+            variants.push(`"${cleanName}" ${cleanCity || ''} sito ufficiale`);
         } else if (target === 'linkedin') {
             const v1 = this.buildCompanyQuery(input, { target: 'linkedin', includeDomain: 'site:linkedin.com/in' });
             if (v1) variants.push(v1);

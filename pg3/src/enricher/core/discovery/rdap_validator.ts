@@ -1,7 +1,6 @@
 import axios from 'axios';
 import { Logger } from '../../utils/logger';
 import { CompanyInput } from '../../types';
-import { CompanyMatcher } from './company_matcher';
 
 export class RdapValidator {
     /**
@@ -84,8 +83,18 @@ export class RdapValidator {
         return confidenceBoost;
     }
 
+    private static tokenizeCompanyName(name: string): string[] {
+        if (!name) return [];
+        return name
+            .toLowerCase()
+            .replace(/s\.?r\.?l\.?|s\.?n\.?c\.?|s\.?p\.?a\.?|s\.?a\.?s\.?|s\.?r\.?l\.?s\.?|unipersonale|in liquidazione|di |\&/gi, '')
+            .replace(/[^a-z0-9\s]/g, '')
+            .split(/\s+/)
+            .filter(t => t.length > 2);
+    }
+
     private static scoreNameMatch(companyName: string, candidateText: string): number {
-        const tokens = CompanyMatcher.tokenizeCompanyName(companyName);
+        const tokens = this.tokenizeCompanyName(companyName);
         if (tokens.length === 0) return 0;
 
         const hay = candidateText.toLowerCase().replace(/[^a-z0-9]+/g, ' ');

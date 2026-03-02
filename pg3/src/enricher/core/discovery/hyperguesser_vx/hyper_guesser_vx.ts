@@ -7,8 +7,14 @@
 
 import { CompanyInput } from '../../../types';
 import { Logger } from '../../../utils/logger';
-import { DiscoveryResult } from './../unified_discovery_service';
-
+export interface DiscoveryResult {
+    url: string;
+    status: 'FOUND_VALID' | 'NOT_FOUND' | 'ERROR' | 'NEEDS_BROWSER';
+    method: string;
+    confidence: number;
+    wave: string;
+    details: any;
+}
 import { HyperGuesserVXGenerator } from './generator';
 import { HyperGuesserVXResolver } from './resolver';
 import { HyperGuesserVXFetcher } from './fetcher';
