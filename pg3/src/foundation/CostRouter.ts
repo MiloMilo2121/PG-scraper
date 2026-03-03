@@ -181,10 +181,12 @@ export class CostRouter {
         }
 
         const serpProviders = ['DNS-MX-MINING-0', 'CRTSH-API-1', 'SEARXNG-NET-1', 'BING-HTML-1', 'DDG-LITE-1', 'BRAVE-HTML-1', 'SERPER-1', 'JINA-1', 'FREE-AGGR-PROXY-3', 'PERPLEXITY-API-4'];
+        const httpProviders = ['HTTP-DIRECT-1', 'HTTP-PROXY-2', 'HTTP-SCRAPEDO-3', 'HTTP-BRIGHTDATA-4'];
         const sortedProviders = Array.from(this.providers.entries())
             .filter(([id, adapter]) => {
                 if (taskType === 'SERP') return serpProviders.includes(id);
-                if (taskType === 'LLM_PARSE' || taskType === 'LLM_CLASSIFY') return !serpProviders.includes(id);
+                if (taskType === 'PROXY_FETCH') return httpProviders.includes(id);
+                if (taskType === 'LLM_PARSE' || taskType === 'LLM_CLASSIFY') return !serpProviders.includes(id) && !httpProviders.includes(id);
                 return true;
             })
             .filter(([id, adapter]) => !options?.maxTier || adapter.tier <= options.maxTier)

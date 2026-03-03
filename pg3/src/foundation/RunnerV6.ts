@@ -112,6 +112,7 @@ async function run() {
     const registry = new ShadowRegistry('omega_shadow.sqlite'); // Dummy path
 
     const router = new CostRouter(cache, ledger, new Map([
+        // ======================= SERP LAYERS =======================
         ['DNS-MX-MINING-0', {
             costPerRequest: 0,
             tier: 0,
@@ -128,6 +129,39 @@ async function run() {
                 const query = typeof payload === 'string' ? payload : payload.query;
                 const provider = new CrtShProvider();
                 return (await provider.search(query)) as unknown as T;
+            }
+        } as any],
+        // ======================= HTTP LAYERS (PROXY_FETCH) =======================
+        ['HTTP-DIRECT-1', {
+            costPerRequest: 0,
+            tier: 1,
+            execute: async <T>(payload: any): Promise<T> => {
+                const url = typeof payload === 'string' ? payload : payload.url;
+                const { ScraperClient } = require('../enricher/utils/scraper_client');
+                const result = await ScraperClient.fetchHtml(url, { mode: 'direct', ...payload.options });
+                if (result.status === 403 || result.status === 429) throw new Error('BLOCK');
+                return result as unknown as T;
+            }
+        } as any],
+        ['HTTP-SCRAPEDO-3', {
+            costPerRequest: 0.071, // ScrapeDo Pro tier (only success is billed)
+            tier: 3,
+            execute: async <T>(payload: any): Promise<T> => {
+                const url = typeof payload === 'string' ? payload : payload.url;
+                const { ScraperClient } = require('../enricher/utils/scraper_client');
+                const result = await ScraperClient.fetchHtml(url, { mode: 'scrape_do', ...payload.options });
+                if (result.status === 403) throw new Error('BLOCK');
+                return result as unknown as T;
+            }
+        } as any],
+        ['HTTP-BRIGHTDATA-4', {
+            costPerRequest: 0.130, // BrightData premium Glass Break
+            tier: 4,
+            execute: async <T>(payload: any): Promise<T> => {
+                const url = typeof payload === 'string' ? payload : payload.url;
+                const { ScraperClient } = require('../enricher/utils/scraper_client');
+                const result = await ScraperClient.fetchHtml(url, { mode: 'brightdata', ...payload.options });
+                return result as unknown as T;
             }
         } as any],
         ['BING-HTML-1', {

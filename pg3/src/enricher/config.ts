@@ -59,6 +59,7 @@ const EnvSchema = z.object({
   SCRAPE_DO_RENDER_DEFAULT: BooleanString.default(false),
   SCRAPE_DO_TIMEOUT_MS: z.coerce.number().default(20000),
   SCRAPE_DO_ENFORCE: BooleanString.default(false),
+  BRIGHTDATA_WEB_UNLOCKER_URL: z.string().optional(),
   PROXY_FAILURE_COOLDOWN_MS: z.coerce.number().min(1000).default(300000), // 5 min
 
   // 📍 DISCOVERY THRESHOLDS
@@ -272,6 +273,9 @@ export const config = {
     renderDefault: env.SCRAPE_DO_RENDER_DEFAULT,
     timeoutMs: env.SCRAPE_DO_TIMEOUT_MS,
     enforce: env.SCRAPE_DO_ENFORCE,
+  },
+  brightData: {
+    webUnlockerUrl: env.BRIGHTDATA_WEB_UNLOCKER_URL,
   },
   captcha: {
     maxAttempts: env.CAPTCHA_MAX_ATTEMPTS,

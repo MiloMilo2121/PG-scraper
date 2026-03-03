@@ -1,7 +1,12 @@
-import axios from 'axios';
-import * as https from 'https';
+import { request, Agent } from 'undici';
 import * as cheerio from 'cheerio';
 import { Logger } from '../../../utils/logger';
+
+const fetcherAgent = new Agent({
+    connect: { rejectUnauthorized: false },
+    keepAliveTimeout: 10000,
+    connections: 50
+});
 
 export interface FetchedCandidate {
     domain: string;
@@ -38,20 +43,23 @@ export class HyperGuesserVXFetcher {
         const url = `https://${domain}`;
         try {
             // Highly optimized HTTP request disguised as a regular browser
-            const response = await axios.get(url, {
-                timeout: 5000,
+            const { statusCode, body } = await request(url, {
+                method: 'GET',
+                dispatcher: fetcherAgent,
+                headersTimeout: 5000,
+                bodyTimeout: 5000,
+                // @ts-ignore - undici v7 types are missing maxRedirections on request() options
+                maxRedirections: 5,
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                     'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-                },
-                httpsAgent: new https.Agent({ rejectUnauthorized: false }), // Crucial for many SMBs with broken certs
-                validateStatus: null // Don't throw on 4xx/5xx
+                }
             });
 
-            const html = response.data;
-            if (typeof html !== 'string') {
-                return { domain, url, title: '', text: '', error: 'NON_HTML_RESPONSE' };
+            const html = await body.text();
+            if (typeof html !== 'string' || statusCode >= 500) {
+                return { domain, url, title: '', text: '', error: 'INVALID_RESPONSE' };
             }
 
             // Extract pure text using cheerio
@@ -75,7 +83,7 @@ export class HyperGuesserVXFetcher {
 
             return {
                 domain,
-                url: response.request?.res?.responseUrl || url, // Captured final URL after redirects
+                url: url, // Undici doesn't expose finalURL easily on redirect directly in response data object, so fall back
                 title,
                 text: truncatedText
             };

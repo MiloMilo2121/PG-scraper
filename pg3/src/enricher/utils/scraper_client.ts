@@ -1,15 +1,19 @@
-import axios, { AxiosResponse } from 'axios';
-import * as http from 'http';
-import * as https from 'https';
-
+import { request, Agent, ProxyAgent } from 'undici';
 import { config } from '../config';
 import { Logger } from './logger';
+import { BlockClassifier, BlockType } from '../core/security/block_classifier';
 
 // Connection pooling - reuse TCP connections for massive speedup
-const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 25, maxFreeSockets: 10 });
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 25, maxFreeSockets: 10, rejectUnauthorized: false });
+const globalDispatcher = new Agent({
+  keepAliveTimeout: 15000,
+  keepAliveMaxTimeout: 30000,
+  connections: 50,
+  connect: {
+    rejectUnauthorized: false
+  }
+});
 
-export type ScraperClientMode = 'auto' | 'direct' | 'scrape_do' | 'jina_reader' | 'jina_search';
+export type ScraperClientMode = 'auto' | 'direct' | 'scrape_do' | 'brightdata' | 'jina_reader' | 'jina_search';
 
 export interface ScraperClientOptions {
   mode?: ScraperClientMode;
@@ -22,7 +26,7 @@ export interface ScraperClientOptions {
 }
 
 export interface ScraperClientResponse {
-  via: 'direct' | 'scrape_do' | 'jina_reader' | 'jina_search';
+  via: 'direct' | 'scrape_do' | 'brightdata' | 'jina_reader' | 'jina_search';
   status: number;
   finalUrl: string;
   headers: Record<string, string | string[] | undefined>;
@@ -41,8 +45,6 @@ function safeHost(url: string): string {
     return 'invalid-url';
   }
 }
-
-import { BlockClassifier, BlockType } from '../core/security/block_classifier';
 
 function looksBlocked(status: number, body: string, url: string = ''): boolean {
   const sig = BlockClassifier.classify(status, body, url, 'scraper_client');
@@ -87,8 +89,11 @@ async function withRetry<T>(fn: () => Promise<T>, retries: number): Promise<T> {
 
 export class ScraperClient {
   public static isScrapeDoEnabled(): boolean {
-    // LAW 309: Proxy is life. Enable if token exists.
     return !!(config.scrapeDo?.token && config.scrapeDo.token.trim().length > 0);
+  }
+
+  public static isBrightDataEnabled(): boolean {
+    return !!(config.brightData?.webUnlockerUrl && config.brightData.webUnlockerUrl.trim().length > 0);
   }
 
   public static isJinaEnabled(): boolean {
@@ -100,31 +105,65 @@ export class ScraperClient {
       'User-Agent':
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     };
   }
 
   private static async directGet(url: string, options: ScraperClientOptions): Promise<ScraperClientResponse> {
     const timeoutMs = options.timeoutMs ?? 15000;
-    const resp = await axios.get(url, {
-      timeout: timeoutMs,
+
+    const { statusCode, headers, body } = await request(url, {
+      method: 'GET',
       headers: { ...this.defaultHeaders(), ...(options.headers || {}) },
-      maxRedirects: 5,
-      validateStatus: () => true,
-      responseType: 'text',
-      decompress: true,
-      httpAgent,
-      httpsAgent,
+      dispatcher: globalDispatcher,
+      // @ts-ignore
+      maxRedirections: 5,
+      bodyTimeout: timeoutMs,
+      headersTimeout: timeoutMs,
     });
 
-    const body = typeof resp.data === 'string' ? resp.data : String(resp.data);
-    const finalUrl = (resp.request?.res?.responseUrl as string | undefined) || url;
+    const dataObj = await body.text();
     return {
       via: 'direct',
-      status: resp.status,
-      finalUrl,
-      headers: resp.headers as any,
-      data: body,
+      status: statusCode,
+      finalUrl: url,
+      headers: headers as any,
+      data: dataObj,
+    };
+  }
+
+  private static async brightDataGet(targetUrl: string, options: ScraperClientOptions): Promise<ScraperClientResponse> {
+    if (!this.isBrightDataEnabled()) {
+      throw new Error('BRIGHTDATA_WEB_UNLOCKER_URL missing');
+    }
+
+    const timeoutMs = options.timeoutMs ?? 30000;
+
+    // Web Unlocker operates via proxy authentication
+    const proxyAgent = new ProxyAgent({
+      uri: config.brightData.webUnlockerUrl!,
+      connect: { rejectUnauthorized: false },
+      keepAliveTimeout: 10000,
+      keepAliveMaxTimeout: 15000,
+    });
+
+    const { statusCode, headers, body } = await request(targetUrl, {
+      method: 'GET',
+      headers: { ...this.defaultHeaders(), ...(options.headers || {}) },
+      dispatcher: proxyAgent,
+      // @ts-ignore
+      maxRedirections: 5,
+      bodyTimeout: timeoutMs,
+      headersTimeout: timeoutMs,
+    });
+
+    const dataObj = await body.text();
+    return {
+      via: 'brightdata',
+      status: statusCode,
+      finalUrl: targetUrl,
+      headers: headers as any,
+      data: dataObj,
     };
   }
 
@@ -138,35 +177,35 @@ export class ScraperClient {
     const render = options.render ?? config.scrapeDo.renderDefault ?? false;
     const superMode = options.super ?? config.scrapeDo.super ?? false;
 
-    // NOTE: Scrape.do recommends URL-encoding; axios params handles this safely.
-    const resp = await axios.get(config.scrapeDo.apiUrl, {
-      timeout: timeoutMs,
-      params: {
-        token: config.scrapeDo.token,
-        url: targetUrl,
-        render: toBoolParam(render),
-        super: toBoolParam(superMode),
-        geoCode,
-      },
-      headers: { ...this.defaultHeaders(), ...(options.headers || {}) },
-      maxRedirects: 0,
-      validateStatus: () => true,
-      responseType: 'text',
-      decompress: true,
-      httpAgent,
-      httpsAgent,
+    const urlParams = new URLSearchParams({
+      token: config.scrapeDo.token!,
+      url: targetUrl,
+      geoCode
     });
 
-    const body = typeof resp.data === 'string' ? resp.data : String(resp.data);
+    if (render) urlParams.append('render', 'true');
+    if (superMode) urlParams.append('super', 'true');
 
-    // Scrape.do returns the target HTML. The status is of the Scrape.do API call,
-    // not necessarily the target status.
+    const scrapeDoUrl = `${config.scrapeDo.apiUrl}?${urlParams.toString()}`;
+
+    const { statusCode, headers, body } = await request(scrapeDoUrl, {
+      method: 'GET',
+      headers: { ...this.defaultHeaders(), ...(options.headers || {}) },
+      dispatcher: globalDispatcher,
+      // @ts-ignore
+      maxRedirections: 0,
+      bodyTimeout: timeoutMs,
+      headersTimeout: timeoutMs,
+    });
+
+    const dataObj = await body.text();
+
     return {
       via: 'scrape_do',
-      status: resp.status,
+      status: statusCode,
       finalUrl: targetUrl,
-      headers: resp.headers as any,
-      data: body,
+      headers: headers as any,
+      data: dataObj,
     };
   }
 
@@ -180,6 +219,10 @@ export class ScraperClient {
 
     if (mode === 'scrape_do') {
       return await withRetry(() => this.scrapeDoGet(targetUrl, options), retries);
+    }
+
+    if (mode === 'brightdata') {
+      return await withRetry(() => this.brightDataGet(targetUrl, options), retries);
     }
 
     // AUTO MODE:
@@ -221,11 +264,6 @@ export class ScraperClient {
   // 🧠 JINA AI INTEGRATION
   // =========================================================================
 
-  /**
-   * 📖 Jina Reader: Converts any URL to clean Markdown.
-   * Uses r.jina.ai — no browser, no proxy needed.
-   * Returns trimmed content up to maxContentLength.
-   */
   public static async fetchJinaReader(targetUrl: string, options: ScraperClientOptions = {}): Promise<ScraperClientResponse> {
     if (!this.isJinaEnabled()) {
       throw new Error('JINA_API_KEY missing or JINA_ENABLED is not true');
@@ -244,18 +282,17 @@ export class ScraperClient {
     Logger.info('[JinaReader] Fetching', { host: safeHost(targetUrl) });
 
     const resp = await withRetry(async () => {
-      const r = await axios.get(jinaUrl, {
-        timeout: timeoutMs,
+      const { statusCode, headers: resHeaders, body } = await request(jinaUrl, {
+        method: 'GET',
         headers,
-        validateStatus: () => true,
-        responseType: 'text',
-        decompress: true,
+        dispatcher: globalDispatcher,
+        bodyTimeout: timeoutMs,
+        headersTimeout: timeoutMs,
       });
-      return r;
+      return { status: statusCode, headers: resHeaders, text: await body.text() };
     }, options.maxRetries ?? 1);
 
-    let body = typeof resp.data === 'string' ? resp.data : String(resp.data);
-    // Trim to save tokens downstream
+    let body = resp.text;
     if (body.length > maxLen) {
       body = body.slice(0, maxLen);
     }
@@ -269,11 +306,6 @@ export class ScraperClient {
     };
   }
 
-  /**
-   * 🔍 Jina Search: Executes a search query and returns results as Markdown.
-   * Uses s.jina.ai — replaces Google/Bing/DDG scraping entirely.
-   * Returns structured search results without any browser.
-   */
   public static async fetchJinaSearch(query: string, options: ScraperClientOptions = {}): Promise<ScraperClientResponse> {
     if (!this.isJinaEnabled()) {
       throw new Error('JINA_API_KEY missing or JINA_ENABLED is not true');
@@ -291,37 +323,30 @@ export class ScraperClient {
     Logger.info('[JinaSearch] Searching', { query: query.slice(0, 80) });
 
     const resp = await withRetry(async () => {
-      const r = await axios.get(jinaUrl, {
-        timeout: timeoutMs,
+      const { statusCode, headers: resHeaders, body } = await request(jinaUrl, {
+        method: 'GET',
         headers,
-        validateStatus: () => true,
-        responseType: 'text',
-        decompress: true,
+        dispatcher: globalDispatcher,
+        bodyTimeout: timeoutMs,
+        headersTimeout: timeoutMs,
       });
-      return r;
+      return { status: statusCode, headers: resHeaders, text: await body.text() };
     }, options.maxRetries ?? 1);
-
-    const body = typeof resp.data === 'string' ? resp.data : String(resp.data);
 
     return {
       via: 'jina_search',
       status: resp.status,
       finalUrl: jinaUrl,
       headers: resp.headers as any,
-      data: body,
+      data: resp.text,
     };
   }
 
-  /**
-   * 🧠 Extract URLs from Jina Search results (JSON response).
-   * Returns an array of {title, url, description}.
-   */
   public static parseJinaSearchResults(rawData: string): Array<{ title: string; url: string; description: string }> {
     try {
       const parsed = JSON.parse(rawData);
       const results: Array<{ title: string; url: string; description: string }> = [];
 
-      // Jina returns { data: [ { title, url, description, content }, ... ] }
       const items = parsed?.data || parsed?.results || (Array.isArray(parsed) ? parsed : []);
       for (const item of items) {
         if (item.url && typeof item.url === 'string') {
@@ -334,7 +359,6 @@ export class ScraperClient {
       }
       return results;
     } catch {
-      // Fallback: try extracting URLs from markdown text
       const urlRegex = /https?:\/\/[^\s)"'<>]+/g;
       const matches = rawData.match(urlRegex) || [];
       return matches.map((url) => ({ title: '', url, description: '' }));
