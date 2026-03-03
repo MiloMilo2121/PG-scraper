@@ -1,4 +1,4 @@
-import { Page } from 'puppeteer';
+import { Page } from 'playwright';
 import { Logger } from '../utils/logger';
 import { CompanyInput } from '../types';
 
@@ -35,7 +35,7 @@ export class MapsGridProvider {
         Logger.info(`[MapsGrid] 🗺️ Navigating: ${query}`);
 
         try {
-            await page.goto(mapsUrl, { waitUntil: 'networkidle2', timeout: 30000 });
+            await page.goto(mapsUrl, { waitUntil: 'networkidle', timeout: 30000 });
             await this.handleConsent(page);
             await this.delay(2000);
 

@@ -1,13 +1,11 @@
-
-import { Browser, Page } from 'puppeteer';
-import puppeteer from 'puppeteer-extra';
+import { Browser, BrowserContext, Page } from 'playwright';
+import { chromium } from 'playwright-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 
 import { ResourceManager, PhaseType } from '../../utils/resource_manager';
-import { getRandomUserAgent } from './ua_db';
 import { GeneticFingerprinter } from './genetic_fingerprinter';
 // Task 8 & 9: Human Behavior
 import { ProxyManager } from './proxy_manager';
@@ -18,9 +16,8 @@ import { CookieConsent } from './cookie_consent';
 
 // 🛡️ Stealth Plugin: Re-enabled with safety valve (Law 308: Fingerprint Spoofing)
 // Original disable was for ERR_INVALID_AUTH_CREDENTIALS (proxy-auth conflict).
-// Use DISABLE_STEALTH=true if proxy-auth issues recur.
 if (process.env.DISABLE_STEALTH !== 'true') {
-    puppeteer.use(StealthPlugin());
+    chromium.use(StealthPlugin());
 }
 
 function getSandboxArgs(): string[] {
@@ -32,12 +29,10 @@ function getSandboxArgs(): string[] {
 export class BrowserFactory {
     private static instance: BrowserFactory;
     private browser: Browser | null = null;
-    private userDataDir: string;
     private launchPromise: Promise<Browser> | null = null;
-    private activePages: Set<Page> = new Set();
+    private activeContexts: Set<BrowserContext> = new Set();
     private instanceId: string;
     private lastHealthCheck: number = Date.now();
-    private currentProfilePath: string | null = null;
     private browserCounted = false;
 
     // Configuration
@@ -49,8 +44,6 @@ export class BrowserFactory {
 
     constructor() {
         this.instanceId = Math.random().toString(36).substring(7);
-        this.userDataDir = path.join(process.cwd(), 'temp_profiles', `browser_${this.instanceId}`);
-        this.currentProfilePath = this.userDataDir; // FIX: Assign for cleanup in close()
         BrowserFactory.instances.add(this);
     }
 
@@ -126,11 +119,8 @@ export class BrowserFactory {
             }
 
             const freeMem = os.freemem() / 1024 / 1024;
-            Logger.info(`[BrowserFactory:${this.instanceId}] Spawning browser`, { free_ram_mb: Math.round(freeMem) });
-            // Generate a fresh profile directory on every launch to guarantee we bypass OS lockfile collisions
+            Logger.info(`[BrowserFactory:${this.instanceId}] Spawning Playwright browser`, { free_ram_mb: Math.round(freeMem) });
             this.instanceId = Math.random().toString(36).substring(7);
-            this.userDataDir = path.join(process.cwd(), 'temp_profiles', `browser_${this.instanceId}`);
-            this.currentProfilePath = this.userDataDir;
 
             // Task 10: Cloak webdriver
             let executablePath = process.env.CHROME_PATH;
@@ -148,67 +138,43 @@ export class BrowserFactory {
                 }
             }
 
-            // PROXY INTEGRATION
+            // Proxy validation (Playwright passes the actual proxy config at the Context level)
             const proxyManager = ProxyManager.getInstance();
-            // Default to High Security proxy (Residential) for the browser instance
-            let proxyArgs: string[] = [];
-
-            if (process.env.DISABLE_PROXY === 'true') {
-                Logger.warn(`[BrowserFactory:${this.instanceId}] PROXY DISABLED via env var`);
-            } else {
-                proxyArgs = proxyManager.getLaunchArgsForUrl('https://www.google.com');
-            }
-
-            if (proxyArgs.length > 0) {
-                Logger.info(`[BrowserFactory:${this.instanceId}] Launching with Proxy: ${proxyArgs[0]}`);
-            } else if (config.scrapeDo.enforce) {
-                // BUG-01 FIX: Hard-fail if proxy is enforced but missing (Law 005: Assume Malice)
-                const msg = `[BrowserFactory:${this.instanceId}] SCRAPE_DO_ENFORCE=true but no proxy available. Refusing to launch unprotected browser.`;
-                Logger.error(msg);
-                throw new Error(msg);
-            } else {
-                Logger.warn(`[BrowserFactory:${this.instanceId}] No Proxy configured. Running raw (DIRECT).`);
+            if (config.scrapeDo.enforce) {
+                const p = proxyManager.getPlaywrightProxy('https://www.google.com');
+                if (!p) {
+                    // BUG-01 FIX: Hard-fail if proxy is enforced but missing (Law 005: Assume Malice)
+                    const msg = `[BrowserFactory:${this.instanceId}] SCRAPE_DO_ENFORCE=true but no proxy available. Refusing to launch unprotected browser.`;
+                    Logger.error(msg);
+                    throw new Error(msg);
+                }
             }
 
             try {
-                let browser;
+                let browser: Browser;
                 if (config.browser.mode === 'remote') {
+                    if (!config.browser.remoteEndpoint) throw new Error('Remote endpoint not configured');
                     Logger.info(`[BrowserFactory] ☁️ Connecting to Remote Swarm at ${config.browser.remoteEndpoint}...`);
-                    browser = await puppeteer.connect({
-                        browserWSEndpoint: config.browser.remoteEndpoint,
-                        defaultViewport: null
-                    }) as unknown as Browser;
+                    browser = await chromium.connectOverCDP(config.browser.remoteEndpoint) as Browser;
                     Logger.info('[BrowserFactory] ✅ Connected to Remote Swarm.');
                 } else {
-                    browser = await puppeteer.launch({
+                    browser = await chromium.launch({
                         headless: true,
                         timeout: 60000,
-                        protocolTimeout: 60000,
-                        // Many small business sites have misconfigured TLS; we still need to scrape/verify them.
-                        acceptInsecureCerts: true,
-                        userDataDir: this.userDataDir,
                         executablePath: executablePath,
                         args: [
-                            ...proxyArgs, // <--- PROXY ARGS
                             ...getSandboxArgs(),
                             '--disable-infobars',
                             '--disable-dev-shm-usage',
                             '--disable-gpu',
                             '--disable-blink-features=AutomationControlled',
                             '--limit-chrome-features-to-only-platform-essential',
-                            '--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints',
                             '--disable-background-networking',
-                            '--disable-breakpad',
-                            '--disable-component-extensions-with-background-pages',
-                            '--disable-extensions',
                             '--disable-ipc-flooding-protection',
                             '--disable-renderer-backgrounding',
-                            '--enable-features=NetworkService,NetworkServiceInProcess',
                             '--window-size=1920,1080',
-                            // Removed --single-process: causes instability under load (shared memory between tabs = cascade crash)
-                            // Removed --ignore-certificate-errors: acceptInsecureCerts above handles misconfigured TLS safely
                         ]
-                    }) as unknown as Browser;
+                    }) as Browser;
                 }
 
                 this.browser = browser;
@@ -247,16 +213,9 @@ export class BrowserFactory {
         const recommendedTabs = resourceManager.getRecommendedConcurrency(PhaseType.BROWSER);
         BrowserFactory.MAX_TABS_PER_BROWSER = Math.max(1, recommendedTabs);
 
-        while (this.activePages.size >= BrowserFactory.MAX_TABS_PER_BROWSER) {
+        while (this.activeContexts.size >= BrowserFactory.MAX_TABS_PER_BROWSER) {
             await new Promise(r => setTimeout(r, 1000));
-            for (const page of this.activePages) {
-                if (page.isClosed()) this.activePages.delete(page);
-            }
         }
-
-        const page = await this.browser!.newPage();
-        this.activePages.add(page);
-        page.once('close', () => this.activePages.delete(page));
 
         try {
             // 🧬 GENETIC EVOLUTION v3: Full trait-consistent fingerprinting
@@ -264,38 +223,62 @@ export class BrowserFactory {
             const gene = fingerprinter.getBestGene();
             const geneConfig = GeneticFingerprinter.getInstance().geneToConfig(gene);
 
-            // Attach gene ID to page for feedback loop
-            (page as any).__geneId = gene.id;
+            // PROXY INTEGRATION moves to Context
+            const proxyManager = ProxyManager.getInstance();
+            let proxyConfig: any = {};
+            if (process.env.DISABLE_PROXY !== 'true') {
+                const proxy = proxyManager.getPlaywrightProxy('https://www.google.com');
+                if (proxy) {
+                    proxyConfig.proxy = {
+                        server: proxy.server,
+                        username: proxy.username,
+                        password: proxy.password
+                    };
+                    Logger.info(`[BrowserFactory:${this.instanceId}] Context using Proxy: ${proxy.server}`);
+                }
+            } else {
+                Logger.warn(`[BrowserFactory:${this.instanceId}] PROXY DISABLED via env var`);
+            }
 
-            await page.setUserAgent(geneConfig.userAgent);
-
-            await page.setViewport({
-                width: geneConfig.viewport.width,
-                height: geneConfig.viewport.height,
+            const context = await this.browser!.newContext({
+                ...proxyConfig,
+                userAgent: geneConfig.userAgent,
+                viewport: {
+                    width: geneConfig.viewport.width,
+                    height: geneConfig.viewport.height,
+                },
                 isMobile: geneConfig.isMobile,
                 hasTouch: geneConfig.isMobile,
+                ignoreHTTPSErrors: true,
+                extraHTTPHeaders: {
+                    'Accept-Language': geneConfig.acceptLanguage,
+                    'Upgrade-Insecure-Requests': '1',
+                    ...geneConfig.clientHintsHeaders,
+                }
             });
 
-            // Set headers: Accept-Language + Client Hints (Sec-CH-UA-*)
-            await page.setExtraHTTPHeaders({
-                'Accept-Language': geneConfig.acceptLanguage,
-                'Upgrade-Insecure-Requests': '1',
-                ...geneConfig.clientHintsHeaders,
-            });
+            this.activeContexts.add(context);
+            context.setDefaultTimeout(config.scraping.timeout);
+            context.setDefaultNavigationTimeout(config.scraping.pageLoadTimeout);
 
             // Mock Hardware Concurrency
-            await page.evaluateOnNewDocument((concurrency) => {
+            await context.addInitScript((concurrency: number) => {
                 Object.defineProperty(navigator, 'hardwareConcurrency', {
                     get: () => concurrency,
                 });
             }, geneConfig.hardwareConcurrency);
 
-            // PROXY AUTHENTICATION
-            await ProxyManager.getInstance().authenticateProxy(page, 'https://www.google.com');
+            const page = await context.newPage();
 
-            // Page timeout recovery
-            page.setDefaultTimeout(config.scraping.timeout);
-            page.setDefaultNavigationTimeout(config.scraping.pageLoadTimeout);
+            // Attach gene ID to page for feedback loop
+            (page as any).__geneId = gene.id;
+            (page as any).__context = context;
+
+            // Handle accidental page disconnects gracefully
+            page.once('close', () => {
+                this.activeContexts.delete(context);
+                context.close().catch(() => { });
+            });
 
             // Anti-Fingerprinting v3: Full evasion with gene-derived config
             await BrowserEvasion.apply(page, geneConfig.evasionConfig);
@@ -305,24 +288,14 @@ export class BrowserFactory {
             return page;
         } catch (error) {
             Logger.error(`[BrowserFactory] Error during newPage setup`, { error: error as Error });
-            await this.closePage(page);
             throw error;
         }
     }
 
     public async forceKill(targetBrowser: Browser | null = this.browser): Promise<void> {
-        if (targetBrowser && targetBrowser.process()) {
-            const pid = targetBrowser.process()?.pid;
-            if (pid) {
-                try {
-                    Logger.warn(`[BrowserFactory] Force killing browser process`, { pid });
-                    process.kill(pid, 'SIGKILL');
-                } catch (e) {
-                    Logger.warn('[BrowserFactory] Failed to force kill process', { pid, error: e as Error });
-                }
-            }
-        }
-
+        // Force kill logic for Playwright CDP server is difficult without the underlying PID of chromium, 
+        // but typically Playwright cleans up properly on close(). 
+        // We will do a grace close and nullify.
         if (targetBrowser && targetBrowser === this.browser) {
             this.browser = null;
         }
@@ -330,14 +303,21 @@ export class BrowserFactory {
             BrowserFactory.ACTIVE_INSTANCES = Math.max(0, BrowserFactory.ACTIVE_INSTANCES - 1);
             this.browserCounted = false;
         }
+        if (targetBrowser) {
+            targetBrowser.close().catch(e => {
+                Logger.warn('[BrowserFactory] Failed to force close browser', { error: e as Error });
+            });
+        }
     }
 
     public async closePage(page: Page): Promise<void> {
-        // Ensure we never block the pipeline on a hanging page close.
         const CLOSE_TIMEOUT_MS = 5000;
 
-        // Remove from the pool immediately to prevent newPage() deadlocks.
-        this.activePages.delete(page);
+        // Extract context and remove from active tracking
+        const context = (page as any).__context as BrowserContext;
+        if (context) {
+            this.activeContexts.delete(context);
+        }
 
         if (page.isClosed()) {
             return;
@@ -345,21 +325,25 @@ export class BrowserFactory {
 
         try {
             await Promise.race([
-                page.close(),
+                page.close(), // closes page, which triggers the close listener that closes context
                 new Promise<void>((_, reject) =>
                     setTimeout(() => reject(new Error('Page close timeout')), CLOSE_TIMEOUT_MS)
                 ),
             ]);
         } catch (e) {
             Logger.warn('Failed to close page cleanly', { error: e as Error });
+        } finally {
+            if (context) {
+                context.close().catch(() => { });
+            }
         }
     }
 
     public async close(): Promise<void> {
-        for (const page of [...this.activePages]) {
-            await this.closePage(page);
+        for (const context of [...this.activeContexts]) {
+            await context.close().catch(() => { });
         }
-        this.activePages.clear();
+        this.activeContexts.clear();
 
         if (this.browser) {
             const browserToClose = this.browser;
@@ -374,18 +358,6 @@ export class BrowserFactory {
             } catch {
                 await this.forceKill(browserToClose);
             }
-        }
-
-        // Cleanup temporary profile
-        if (this.currentProfilePath) {
-            try {
-                if (fs.existsSync(this.currentProfilePath)) {
-                    fs.rmSync(this.currentProfilePath, { recursive: true, force: true });
-                }
-            } catch (e) {
-                Logger.warn('Failed to clean temporary browser profile', { error: e as Error });
-            }
-            this.currentProfilePath = null;
         }
 
         ProxyManager.getInstance().dispose();

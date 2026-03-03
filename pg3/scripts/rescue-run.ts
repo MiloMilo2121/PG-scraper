@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { createObjectCsvWriter } from 'csv-writer';
-import puppeteer from 'puppeteer';
+import { chromium } from 'playwright';
 
 // --- CONFIG ---
 const OUTPUT_DIR = 'output/campaigns';
@@ -14,9 +14,9 @@ if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
 async function run() {
     console.log("🚀 EMERGENCY RESCUE RUN STARTING...");
-    const browser = await puppeteer.launch({ headless: false, args: ['--no-sandbox'] });
+    const browser = await chromium.launch({ headless: false, args: ['--no-sandbox'] });
     const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
+    await page.setViewportSize({ width: 1280, height: 800 });
 
     const seen = new Set<string>();
 
@@ -43,7 +43,7 @@ async function run() {
                     const url = `https://www.paginegialle.it/ricerca/${kw.replace(/ /g, '%20')}/${city}/p-${p}`;
                     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-                    const results = await page.evaluate((cityName, category) => {
+                    const results = await page.evaluate(({ cityName, category }) => {
                         return Array.from(document.querySelectorAll('.search-itm')).map(item => {
                             const name = item.querySelector('.search-itm__rag')?.textContent?.trim();
                             const addr = item.querySelector('.search-itm__adr')?.textContent?.trim();
@@ -51,7 +51,7 @@ async function run() {
                             const web = item.querySelector('.search-itm__url')?.getAttribute('href') || '';
                             return name ? { company_name: name, city: cityName, address: addr, phone: phone, website: web, category: category } : null;
                         }).filter(x => x);
-                    }, city, kw);
+                    }, { cityName: city, category: kw });
 
                     if (results && results.length > 0) {
                         const unique = results.filter(r => {
@@ -71,12 +71,12 @@ async function run() {
             try {
                 const mapsUrl = `https://www.google.com/search?q=${encodeURIComponent(kw + ' ' + city)}&tbm=lcl&hl=en&gl=us`;
                 await page.goto(mapsUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-                const mResults = await page.evaluate((cityName, category) => {
+                const mResults = await page.evaluate(({ cityName, category }) => {
                     return Array.from(document.querySelectorAll('.VkpGBb, div[jscontroller="AtSb"], .dbg0pd')).map(item => {
                         const name = item.textContent?.split('\n')[0].trim();
                         return name ? { company_name: name, city: cityName, address: '', phone: '', website: '', category: category } : null;
                     }).filter(x => x);
-                }, city, kw);
+                }, { cityName: city, category: kw });
 
                 if (mResults && mResults.length > 0) {
                     const unique = mResults.filter(r => {

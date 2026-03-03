@@ -22,8 +22,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { createObjectCsvWriter } from 'csv-writer';
-import { Page, Browser } from 'puppeteer';
-import puppeteerCore from 'puppeteer';
+import { Page, Browser } from 'playwright';
+import puppeteerCore from 'playwright';
 // BrowserFactory BYPASSED: its newPage() initialization pipeline (GeneticFingerprinter,
 // BrowserEvasion, ProxyManager, CookieConsent) detaches the page frame on the server.
 // Raw puppeteer.launch() works perfectly (confirmed by diagnostic).
@@ -129,9 +129,11 @@ async function setupPage(): Promise<Page> {
     for (let i = 0; i < maxRetries; i++) {
         try {
             const browser = await getBrowser();
-            const page = await browser.newPage();
-            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-            await page.setViewport({ width: 1920, height: 1080 });
+            const context = await browser.newContext({
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport: { width: 1920, height: 1080 }
+            });
+            const page = await context.newPage();
             page.setDefaultTimeout(30000);
             page.setDefaultNavigationTimeout(30000);
             return page;
@@ -305,7 +307,7 @@ async function scrapePG(
 
             let items: CompanyInput[] = [];
             try {
-                items = await page.evaluate((loc, cat, prov) => {
+                items = await page.evaluate(({ loc, cat, prov }) => {
                     return Array.from(document.querySelectorAll('.search-itm')).map(item => {
                         const name = item.querySelector('.search-itm__rag')?.textContent?.trim();
                         const tel = item.querySelector('.search-itm__phone')?.textContent?.trim();
@@ -357,7 +359,7 @@ async function scrapePG(
                             pg_url: pgUrl
                         };
                     }).filter(x => x !== null);
-                }, target.location, target.category, target.province) as CompanyInput[];
+                }, { loc: target.location, cat: target.category, prov: target.province }) as CompanyInput[];
             } catch (evalError) {
                 const msg = (evalError as Error).message;
                 if (msg.includes('detached') || msg.includes('destroyed')) {

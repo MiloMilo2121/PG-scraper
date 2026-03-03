@@ -9,7 +9,7 @@
  * - Natural mouse movements
  */
 
-import { Page } from 'puppeteer';
+import { Page } from 'playwright';
 import { Logger } from '../../utils/logger';
 
 export class HumanBehavior {
@@ -37,8 +37,8 @@ export class HumanBehavior {
      */
     static async randomMouseMove(page: Page): Promise<void> {
         try {
-            const width = page.viewport()?.width || 1920;
-            const height = page.viewport()?.height || 1080;
+            const width = page.viewportSize()?.width || 1920;
+            const height = page.viewportSize()?.height || 1080;
 
             const steps = Math.floor(Math.random() * 8) + 5;
             const x = Math.floor(Math.random() * (width - 200)) + 100;

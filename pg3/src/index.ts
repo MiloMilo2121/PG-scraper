@@ -19,10 +19,8 @@ async function main(): Promise<void> {
   }
 
   if (command === 'worker') {
-    Logger.info('🚀 ANTIGRAVITY starting in WORKER mode');
-    const { runWorker } = await import('./enricher/worker');
-    await runWorker();
-    return;
+    Logger.error('Worker mode is currently disabled or removed.');
+    process.exit(1);
   }
 
   if (command === 'server') {

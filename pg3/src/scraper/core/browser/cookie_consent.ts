@@ -1,5 +1,5 @@
 
-import { Page } from 'puppeteer';
+import { Page } from 'playwright';
 
 export class CookieConsent {
     private static commonSelectors = [

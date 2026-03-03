@@ -7,7 +7,7 @@
  * Used when encountering blocks on high-security targets like UfficioCamerale
  */
 
-import { Page } from 'puppeteer';
+import { Page } from 'playwright';
 import axios from 'axios';
 import { Logger } from '../../utils/logger';
 import { config } from '../../config';

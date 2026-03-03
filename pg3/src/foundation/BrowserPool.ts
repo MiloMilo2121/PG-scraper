@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { execSync } from 'child_process';
 import { CostLedger } from './CostLedger';
-import { Page, Browser } from 'puppeteer';
+import { Page, Browser } from 'playwright';
 
 export interface NavigationResult {
     status: 'OK' | 'TIMEOUT' | 'BLOCKED' | 'CF_CHALLENGE' | 'ERROR';

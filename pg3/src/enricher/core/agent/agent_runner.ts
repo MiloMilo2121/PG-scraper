@@ -1,5 +1,5 @@
 
-import { Page } from 'puppeteer';
+import { Page } from 'playwright';
 import { AgentBrain, AgentDecision } from './agent_brain';
 import { DOMDistiller, InteractiveElement } from './dom_distiller';
 import { Logger } from '../../utils/logger';
@@ -106,11 +106,11 @@ export class AgentRunner {
 
                     await page.type('body', decision.text_value); // Fallback if specific input focus fails, but let's try strict
                     // Better: use the xpath to focus and type
-                    await page.evaluate((xpath, text) => {
+                    await page.evaluate(({ xpath, text }) => {
                         const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
                         const node = result.singleNodeValue as HTMLInputElement;
                         if (node) { node.value = text; node.dispatchEvent(new Event('input', { bubbles: true })); }
-                    }, input.xpath, decision.text_value);
+                    }, { xpath: input.xpath, text: decision.text_value });
 
                     return `Typed "${decision.text_value}"`;
 

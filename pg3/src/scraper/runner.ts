@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { createObjectCsvWriter } from 'csv-writer';
 import { BrowserFactory } from './core/browser/factory_v2';
-import { Page } from 'puppeteer';
+import { Page } from 'playwright';
 import { Deduplicator } from './utils/deduplicator';
 import { CompanyInput } from './types';
 import { GoogleMapsProvider } from './providers/maps';
@@ -235,7 +235,7 @@ async function scrapePG(
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
             // Extract
-            const items = await page.evaluate((loc, key) => {
+            const items = await page.evaluate(({ loc, key }) => {
                 return Array.from(document.querySelectorAll('.search-itm')).map(item => {
                     const name = item.querySelector('.search-itm__rag')?.textContent?.trim();
                     const tel = item.querySelector('.search-itm__phone')?.textContent?.trim();
@@ -268,7 +268,7 @@ async function scrapePG(
                         pg_url: pgUrl
                     } as CompanyInput;
                 }).filter(x => x !== null);
-            }, location, keyword);
+            }, { loc: location, key: keyword }) as CompanyInput[];
 
             if (items.length === 0) break;
 

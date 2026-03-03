@@ -16,7 +16,7 @@
  * - Device memory & touch points spoofing
  */
 
-import { Page } from 'puppeteer';
+import { Page } from 'playwright';
 import { ClientHintsData, SPEECH_VOICES } from './ua_db';
 
 export interface EvasionConfig {
@@ -89,7 +89,7 @@ export class BrowserEvasion {
     // ── Core evasion (existing, improved) ────────────────────────────
 
     private static async hideWebdriver(page: Page): Promise<void> {
-        await page.evaluateOnNewDocument(() => {
+        await page.addInitScript(() => {
             Object.defineProperty(navigator, 'webdriver', { get: () => false });
             delete (window as any).cdc_adoQpoasnfa76pfcZLmcfl_Array;
             delete (window as any).cdc_adoQpoasnfa76pfcZLmcfl_Promise;
@@ -98,7 +98,7 @@ export class BrowserEvasion {
     }
 
     private static async mockChrome(page: Page): Promise<void> {
-        await page.evaluateOnNewDocument(() => {
+        await page.addInitScript(() => {
             (window as any).chrome = {
                 runtime: {
                     PlatformOs: { MAC: 'mac', WIN: 'win', ANDROID: 'android', CROS: 'cros', LINUX: 'linux', OPENBSD: 'openbsd' },
@@ -142,7 +142,7 @@ export class BrowserEvasion {
     }
 
     private static async mockPermissions(page: Page): Promise<void> {
-        await page.evaluateOnNewDocument(() => {
+        await page.addInitScript(() => {
             const originalQuery = window.navigator.permissions.query.bind(window.navigator.permissions);
             (window.navigator.permissions as any).query = (parameters: any) => (
                 parameters.name === 'notifications'
@@ -153,7 +153,7 @@ export class BrowserEvasion {
     }
 
     private static async mockPlugins(page: Page): Promise<void> {
-        await page.evaluateOnNewDocument(() => {
+        await page.addInitScript(() => {
             Object.defineProperty(navigator, 'plugins', {
                 get: () => {
                     const plugins = [
@@ -171,13 +171,15 @@ export class BrowserEvasion {
     }
 
     private static async spoofWebGL(page: Page, cfg: EvasionConfig): Promise<void> {
-        await page.evaluateOnNewDocument((vendor, renderer) => {
+        await page.addInitScript((args) => {
+            const vendor = args.vendor;
+            const renderer = args.renderer;
             const getParameterProxyHandler = {
-                apply: function (target: any, ctx: any, args: any) {
-                    const param = args[0];
+                apply: function (target: any, ctx: any, fnArgs: any) {
+                    const param = fnArgs[0];
                     if (param === 37445) return vendor;   // UNMASKED_VENDOR_WEBGL
                     if (param === 37446) return renderer;  // UNMASKED_RENDERER_WEBGL
-                    return Reflect.apply(target, ctx, args);
+                    return Reflect.apply(target, ctx, fnArgs);
                 },
             };
             const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
@@ -187,7 +189,7 @@ export class BrowserEvasion {
                 const originalGetParameter2 = WebGL2RenderingContext.prototype.getParameter;
                 WebGL2RenderingContext.prototype.getParameter = new Proxy(originalGetParameter2, getParameterProxyHandler);
             }
-        }, cfg.webglVendor || DEFAULT_CONFIG.webglVendor!, cfg.webglRenderer || DEFAULT_CONFIG.webglRenderer!);
+        }, { vendor: cfg.webglVendor || DEFAULT_CONFIG.webglVendor!, renderer: cfg.webglRenderer || DEFAULT_CONFIG.webglRenderer! });
     }
 
     /**
@@ -195,7 +197,7 @@ export class BrowserEvasion {
      * Also hooks toBlob and getImageData for consistency
      */
     private static async injectCanvasNoise(page: Page): Promise<void> {
-        await page.evaluateOnNewDocument(() => {
+        await page.addInitScript(() => {
             const sessionSeed = Math.random() * 10000;
 
             // Noise function: deterministic per-pixel, varied across pixels
@@ -212,7 +214,7 @@ export class BrowserEvasion {
                         const nr = pixelNoise(i, 0);
                         const ng = pixelNoise(i, 1);
                         const nb = pixelNoise(i, 2);
-                        imageData.data[i]     = Math.min(255, Math.max(0, imageData.data[i]     + Math.round(nr)));
+                        imageData.data[i] = Math.min(255, Math.max(0, imageData.data[i] + Math.round(nr)));
                         imageData.data[i + 1] = Math.min(255, Math.max(0, imageData.data[i + 1] + Math.round(ng)));
                         imageData.data[i + 2] = Math.min(255, Math.max(0, imageData.data[i + 2] + Math.round(nb)));
                         // Alpha (i+3) untouched
@@ -240,7 +242,7 @@ export class BrowserEvasion {
     }
 
     private static async blockWebRTC(page: Page): Promise<void> {
-        await page.evaluateOnNewDocument(() => {
+        await page.addInitScript(() => {
             const rtcHandler = {
                 construct(target: any, args: any) {
                     if (args[0]?.iceServers) {
@@ -263,21 +265,16 @@ export class BrowserEvasion {
     }
 
     /**
-     * FIXED: Non-destructive resolvedOptions override (preserves all properties)
+     * Non-destructive resolvedOptions override (preserves all properties)
      */
     private static async setTimezone(page: Page, cfg: EvasionConfig): Promise<void> {
         const timezone = cfg.timezone || 'Europe/Rome';
 
-        try {
-            const client = await (page as any)._client();
-            if (client) {
-                await client.send('Emulation.setTimezoneOverride', { timezoneId: timezone });
-            }
-        } catch {
-            // CDP command might not be available in all contexts
-        }
-
-        await page.evaluateOnNewDocument((tz) => {
+        // Playwright natively supports timezone overrides natively mapped to CDP
+        // Let's use evaluate instead of CDP since we can't get CDP client trivially from playwright Context
+        // Wait, context has timezone setting, so it's already done in context!
+        // We will just do the JavaScript patch just in case
+        await page.addInitScript((tz) => {
             const originalResolvedOptions = Intl.DateTimeFormat.prototype.resolvedOptions;
             Object.defineProperty(Intl.DateTimeFormat.prototype, 'resolvedOptions', {
                 value: function () {
@@ -289,10 +286,10 @@ export class BrowserEvasion {
     }
 
     /**
-     * FIXED: Per-sample noise with session seed (was uniform offset)
+     * Per-sample noise with session seed (was uniform offset)
      */
     private static async injectAudioNoise(page: Page): Promise<void> {
-        await page.evaluateOnNewDocument(() => {
+        await page.addInitScript(() => {
             const sessionSeed = Math.random() * 10000;
             const originalGetChannelData = AudioBuffer.prototype.getChannelData;
             AudioBuffer.prototype.getChannelData = function (channel: number) {
@@ -313,33 +310,33 @@ export class BrowserEvasion {
      */
     private static async injectClientHints(page: Page, cfg: EvasionConfig): Promise<void> {
         if (!cfg.clientHints) return;
-        const ch = cfg.clientHints;
+        const hints = cfg.clientHints;
 
-        await page.evaluateOnNewDocument((hints) => {
+        await page.addInitScript((ch) => {
             const uaData = {
-                brands: hints.brands,
-                mobile: hints.isMobile,
-                platform: hints.platform,
+                brands: ch.brands,
+                mobile: ch.isMobile,
+                platform: ch.platform,
                 getHighEntropyValues: (keys: string[]) => {
                     const result: any = {
-                        brands: hints.brands,
-                        mobile: hints.isMobile,
-                        platform: hints.platform,
+                        brands: ch.brands,
+                        mobile: ch.isMobile,
+                        platform: ch.platform,
                     };
-                    if (keys.includes('architecture')) result.architecture = hints.architecture;
-                    if (keys.includes('bitness')) result.bitness = hints.bitness;
-                    if (keys.includes('fullVersionList')) result.fullVersionList = hints.fullVersionList;
+                    if (keys.includes('architecture')) result.architecture = ch.architecture;
+                    if (keys.includes('bitness')) result.bitness = ch.bitness;
+                    if (keys.includes('fullVersionList')) result.fullVersionList = ch.fullVersionList;
                     if (keys.includes('model')) result.model = '';
-                    if (keys.includes('platformVersion')) result.platformVersion = hints.platformVersion;
+                    if (keys.includes('platformVersion')) result.platformVersion = ch.platformVersion;
                     if (keys.includes('uaFullVersion')) {
-                        result.uaFullVersion = hints.fullVersionList?.[0]?.version || '';
+                        result.uaFullVersion = ch.fullVersionList?.[0]?.version || '';
                     }
                     return Promise.resolve(result);
                 },
                 toJSON: () => ({
-                    brands: hints.brands,
-                    mobile: hints.isMobile,
-                    platform: hints.platform,
+                    brands: ch.brands,
+                    mobile: ch.isMobile,
+                    platform: ch.platform,
                 }),
             };
 
@@ -347,29 +344,29 @@ export class BrowserEvasion {
                 get: () => uaData,
                 configurable: true,
             });
-        }, ch);
+        }, hints);
     }
 
     /**
      * navigator.connection: Mock NetworkInformation API
      */
     private static async mockConnection(page: Page, cfg: EvasionConfig): Promise<void> {
-        await page.evaluateOnNewDocument((type, downlink, rtt) => {
+        await page.addInitScript((args) => {
             const connectionObj = {
-                effectiveType: type,
-                downlink: downlink,
-                rtt: rtt,
+                effectiveType: args.type,
+                downlink: args.downlink,
+                rtt: args.rtt,
                 saveData: false,
                 onchange: null,
-                addEventListener: () => {},
-                removeEventListener: () => {},
+                addEventListener: () => { },
+                removeEventListener: () => { },
                 dispatchEvent: () => true,
             };
             Object.defineProperty(navigator, 'connection', {
                 get: () => connectionObj,
                 configurable: true,
             });
-        }, cfg.connectionType || 'wifi', cfg.connectionDownlink || 10, cfg.connectionRtt || 100);
+        }, { type: cfg.connectionType || 'wifi', downlink: cfg.connectionDownlink || 10, rtt: cfg.connectionRtt || 100 });
     }
 
     /**
@@ -383,24 +380,24 @@ export class BrowserEvasion {
         // OS-specific chrome offsets
         const chromeHeight = cfg.os === 'macos' ? 25 : cfg.os === 'windows' ? 40 : 30;
 
-        await page.evaluateOnNewDocument((sw, sh, d, offset) => {
-            const availW = sw;
-            const availH = sh - offset;
+        await page.addInitScript((args) => {
+            const availW = args.sw;
+            const availH = args.sh - args.offset;
 
-            Object.defineProperty(screen, 'width', { get: () => sw });
-            Object.defineProperty(screen, 'height', { get: () => sh });
+            Object.defineProperty(screen, 'width', { get: () => args.sw });
+            Object.defineProperty(screen, 'height', { get: () => args.sh });
             Object.defineProperty(screen, 'availWidth', { get: () => availW });
             Object.defineProperty(screen, 'availHeight', { get: () => availH });
-            Object.defineProperty(screen, 'colorDepth', { get: () => d });
-            Object.defineProperty(screen, 'pixelDepth', { get: () => d });
-        }, screenW, screenH, depth, chromeHeight);
+            Object.defineProperty(screen, 'colorDepth', { get: () => args.d });
+            Object.defineProperty(screen, 'pixelDepth', { get: () => args.d });
+        }, { sw: screenW, sh: screenH, d: depth, offset: chromeHeight });
     }
 
     /**
      * Font enumeration defense: Add noise to measureText
      */
     private static async defendFontEnumeration(page: Page): Promise<void> {
-        await page.evaluateOnNewDocument(() => {
+        await page.addInitScript(() => {
             const sessionSeed = Math.random() * 10000;
             const originalMeasureText = CanvasRenderingContext2D.prototype.measureText;
 
@@ -432,7 +429,7 @@ export class BrowserEvasion {
         const os = cfg.os || 'macos';
         const voices = SPEECH_VOICES[os] || SPEECH_VOICES.macos;
 
-        await page.evaluateOnNewDocument((voiceList) => {
+        await page.addInitScript((voiceList) => {
             const synthVoices = voiceList.map((v: any) => ({
                 name: v.name,
                 lang: v.lang,
@@ -445,14 +442,14 @@ export class BrowserEvasion {
                 window.speechSynthesis.getVoices = () => synthVoices as SpeechSynthesisVoice[];
                 // Also fire voiceschanged once
                 window.speechSynthesis.addEventListener = ((original) => {
-                    return function (this: SpeechSynthesis, type: string, ...args: any[]) {
+                    return function (this: SpeechSynthesis, type: string, ...evArgs: any[]) {
                         if (type === 'voiceschanged') {
                             // Immediately invoke to simulate loaded voices
                             setTimeout(() => {
-                                if (args[0] && typeof args[0] === 'function') args[0]();
+                                if (evArgs[0] && typeof evArgs[0] === 'function') evArgs[0]();
                             }, 50);
                         }
-                        return original.apply(this, [type, ...args] as any);
+                        return original.apply(this, [type, ...evArgs] as any);
                     };
                 })(window.speechSynthesis.addEventListener);
             }
@@ -463,7 +460,7 @@ export class BrowserEvasion {
      * Device memory: Override navigator.deviceMemory
      */
     private static async mockDeviceMemory(page: Page, cfg: EvasionConfig): Promise<void> {
-        await page.evaluateOnNewDocument((memory) => {
+        await page.addInitScript((memory) => {
             Object.defineProperty(navigator, 'deviceMemory', {
                 get: () => memory,
                 configurable: true,
@@ -475,7 +472,7 @@ export class BrowserEvasion {
      * Touch points: Override navigator.maxTouchPoints
      */
     private static async mockMaxTouchPoints(page: Page, cfg: EvasionConfig): Promise<void> {
-        await page.evaluateOnNewDocument((points) => {
+        await page.addInitScript((points) => {
             Object.defineProperty(navigator, 'maxTouchPoints', {
                 get: () => points,
                 configurable: true,

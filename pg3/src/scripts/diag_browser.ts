@@ -2,7 +2,7 @@
  * 🔬 DIAGNOSTIC: Isolate which step in BrowserFactory.newPage() kills the frame.
  * Run: npx ts-node src/scripts/diag_browser.ts
  */
-import puppeteer from 'puppeteer';
+import puppeteer from 'playwright';
 
 async function main() {
     console.log('=== BROWSER DIAGNOSTIC ===');

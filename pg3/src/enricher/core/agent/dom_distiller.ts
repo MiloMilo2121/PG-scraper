@@ -1,5 +1,5 @@
 
-import { Page } from 'puppeteer';
+import { Page } from 'playwright';
 import { Logger } from '../../utils/logger';
 
 /**
