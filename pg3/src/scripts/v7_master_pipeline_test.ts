@@ -37,7 +37,7 @@ async function runTest() {
     const startTime = Date.now();
 
     for (let i = 0; i < targetCompanies.length; i++) {
-        const c = targetCompanies[i];
+        const c = targetCompanies[i] as any;
         console.log(`\n▶️ [${i + 1}/${targetCompanies.length}] Cerco: ${c.ragione_sociale || c.company_name} (${c.citta || c.city})...`);
 
         const input: NormalizedInput = {
@@ -54,7 +54,8 @@ async function runTest() {
 
         try {
             console.log(`   [Action] Lancia MasterPipeline...`);
-            const result = await pipeline.processCompany(`test_${i}`, input, rawInput);
+            const combinedInput = { ...c, ...input, ...rawInput };
+            const result = await pipeline.processCompany(combinedInput, i);
 
             if (result.status === 'FOUND_COMPLETE') {
                 console.log(`   ✅ PIPELINE TROVATO: ${result.discovered_url} (Layer: ${result.discovery_layer})`);
@@ -78,8 +79,8 @@ async function runTest() {
     console.log(`Tasso di Successo: ${((successCount / targetCompanies.length) * 100).toFixed(1)}%`);
     console.log(`Tempo totale: ${duration} secondi`);
 
-    // Shut down pipeline cleanly
-    await pipeline.shutdown();
+    // Shutdown logic usually handled elsewhere or omit
+    process.exit(0);
 }
 
 runTest().catch(console.error);
