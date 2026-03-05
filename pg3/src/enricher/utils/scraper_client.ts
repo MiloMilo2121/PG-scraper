@@ -96,8 +96,9 @@ export class ScraperClient {
     return !!(config.brightData?.webUnlockerUrl && config.brightData.webUnlockerUrl.trim().length > 0);
   }
 
+  /** @deprecated Jina AI permanently removed — internal DomDistiller fallback is used instead */
   public static isJinaEnabled(): boolean {
-    return !!(config.jina?.enabled && config.jina.apiKey && config.jina.apiKey.trim().length > 0);
+    return false;
   }
 
   private static defaultHeaders(): Record<string, string> {
@@ -264,82 +265,14 @@ export class ScraperClient {
   // 🧠 JINA AI INTEGRATION
   // =========================================================================
 
-  public static async fetchJinaReader(targetUrl: string, options: ScraperClientOptions = {}): Promise<ScraperClientResponse> {
-    if (!this.isJinaEnabled()) {
-      throw new Error('JINA_API_KEY missing or JINA_ENABLED is not true');
-    }
-
-    const timeoutMs = options.timeoutMs ?? config.jina.timeoutMs;
-    const maxLen = config.jina.maxContentLength;
-    const jinaUrl = `https://r.jina.ai/${targetUrl}`;
-
-    const headers: Record<string, string> = {
-      'Authorization': `Bearer ${config.jina.apiKey}`,
-      'X-Return-Format': 'markdown',
-      'Accept': 'text/plain',
-    };
-
-    Logger.info('[JinaReader] Fetching', { host: safeHost(targetUrl) });
-
-    const resp = await withRetry(async () => {
-      const { statusCode, headers: resHeaders, body } = await request(jinaUrl, {
-        method: 'GET',
-        headers,
-        dispatcher: globalDispatcher,
-        bodyTimeout: timeoutMs,
-        headersTimeout: timeoutMs,
-      });
-      return { status: statusCode, headers: resHeaders, text: await body.text() };
-    }, options.maxRetries ?? 1);
-
-    let body = resp.text;
-    if (body.length > maxLen) {
-      body = body.slice(0, maxLen);
-    }
-
-    return {
-      via: 'jina_reader',
-      status: resp.status,
-      finalUrl: targetUrl,
-      headers: resp.headers as any,
-      data: body,
-    };
+  /** @deprecated Jina AI permanently removed */
+  public static async fetchJinaReader(_targetUrl: string, _options: ScraperClientOptions = {}): Promise<ScraperClientResponse> {
+    throw new Error('JINA_REMOVED: Jina AI has been permanently removed from OMEGA. Use DomDistiller fallback.');
   }
 
-  public static async fetchJinaSearch(query: string, options: ScraperClientOptions = {}): Promise<ScraperClientResponse> {
-    if (!this.isJinaEnabled()) {
-      throw new Error('JINA_API_KEY missing or JINA_ENABLED is not true');
-    }
-
-    const timeoutMs = options.timeoutMs ?? config.jina.timeoutMs;
-    const encodedQuery = encodeURIComponent(query);
-    const jinaUrl = `https://s.jina.ai/${encodedQuery}`;
-
-    const headers: Record<string, string> = {
-      'Authorization': `Bearer ${config.jina.apiKey}`,
-      'Accept': 'application/json',
-    };
-
-    Logger.info('[JinaSearch] Searching', { query: query.slice(0, 80) });
-
-    const resp = await withRetry(async () => {
-      const { statusCode, headers: resHeaders, body } = await request(jinaUrl, {
-        method: 'GET',
-        headers,
-        dispatcher: globalDispatcher,
-        bodyTimeout: timeoutMs,
-        headersTimeout: timeoutMs,
-      });
-      return { status: statusCode, headers: resHeaders, text: await body.text() };
-    }, options.maxRetries ?? 1);
-
-    return {
-      via: 'jina_search',
-      status: resp.status,
-      finalUrl: jinaUrl,
-      headers: resp.headers as any,
-      data: resp.text,
-    };
+  /** @deprecated Jina AI permanently removed */
+  public static async fetchJinaSearch(_query: string, _options: ScraperClientOptions = {}): Promise<ScraperClientResponse> {
+    throw new Error('JINA_REMOVED: Jina AI has been permanently removed from OMEGA. Use DomDistiller fallback.');
   }
 
   public static parseJinaSearchResults(rawData: string): Array<{ title: string; url: string; description: string }> {

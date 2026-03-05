@@ -1,10 +1,6 @@
-import { connect } from 'puppeteer-real-browser';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as crypto from 'crypto';
-import { execSync } from 'child_process';
+import { chromium, Browser, BrowserContext, Page } from 'playwright';
+const crypto = require('crypto');
 import { CostLedger } from './CostLedger';
-import { Page, Browser } from 'playwright';
 
 export interface NavigationResult {
     status: 'OK' | 'TIMEOUT' | 'BLOCKED' | 'CF_CHALLENGE' | 'ERROR';
@@ -15,11 +11,10 @@ export interface NavigationResult {
     browser_id: string;
 }
 
-interface BrowserInstance {
+interface ContextInstance {
     id: string;
+    context: BrowserContext;
     page: Page;
-    browser: Browser;
-    profilePath: string;
     created_at: number;
     requests_served: number;
     last_error?: string;
@@ -33,12 +28,23 @@ export class BrowserPoolExhaustedError extends Error {
     }
 }
 
+/**
+ * BrowserPool V2 — Playwright Edition
+ * 
+ * Architecture:
+ * - Single shared Browser instance (chromium.launch)
+ * - Multiple isolated BrowserContexts (each with unique fingerprint, cookies, storage)
+ * - Request interception via context.route() to block heavy resources
+ * - Auto-recycle contexts after N requests to prevent memory leaks
+ */
 export class BrowserPool {
-    private instances: BrowserInstance[] = [];
+    private browser: Browser | null = null;
+    private instances: ContextInstance[] = [];
     private maxInstances: number;
     private maxReqsPerInstance: number;
     private navTimeoutMs: number;
     private blockResources: string[];
+    private proxyUrl: string | undefined;
 
     // Stats
     private recycledTotal = 0;
@@ -49,7 +55,6 @@ export class BrowserPool {
         maxInstances?: number;
         maxRequestsPerInstance?: number;
         navigationTimeout?: number;
-        recycleOnError?: boolean;
         blockResources?: string[];
         ledger: CostLedger;
     }) {
@@ -58,13 +63,14 @@ export class BrowserPool {
         this.navTimeoutMs = options.navigationTimeout || 8000;
         this.blockResources = options.blockResources || ['image', 'stylesheet', 'font', 'media'];
         this.ledger = options.ledger;
+        this.proxyUrl = process.env.PROXY_RESIDENTIAL_URL;
 
         this.registerCleanupHooks();
     }
 
     private registerCleanupHooks() {
         const cleanup = async () => {
-            console.log('[BrowserPool] Process exiting. Destroying all Chrome instances...');
+            console.log('[BrowserPool] Process exiting. Destroying all Playwright contexts...');
             await this.destroyAll();
             process.exit(0);
         };
@@ -72,54 +78,71 @@ export class BrowserPool {
         process.on('SIGINT', cleanup);
     }
 
-    private async createInstance(): Promise<BrowserInstance> {
-        const id = crypto.randomUUID().substring(0, 8);
-        const profilePath = path.join('/tmp', `omega-browser-${id}`);
+    private async ensureBrowser(): Promise<Browser> {
+        if (!this.browser || !this.browser.isConnected()) {
+            const launchOptions: any = {
+                headless: true,
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                ],
+            };
 
-        if (!fs.existsSync(profilePath)) {
-            fs.mkdirSync(profilePath, { recursive: true });
+            // Route all browser traffic through the residential proxy if configured
+            if (this.proxyUrl) {
+                launchOptions.proxy = { server: this.proxyUrl };
+            }
+
+            this.browser = await chromium.launch(launchOptions);
         }
+        return this.browser;
+    }
 
-        const { browser, page } = await connect({
-            headless: false, // PRB only accepts boolean. 
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--single-process',
-                '--no-zygote',
-                `--user-data-dir=${profilePath}`
-            ],
-            customConfig: {},
-            turnstile: true, // Auto-solve Cloudflare Turnstile if present
-            disableXvfb: false,
-            ignoreAllFlags: false
+    private async createInstance(): Promise<ContextInstance> {
+        const id = crypto.randomUUID().substring(0, 8);
+        const browser = await this.ensureBrowser();
+
+        // Each context is fully isolated (cookies, localStorage, fingerprint)
+        const context = await browser.newContext({
+            // Randomize viewport for anti-fingerprinting
+            viewport: {
+                width: 1280 + Math.floor(Math.random() * 200),
+                height: 720 + Math.floor(Math.random() * 200),
+            },
+            userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            locale: 'it-IT',
+            timezoneId: 'Europe/Rome',
+            ignoreHTTPSErrors: true,
         });
 
-        // Setup Request Interception to block heavy resources
-        await page.setRequestInterception(true);
-        page.on('request', (req) => {
-            const resourceType = req.resourceType();
+        // Block heavy resources via Playwright's route() API
+        // This is the Playwright equivalent of puppeteer's setRequestInterception
+        const blockPattern = this.blockResources.map(r => `**/*.${r === 'image' ? '{png,jpg,jpeg,gif,webp,svg,ico}' : r === 'stylesheet' ? 'css' : r === 'font' ? '{woff,woff2,ttf,otf,eot}' : r === 'media' ? '{mp4,webm,ogg,mp3,wav}' : r}`);
+
+        await context.route('**/*', (route) => {
+            const resourceType = route.request().resourceType();
             if (this.blockResources.includes(resourceType)) {
-                req.abort();
+                route.abort().catch(() => { });
             } else {
-                req.continue();
+                route.continue().catch(() => { });
             }
         });
 
+        const page = await context.newPage();
+
         return {
             id,
-            browser: browser as unknown as Browser, // Types from puppeteer-real-browser can be a bit funky
-            page: page as unknown as Page,
-            profilePath,
+            context,
+            page,
             created_at: Date.now(),
             requests_served: 0,
-            is_busy: false
+            is_busy: false,
         };
     }
 
-    private async acquireInstance(): Promise<BrowserInstance> {
+    private async acquireInstance(): Promise<ContextInstance> {
         // Find available
         let available = this.instances.find(i => !i.is_busy);
 
@@ -149,26 +172,14 @@ export class BrowserPool {
         return available;
     }
 
-    private async recycleInstance(instance: BrowserInstance) {
+    private async recycleInstance(instance: ContextInstance) {
         try {
-            // Try graceful close with 5s timeout
             await Promise.race([
-                instance.browser.close(),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout closing browser')), 5000))
+                instance.context.close(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout closing context')), 5000))
             ]);
         } catch (e) {
-            // Force kill
-            try {
-                // Find and kill process by profile directory argument
-                execSync(`ps aux | grep chrome | grep ${instance.profilePath} | awk '{print $2}' | xargs kill -9 2>/dev/null`);
-            } catch (kille) {
-                // Ignore
-            }
-        }
-
-        // Wipe profile dir
-        if (fs.existsSync(instance.profilePath)) {
-            fs.rmSync(instance.profilePath, { recursive: true, force: true });
+            // Context may already be closed — ignore
         }
 
         this.instances = this.instances.filter(i => i.id !== instance.id);
@@ -176,7 +187,7 @@ export class BrowserPool {
     }
 
     public async navigateSafe(url: string, pivaToFind?: string): Promise<NavigationResult> {
-        let instance: BrowserInstance;
+        let instance: ContextInstance;
         try {
             instance = await this.acquireInstance();
         } catch (e) {
@@ -199,11 +210,14 @@ export class BrowserPool {
                 const statusHttp = response.status();
                 if (statusHttp === 403 || statusHttp === 429) {
                     status = 'BLOCKED';
-                } else if (response.headers()['cf-ray']) {
-                    // Check if it's a block page vs a normal served CF page
-                    const bodyText = await instance.page.evaluate(() => document.body.innerText);
-                    if (bodyText.includes('Just a moment...') || bodyText.includes('Attention Required!')) {
-                        status = 'CF_CHALLENGE';
+                } else {
+                    const headers = response.headers();
+                    if (headers['cf-ray']) {
+                        // Check if it's a Cloudflare challenge page
+                        const bodyText = await instance.page.evaluate(() => document.body.innerText);
+                        if (bodyText.includes('Just a moment...') || bodyText.includes('Attention Required!')) {
+                            status = 'CF_CHALLENGE';
+                        }
                     }
                 }
             }
@@ -215,7 +229,7 @@ export class BrowserPool {
         } catch (err: any) {
             this.errorsTotal++;
             instance.last_error = err.message;
-            if (err.message.includes('Timeout')) {
+            if (err.message.includes('Timeout') || err.name === 'TimeoutError') {
                 status = 'TIMEOUT';
             } else {
                 status = 'ERROR';
@@ -234,7 +248,7 @@ export class BrowserPool {
 
         // Log Cost/Health
         await this.ledger.log({
-            timestamp: new Date().toISOString(), module: 'BrowserPool', provider: 'puppeteer',
+            timestamp: new Date().toISOString(), module: 'BrowserPool', provider: 'playwright',
             tier: 2, task_type: 'PROXY_FETCH', cost_eur: 0, cache_hit: false, cache_level: 'MISS',
             duration_ms: duration, success: status === 'OK', error: status === 'OK' ? undefined : status
         });
@@ -251,28 +265,21 @@ export class BrowserPool {
 
     public async destroyAll(): Promise<{ killed: number; lockfiles_deleted: number }> {
         let killed = 0;
-        let lockfiles_deleted = 0;
 
         for (const inst of [...this.instances]) {
             await this.recycleInstance(inst);
             killed++;
-            lockfiles_deleted++;
         }
 
-        // Global sweep for zombies
-        try {
-            execSync(`pkill -f "chrome.*omega-browser"`);
-        } catch (e) { }
+        // Close the shared browser instance
+        if (this.browser) {
+            try {
+                await this.browser.close();
+            } catch (e) { }
+            this.browser = null;
+        }
 
-        try {
-            const tmpDirs = fs.readdirSync('/tmp').filter(d => d.startsWith('omega-browser-'));
-            for (const d of tmpDirs) {
-                fs.rmSync(path.join('/tmp', d), { recursive: true, force: true });
-                lockfiles_deleted++;
-            }
-        } catch (e) { }
-
-        return { killed, lockfiles_deleted };
+        return { killed, lockfiles_deleted: 0 };
     }
 
     public getPoolStatus() {

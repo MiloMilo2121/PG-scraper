@@ -102,11 +102,7 @@ const EnvSchema = z.object({
   DEDUPLICATOR_MAX_COMPANIES: z.coerce.number().min(1000).default(100000),
   CAPTCHA_MAX_ATTEMPTS: z.coerce.number().min(1).default(30),
 
-  // JINA
-  JINA_API_KEY: z.string().optional(),
-  JINA_ENABLED: BooleanString.default(false),
-  JINA_TIMEOUT_MS: z.coerce.number().min(5000).default(20000),
-  JINA_MAX_CONTENT_LENGTH: z.coerce.number().min(1000).default(8000),
+  // JINA (REMOVED — using internal DomDistiller fallback)
 
   // 🚩 OMEGA 6.2 FEATURE FLAGS & GUARDRAILS
   DISCOVERY_GOOGLE_BROWSER_ENABLED: BooleanString.default(true),
@@ -289,12 +285,7 @@ export const config = {
     botToken: env.TELEGRAM_BOT_TOKEN,
     chatId: env.TELEGRAM_CHAT_ID,
   },
-  jina: {
-    apiKey: env.JINA_API_KEY,
-    enabled: env.JINA_ENABLED,
-    timeoutMs: env.JINA_TIMEOUT_MS,
-    maxContentLength: env.JINA_MAX_CONTENT_LENGTH,
-  },
+  // jina: REMOVED
 
   // 🚩 OMEGA 6.2 FEATURE FLAGS & GUARDRAILS
   features: {

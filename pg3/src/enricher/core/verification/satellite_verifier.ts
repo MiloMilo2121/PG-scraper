@@ -1,5 +1,5 @@
 
-import axios from 'axios';
+import { request } from 'undici';
 import { Logger } from '../../utils/logger';
 import { config } from '../../config';
 import { LLMService } from '../ai/llm_service';
@@ -47,8 +47,9 @@ export class SatelliteVerifier {
         const url = `https://maps.googleapis.com/maps/api/streetview?size=600x400&location=${encodeURIComponent(location)}&key=${this.streetViewKey}`;
 
         try {
-            const response = await axios.get(url, { responseType: 'arraybuffer' });
-            return Buffer.from(response.data, 'binary').toString('base64');
+            const response = await request(url, { method: 'GET', bodyTimeout: 10000 });
+            const buffer = Buffer.from(await response.body.arrayBuffer());
+            return buffer.toString('base64');
         } catch (error) {
             Logger.error(`[Satellite] Failed to fetch Street View for ${location}`, { error: error as Error });
             return null;

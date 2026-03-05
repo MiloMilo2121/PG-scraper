@@ -35,9 +35,10 @@ export class MapsGridProvider {
         Logger.info(`[MapsGrid] 🗺️ Navigating: ${query}`);
 
         try {
-            await page.goto(mapsUrl, { waitUntil: 'networkidle', timeout: 30000 });
+            // Use domcontentloaded + manual wait to avoid networkidle hangs (Law 608)
+            await page.goto(mapsUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
             await this.handleConsent(page);
-            await this.delay(2000);
+            await this.delay(3000); // Wait for results to start rendering
 
             // Check if we landed on results list or single place
             const hasResultsList = await page.$('div[role="feed"]');
@@ -113,15 +114,15 @@ export class MapsGridProvider {
     }
 
 
-    private static async safeEvaluate<T>(page: Page, fn: (...args: any[]) => T, ...args: any[]): Promise<T | null> {
+    private static async safeEvaluate<T, Arg>(page: Page, fn: (arg: Arg) => T, arg?: Arg): Promise<T | null> {
         try {
-            return await page.evaluate(fn, ...args);
+            return await page.evaluate(fn, arg as any);
         } catch (error) {
             if ((error as Error).message.includes('detached') || (error as Error).message.includes('destroyed')) {
                 Logger.warn(`[MapsGrid] ⚠️ Frame detached during evaluation. Retrying once...`);
                 try {
                     await new Promise(r => setTimeout(r, 1000));
-                    return await page.evaluate(fn, ...args);
+                    return await page.evaluate(fn, arg as any);
                 } catch (retryError) {
                     Logger.warn(`[MapsGrid] ❌ Retry failed: ${(retryError as Error).message}`);
                     return null;
@@ -139,7 +140,7 @@ export class MapsGridProvider {
         category: string,
         location: string
     ): Promise<CompanyInput[]> {
-        const results = await this.safeEvaluate(page, (cat, loc) => {
+        const results = await this.safeEvaluate(page, ({ cat, loc }: any) => {
             const results: any[] = [];
             const feed = document.querySelector('div[role="feed"]');
             if (!feed) return results;
@@ -204,7 +205,7 @@ export class MapsGridProvider {
             }
 
             return results;
-        }, category, location);
+        }, { cat: category, loc: location });
 
         return (results as CompanyInput[]) || [];
     }
@@ -283,16 +284,27 @@ export class MapsGridProvider {
 
     private static async handleConsent(page: Page): Promise<void> {
         try {
-            // Google consent dialog
-            const consentBtn = await page.$('button[aria-label="Accetta tutto"]') ||
-                await page.$('button[aria-label="Accept all"]') ||
-                await page.$('form[action*="consent"] button');
-            if (consentBtn) {
-                await consentBtn.click();
-                await this.delay(1000);
-                Logger.info('[MapsGrid] 🍪 Consent handled');
+            // Google consent dialog - more robust selectors
+            const selectors = [
+                'button[aria-label="Accetta tutto"]',
+                'button[aria-label="Accept all"]',
+                'button:has-text("Accetta tutto")',
+                'button:has-text("Accept all")',
+                'form[action*="consent"] button'
+            ];
+
+            for (const selector of selectors) {
+                const btn = await page.$(selector);
+                if (btn) {
+                    await btn.click().catch(() => { });
+                    await this.delay(1000);
+                    Logger.info(`[MapsGrid] 🍪 Consent handled (${selector})`);
+                    return;
+                }
             }
-        } catch { }
+        } catch (e) {
+            Logger.warn(`[MapsGrid] ⚠️ Consent handling skipped: ${(e as Error).message}`);
+        }
     }
 
     private static delay(ms: number): Promise<void> {

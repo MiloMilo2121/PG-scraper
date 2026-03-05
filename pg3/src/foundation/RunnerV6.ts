@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 require('dotenv').config();
 import { parse } from 'csv-parse/sync';
-import axios from 'axios';
+// axios removed — all HTTP now via undici
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import * as cheerio from 'cheerio';
 import { OpenAI } from 'openai';
@@ -27,6 +27,7 @@ import { CostRouter } from './CostRouter';
 import { EnrichmentBuffer } from './EnrichmentBuffer';
 import { QuerySanitizer } from './QuerySanitizer';
 import { EnrichmentPostProcessor } from './EnrichmentPostProcessor';
+import { PecHunter } from './PecHunter';
 
 // Prevent Puppeteer Stealth plugin "Target closed" async crashes from killing the runner
 process.on('unhandledRejection', (reason, promise) => {
@@ -81,8 +82,11 @@ async function startupGate(): Promise<{ mode: 'FULL' | 'FREE_ONLY' | 'ABORT', av
     }
 
     try {
-        const res = await axios.get('https://lite.duckduckgo.com/lite', { timeout: 5000 });
-        if (res.status === 200) freeOk = true;
+        const { request: undiciRequest } = await import('undici');
+        const res = await undiciRequest('https://lite.duckduckgo.com/lite', { method: 'GET', bodyTimeout: 5000, headersTimeout: 5000 });
+        if (res.statusCode === 200) freeOk = true;
+        // Consume the body to prevent memory leak
+        await res.body.text();
     } catch { }
 
     if (!paidOk) {
@@ -162,6 +166,17 @@ async function run() {
                 const { ScraperClient } = require('../enricher/utils/scraper_client');
                 const result = await ScraperClient.fetchHtml(url, { mode: 'brightdata', ...payload.options });
                 return result as unknown as T;
+            }
+        } as any],
+        ['ORACLE-CRAWL4AI-5', {
+            costPerRequest: 0.0, // Local Python execution is free
+            tier: 5, // Ultimate stealth fallback
+            execute: async <T>(payload: any): Promise<T> => {
+                const url = typeof payload === 'string' ? payload : payload.url;
+                const { OracleClient } = require('../enricher/utils/oracle_client');
+                const result = await OracleClient.fetchHtmlStealth(url);
+                // Map to the shape expected by downstream, which usually wants { data: html_string, status: 200 }
+                return { data: result.html, status: 200 } as unknown as T;
             }
         } as any],
         ['BING-HTML-1', {
@@ -378,7 +393,8 @@ async function run() {
         linkedinSniper: new LinkedInSniper(dedup, valve),
         browserPool: pool,
         costRouter: router,
-        postProcessor: new EnrichmentPostProcessor(pool)
+        postProcessor: new EnrichmentPostProcessor(pool),
+        pecHunter: new PecHunter(pool)
     });
 
     const fileContent = fs.readFileSync(csvPath, 'utf8');
@@ -388,17 +404,41 @@ async function run() {
         bom: true // Fixes SERPER-1 artifact bugs immediately
     });
 
-    console.log(`[RunnerV6] Loaded ${records.length} records. Commencing OMEGA ENGINE v6.`);
+    const inputBasename = path.basename(csvPath, path.extname(csvPath));
+    const outputDir = path.dirname(csvPath);
+    const jsonlOutputPath = path.join(outputDir, `${inputBasename}_v6_results.jsonl`);
+    const csvOutputPath = path.join(outputDir, `${inputBasename}_v6_results.csv`);
 
-    let done = 0;
+    let startIndex = 0;
+    if (fs.existsSync(csvOutputPath)) {
+        // Read file and count lines to find out how many we processed (excluding header)
+        const existingContent = fs.readFileSync(csvOutputPath, 'utf-8');
+        const lineCount = existingContent.split('\n').filter(l => l.trim().length > 0).length;
+        startIndex = Math.max(0, lineCount - 1);
+        console.log(`[RunnerV6] 📌 CHECKPOINT DETECTED: Found existing CSV with ${lineCount} lines. Resuming from index ${startIndex}.`);
+    } else {
+        // Write header since file doesn't exist
+        const csvHeader = 'company_name,city,normalized_name,status,website_url,confidence,discovery_layer,pec,email,revenue,revenue_year,employees,duration_ms,layers_attempted\n';
+        fs.writeFileSync(csvOutputPath, csvHeader, 'utf8');
+        if (fs.existsSync(jsonlOutputPath)) fs.unlinkSync(jsonlOutputPath);
+    }
+
+    console.log(`[RunnerV6] Loaded ${records.length} total records. Commencing OMEGA ENGINE v6 from index ${startIndex}.`);
+
+    let done = startIndex;
     const BATCH_SIZE = 15; // Process in controlled batches to prevent OOM
-    const results: any[] = [];
 
-    for (let i = 0; i < records.length; i += BATCH_SIZE) {
+    // We no longer store the entire results array in memory to save RAM on 29k iterations
+    let memFound = 0;
+    let memNotFound = 0;
+    let memErrors = 0;
+
+    for (let i = startIndex; i < records.length; i += BATCH_SIZE) {
         const batch = records.slice(i, i + BATCH_SIZE);
-        const batchPromises = batch.map((row: any, batchIdx: number) => {
+        const batchPromises = batch.map(async (row: any, batchIdx: number) => {
             const idx = i + batchIdx;
-            return pipeline.processCompany(row, idx).then(res => {
+            try {
+                const res = await pipeline.processCompany(row, idx);
                 done++;
                 if (done % 10 === 0) {
                     const metrics = valve.getMetrics();
@@ -406,56 +446,58 @@ async function run() {
                     console.log(`📊 Progress: ${done}/${records.length} (${((done / records.length) * 100).toFixed(1)}%) | 🚦 Concurrency: ${metrics.current_concurrency}/${metrics.max_concurrency} (Q: ${metrics.queue_depth}) | ❌ Errors: ${(metrics.error_rate_5m * 100).toFixed(1)}% | 🩸 Bleeding: ${bleedingCtrl.isBleedingModeActive}`);
                 }
                 return res;
-            }).catch(err => {
+            } catch (err: any) {
                 done++;
                 console.error(`[RunnerV6] Company ${idx} failed:`, err.message);
-                return { status: 'ERROR', error: err.message };
-            });
+                return { input: row, status: 'ERROR', error: err.message };
+            }
         });
 
         const batchResults = await Promise.all(batchPromises);
-        results.push(...batchResults);
+
+        // --- 💾 STREAMING & CONTINUOUS APPEND ---
+        const csvRows = batchResults.map((r: any) => {
+            const companyName = (r.input?.company_name || '').replace(/,/g, ';').replace(/"/g, "'");
+            const city = (r.input?.city || '').replace(/,/g, ';');
+            const normalizedName = (r.input?.normalized_name || '').replace(/,/g, ';');
+            const status = r.status || 'ERROR';
+            const url = r.website?.url || '';
+            const confidence = r.website?.confidence || '';
+            const layer = r.website?.discovery_layer || '';
+            const pec = r.pec || '';
+            const email = r.email || '';
+            const revenue = r.financial?.fatturato_current || '';
+            const revenueYear = r.financial?.year || '';
+            const employees = r.employees || '';
+            const duration = r.meta?.duration_ms || '';
+            const layers = (r.meta?.layers_attempted || []).join(';');
+            return `"${companyName}","${city}","${normalizedName}",${status},${url},${confidence},${layer},${pec},${email},${revenue},${revenueYear},${employees},${duration},"${layers}"`;
+        });
+
+        fs.appendFileSync(csvOutputPath, csvRows.join('\n') + '\n', 'utf8');
+
+        const jsonlRows = batchResults.map((r: any) => JSON.stringify(r));
+        fs.appendFileSync(jsonlOutputPath, jsonlRows.join('\n') + '\n', 'utf8');
+
+        // Update RAM-safe stats
+        for (const r of batchResults) {
+            if (r.status === 'FOUND_COMPLETE') memFound++;
+            else if (r.status === 'NOT_FOUND') memNotFound++;
+            else memErrors++;
+        }
+
+        // Force GC after each batch to prevent Node from hoarding RAM over thousands of loops
+        if (global.gc) global.gc();
     }
 
-    console.log('[RunnerV6] Extraction Complete. Saving results...');
+    console.log('[RunnerV6] Extraction Complete.');
 
-    // ===== BUG FIX: EXPORT RESULTS TO DISK =====
-    const inputBasename = path.basename(csvPath, path.extname(csvPath));
-    const outputDir = path.dirname(csvPath);
-    const jsonOutputPath = path.join(outputDir, `${inputBasename}_v6_results.json`);
-    const csvOutputPath = path.join(outputDir, `${inputBasename}_v6_results.csv`);
-
-    // 1. Save raw JSON (full fidelity)
-    fs.writeFileSync(jsonOutputPath, JSON.stringify(results, null, 2), 'utf8');
-    console.log(`[RunnerV6] ✅ JSON saved: ${jsonOutputPath}`);
-
-    // 2. Flatten to CSV for human consumption
-    const csvHeader = 'company_name,city,normalized_name,status,website_url,confidence,discovery_layer,duration_ms,layers_attempted';
-    const csvRows = results.map((r: any) => {
-        const companyName = (r.input?.company_name || '').replace(/,/g, ';').replace(/"/g, "'");
-        const city = (r.input?.city || '').replace(/,/g, ';');
-        const normalizedName = (r.input?.normalized_name || '').replace(/,/g, ';');
-        const status = r.status || 'ERROR';
-        const url = r.website?.url || '';
-        const confidence = r.website?.confidence || '';
-        const layer = r.website?.discovery_layer || '';
-        const duration = r.meta?.duration_ms || '';
-        const layers = (r.meta?.layers_attempted || []).join(';');
-        return `"${companyName}","${city}","${normalizedName}",${status},${url},${confidence},${layer},${duration},"${layers}"`;
-    });
-    const csvContent = [csvHeader, ...csvRows].join('\n');
-    fs.writeFileSync(csvOutputPath, csvContent, 'utf8');
-    console.log(`[RunnerV6] ✅ CSV saved: ${csvOutputPath}`);
-
-    // Final stats
-    const found = results.filter((r: any) => r.status === 'FOUND_COMPLETE').length;
-    const notFound = results.filter((r: any) => r.status === 'NOT_FOUND').length;
-    const errors = results.filter((r: any) => r.status === 'ERROR').length;
     const ledgerSummary = await ledger.getSummary();
+    const totalProcessed = memFound + memNotFound + memErrors;
     console.log(`\n📊 FINAL REPORT:`);
-    console.log(`   Total: ${results.length} | ✅ Found: ${found} | ❌ Not Found: ${notFound} | 💀 Errors: ${errors}`);
+    console.log(`   Total (Session): ${totalProcessed} | ✅ Found: ${memFound} | ❌ Not Found: ${memNotFound} | 💀 Errors: ${memErrors}`);
     console.log(`   💰 Total Cost: €${ledgerSummary.total_cost_eur.toFixed(4)} | API Calls: ${ledgerSummary.total_calls} | Success Rate: ${(ledgerSummary.success_rate * 100).toFixed(1)}%`);
-    console.log(`   💰 Cost/Company: €${(ledgerSummary.total_cost_eur / results.length).toFixed(4)}`);
+    console.log(`   💰 Cost/Company: €${totalProcessed > 0 ? (ledgerSummary.total_cost_eur / totalProcessed).toFixed(4) : 0.0000}`);
 
     // Cleanup
     valve.cleanup();

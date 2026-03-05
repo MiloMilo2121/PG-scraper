@@ -9,7 +9,7 @@
  *   3. Parse the found page for revenue/employees data
  */
 
-import axios from 'axios';
+import { request } from 'undici';
 import * as cheerio from 'cheerio';
 
 import { CompanyInput } from '../../types';
@@ -132,22 +132,24 @@ function buildCandidateUrls(companyName: string, vat: string): string[] {
 }
 
 async function fetchWithTimeout(url: string, timeoutMs: number = 12000): Promise<{ status: number; data: string }> {
-  const resp = await axios.get(url, {
-    timeout: timeoutMs,
+  const resp = await request(url, {
+    method: 'GET',
+    bodyTimeout: timeoutMs,
+    headersTimeout: timeoutMs,
+    // @ts-ignore - undici runtime supports maxRedirections but types are incomplete\n    maxRedirections: 5,
     headers: {
       'User-Agent':
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     },
-    maxRedirects: 5,
-    validateStatus: () => true,
-    responseType: 'text',
   });
 
+  const text = await resp.body.text();
+
   return {
-    status: resp.status,
-    data: typeof resp.data === 'string' ? resp.data : String(resp.data),
+    status: resp.statusCode,
+    data: text,
   };
 }
 

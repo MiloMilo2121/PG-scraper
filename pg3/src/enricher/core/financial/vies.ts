@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { request } from 'undici';
 import { Logger } from '../../utils/logger';
 import { NetworkError } from '../../../utils/errors';
 import { Retry } from '../../../utils/decorators';
@@ -29,38 +29,53 @@ export class ViesService {
         const url = `https://ec.europa.eu/taxation_customs/vies/rest-api/ms/${countryCode}/vat/${vatNumber}`;
 
         try {
-            const response = await axios.get(url, { timeout: 10000 });
+            const res = await request(url, {
+                method: 'GET',
+                bodyTimeout: 10000,
+                headersTimeout: 10000,
+            });
 
-            if (response.data?.isValid === true) {
-                return {
-                    isValid: true,
-                    name: response.data.name,
-                    address: response.data.address,
-                };
-            }
+            const statusCode = res.statusCode;
 
-            // Explicit invalid response
-            return { isValid: false };
+            if (statusCode >= 200 && statusCode < 300) {
+                const data = await res.body.json() as any;
 
-        } catch (e: any) {
-            const isNetworkError = !e.response || e.code === 'ECONNABORTED' || e.code === 'ETIMEDOUT';
-            const isServerError = e.response?.status >= 500;
-            const isClientError = e.response?.status >= 400 && e.response?.status < 500;
+                if (data?.isValid === true) {
+                    return {
+                        isValid: true,
+                        name: data.name,
+                        address: data.address,
+                    };
+                }
 
-            // ⚠️ SAFEGUARD: If client error (400/404), it's likely invalid. Do NOT accept provisionally.
-            if (isClientError) {
-                Logger.warn(`[VIES] Client error (${e.response.status}) for ${vatNumber}. Assuming invalid.`);
+                // Explicit invalid response
                 return { isValid: false };
             }
 
-            // 🟢 FALLBACK: If network/server failure + Checksum passed (IT only), accept PROVISIONALLY.
-            if ((isNetworkError || isServerError) && countryCode === 'IT') {
+            // Client error (400/404) — likely invalid
+            if (statusCode >= 400 && statusCode < 500) {
+                Logger.warn(`[VIES] Client error (${statusCode}) for ${vatNumber}. Assuming invalid.`);
+                return { isValid: false };
+            }
+
+            // Server error (5xx) — accept provisionally for IT if checksum passed
+            if (statusCode >= 500 && countryCode === 'IT') {
                 Logger.warn(`[VIES] System unavailable. Accepting ${vatNumber} provisionally (Checksum OK).`);
                 return { isValid: true, provisional: true };
             }
 
-            // Retry logic handled by decorator, but if we reach here after retries (via re-throw), 
-            // the decorator will give up.
+            throw new NetworkError(`VIES validation failed: HTTP ${statusCode}`);
+
+        } catch (e: any) {
+            if (e instanceof NetworkError) throw e;
+
+            const isNetworkError = e.code === 'UND_ERR_CONNECT_TIMEOUT' || e.code === 'UND_ERR_BODY_TIMEOUT' || e.code === 'ENOTFOUND';
+
+            if (isNetworkError && countryCode === 'IT') {
+                Logger.warn(`[VIES] System unavailable. Accepting ${vatNumber} provisionally (Checksum OK).`);
+                return { isValid: true, provisional: true };
+            }
+
             throw new NetworkError(`VIES validation failed: ${e.message}`);
         }
     }

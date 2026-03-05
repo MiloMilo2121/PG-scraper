@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { request } from 'undici';
 import { SearchProvider } from './search_provider';
 import { SerpResult } from './serp_analyzer';
 import { Logger } from '../../utils/logger';
@@ -20,20 +20,26 @@ export class CrtShProvider implements SearchProvider {
 
         await new Promise(r => setTimeout(r, Math.random() * 1000 + 500));
 
-        const response = await axios.get(url, {
-            timeout: 15000,
+        const response = await request(url, {
+            method: 'GET',
+            bodyTimeout: 15000,
+            headersTimeout: 15000,
             headers: {
                 'User-Agent': 'OMEGA_V7_OSINT_PROBE (Research Purposes)',
                 'Accept': 'application/json'
             }
         });
 
-        if (!response.data || !Array.isArray(response.data)) {
-            if (response.status === 200) return []; // Valid empty response
-            throw new Error(`CRTSH_ERROR: DB returned non-array payload. Status: ${response.status}`);
+        if (response.statusCode !== 200) {
+            if (response.statusCode === 200) return []; // Dead path for safety
+            throw new Error(`CRTSH_ERROR: DB returned non-200 status. Status: ${response.statusCode}`);
         }
 
-        const rawResults = response.data;
+        const rawResults = await response.body.json() as any[];
+
+        if (!rawResults || !Array.isArray(rawResults)) {
+            return [];
+        }
         const processedResults: SerpResult[] = [];
         const seenDomains = new Set<string>();
 

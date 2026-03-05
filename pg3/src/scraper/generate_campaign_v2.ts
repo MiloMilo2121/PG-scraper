@@ -22,8 +22,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { createObjectCsvWriter } from 'csv-writer';
-import { Page, Browser } from 'playwright';
-import puppeteerCore from 'playwright';
+import { Page, Browser, BrowserContext } from 'playwright';
+import { chromium } from 'playwright';
 // BrowserFactory BYPASSED: its newPage() initialization pipeline (GeneticFingerprinter,
 // BrowserEvasion, ProxyManager, CookieConsent) detaches the page frame on the server.
 // Raw puppeteer.launch() works perfectly (confirmed by diagnostic).
@@ -92,14 +92,60 @@ function resolveProvinceName(code: string): string {
     return PROVINCE_CODES[code] || code;
 }
 
+/**
+ * Resolve province code to the PagineGialle province search slug.
+ * PG uses URL-path slugs like "provincia-di-verona" to distinguish
+ * province-level searches from city-level.
+ *
+ * IMPORTANT CAVEATS:
+ *  - "Reggio Emilia" must be "Reggio nell'Emilia" on PG
+ *  - The slug format is "provincia-di-NAME" (lowercased, spaces→hyphens)
+ */
+const PG_PROVINCE_OVERRIDES: Record<string, string> = {
+    'RE': "provincia-di-reggio-nell-emilia",    // PG official name
+    'BT': "provincia-di-barletta-andria-trani",
+    'VB': "provincia-di-verbano-cusio-ossola",
+    'SU': "provincia-di-sud-sardegna",
+    'FC': "provincia-di-forli-cesena",
+    'MS': "provincia-di-massa-carrara",
+    'PU': "provincia-di-pesaro-e-urbino",
+    'MB': "provincia-di-monza-e-brianza",
+};
+
+function pgProvinceName(code: string): string {
+    // Check overrides first
+    if (PG_PROVINCE_OVERRIDES[code]) return PG_PROVINCE_OVERRIDES[code];
+
+    const name = PROVINCE_CODES[code];
+    if (!name) return code; // Fallback: use raw code if unknown
+
+    // Convert to PG slug: "Cremona" → "provincia-di-cremona"
+    const slug = name
+        .toLowerCase()
+        .replace(/'/g, '-')         // L'Aquila → l-aquila
+        .replace(/\s+/g, '-')       // Reggio Calabria → reggio-calabria
+        .replace(/-+/g, '-');       // Clean up double dashes
+
+    return `provincia-di-${slug}`;
+}
+
 // ─── HELPER: SETUP PAGE ──────────────────────────────────────────────────────
-// ─── HELPER: SETUP PAGE ──────────────────────────────────────────────────────
+const TARGETS_PER_BROWSER = 250; // Safe for 32GB RAM now that rogue processes are dead
 let browserInstance: Browser | null = null;
+let targetsCount = 0;
+
+export interface BrowserSession {
+    page: Page;
+    context: BrowserContext;
+}
 
 async function getBrowser(): Promise<Browser> {
-    if (browserInstance && browserInstance.isConnected()) return browserInstance;
+    if (browserInstance && browserInstance.isConnected() && targetsCount < TARGETS_PER_BROWSER) {
+        return browserInstance;
+    }
 
-    Logger.info('[Browser] 🔄 (Re)launching browser...');
+    Logger.info(`[Browser] 🔄 (Re)launching browser (Current count: ${targetsCount})...`);
+    targetsCount = 0; // Reset count
     try {
         if (browserInstance) await browserInstance.close().catch(() => { });
     } catch { }
@@ -107,7 +153,7 @@ async function getBrowser(): Promise<Browser> {
     const browserProfileDir = path.join(process.cwd(), 'search_profile_scraper');
     if (!fs.existsSync(browserProfileDir)) fs.mkdirSync(browserProfileDir, { recursive: true });
 
-    browserInstance = await (puppeteerCore as any).launch({
+    browserInstance = await chromium.launch({
         headless: true,
         args: [
             '--no-sandbox',
@@ -116,13 +162,11 @@ async function getBrowser(): Promise<Browser> {
             '--ignore-certificate-errors',
         ],
         executablePath: process.env.CHROME_BIN || undefined,
-        userDataDir: browserProfileDir,
-        defaultViewport: null,
-    }) as Browser;
+    });
     return browserInstance!;
 }
 
-async function setupPage(): Promise<Page> {
+async function setupPage(): Promise<BrowserSession> {
     const maxRetries = 3;
     let lastError: Error | null = null;
 
@@ -134,20 +178,22 @@ async function setupPage(): Promise<Page> {
                 viewport: { width: 1920, height: 1080 }
             });
             const page = await context.newPage();
-            page.setDefaultTimeout(30000);
-            page.setDefaultNavigationTimeout(30000);
-            return page;
+            page.setDefaultTimeout(45000); // 45s for server stability
+            page.setDefaultNavigationTimeout(45000);
+
+            targetsCount++;
+            return { page, context };
         } catch (e) {
             lastError = e as Error;
             Logger.warn(`[Browser] ⚠️ setupPage failed (Attempt ${i + 1}/${maxRetries}): ${lastError.message}`);
 
-            // Force reset
+            // Force reset on failure
             if (browserInstance) {
                 await browserInstance.close().catch(() => { });
                 browserInstance = null;
+                targetsCount = 0;
             }
 
-            // Wait before retry (exponential backoff)
             await delay(2000 * (i + 1));
         }
     }
@@ -167,15 +213,32 @@ async function preFlightCheck(
     Logger.info(`📡 PHASE 1: PRE-FLIGHT INTELLIGENCE`);
     Logger.info(`${'═'.repeat(60)}`);
 
+    let preflightTargets = 0;
+
     for (const province of provinces) {
         for (const category of categories) {
-            let page: Page | null = null;
+            // Check if we need to restart the browser to prevent OOM
+            if (preflightTargets >= TARGETS_PER_BROWSER) {
+                Logger.info(`\n🔄 Pre-Flight: Reached ${TARGETS_PER_BROWSER} checks. Recycling browser memory...`);
+                if (browserInstance) {
+                    await browserInstance.close().catch(e => Logger.error(`Error closing browser: ${e.message}`));
+                    browserInstance = null;
+                }
+                await getBrowser();
+                preflightTargets = 0;
+            }
+
+            let session: BrowserSession | null = null;
             try {
-                page = await setupPage();
+                session = await setupPage();
+                const page = session.page;
 
                 Logger.info(`\n🔍 Checking: "${category}" in ${province}...`);
 
-                const pgUrl = `https://www.paginegialle.it/ricerca/${encodeURIComponent(category)}/${encodeURIComponent(province)}`;
+                // Use 'Provincia di X' format to force province-level search on PagineGialle
+                // e.g. 'Verona' = solo comune, 'Provincia di Verona' = intera provincia
+                const pgLocation = pgProvinceName(province);
+                const pgUrl = `https://www.paginegialle.it/ricerca/${encodeURIComponent(category)}/${encodeURIComponent(pgLocation)}`;
 
                 await page.goto(pgUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
@@ -261,8 +324,12 @@ async function preFlightCheck(
                     pgResultCount: -1,
                 });
             } finally {
-                if (page) await page.close().catch(() => { });
+                if (session) {
+                    await session.page.close().catch(() => { });
+                    await session.context.close().catch(() => { });
+                }
             }
+            preflightTargets++;
 
             await delay(1500);
         }
@@ -294,7 +361,10 @@ async function scrapePG(
     Logger.info(`   📄 PG: Scraping "${target.category}" in ${target.location}...`);
 
     while (hasNext && pageNum <= MAX_PG_PAGES) {
-        const url = `https://www.paginegialle.it/ricerca/${encodeURIComponent(target.category)}/${encodeURIComponent(target.location)}/p-${pageNum}`;
+        // For province-level searches, use 'Provincia di X' to avoid PG defaulting to the city
+        // For municipalities (when splitter was triggered), use the exact municipality name as-is
+        const pgLocation = target.isMunicipality ? target.location : pgProvinceName(target.location);
+        const url = `https://www.paginegialle.it/ricerca/${encodeURIComponent(target.category)}/${encodeURIComponent(pgLocation)}/p-${pageNum}`;
 
         try {
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -307,6 +377,14 @@ async function scrapePG(
 
             let items: CompanyInput[] = [];
             try {
+                // Wait for either results to load OR the "no results" message
+                await Promise.race([
+                    page.waitForSelector('.search-itm', { state: 'attached', timeout: 15000 }),
+                    page.waitForSelector('.no-result', { state: 'attached', timeout: 15000 })
+                ]).catch(() => {
+                    Logger.warn(`   ⚠️ Timeout waiting for .search-itm on page ${pageNum}. DOM might be empty or Captcha blocked.`);
+                });
+
                 items = await page.evaluate(({ loc, cat, prov }) => {
                     return Array.from(document.querySelectorAll('.search-itm')).map(item => {
                         const name = item.querySelector('.search-itm__rag')?.textContent?.trim();
@@ -382,6 +460,10 @@ async function scrapePG(
 
             if (items.length === 0) {
                 Logger.info(`   📄 PG: Page ${pageNum} empty. Done.`);
+                try {
+                    // Help user debug why it's empty (e.g. anti-bot proxy ban)
+                    await page.screenshot({ path: `/tmp/pg_empty_${target.location}_p${pageNum}.png` });
+                } catch { }
                 break;
             }
 
@@ -427,6 +509,10 @@ async function scrapeMaps(
     let mergedCount = 0;
 
     for (const mRes of mapsResults) {
+        // Assign target province if Maps didn't extract one (fixes "unknown" bucket)
+        if (!mRes.province && target.province) {
+            mRes.province = target.province;
+        }
         const existing = dedup.checkDuplicate(mRes);
         if (existing) {
             dedup.merge(existing, mRes);
@@ -497,28 +583,45 @@ async function main() {
         Logger.info(`🔥 PHASE 2+3: SCRAPING (${targets.length} targets)`);
         Logger.info(`${'═'.repeat(60)}\n`);
 
+        let targetsProcessedInCurrentBrowser = 0;
+
         for (const [idx, target] of targets.entries()) {
-            let page: Page | null = null;
+            // Check if we need to restart the browser
+            if (targetsProcessedInCurrentBrowser >= TARGETS_PER_BROWSER) {
+                Logger.info(`\n🔄 Reached ${TARGETS_PER_BROWSER} targets. Closing browser and launching new one...`);
+                if (browserInstance) {
+                    await browserInstance.close().catch(e => Logger.error(`Error closing browser: ${e.message}`));
+                    browserInstance = null; // Reset instance
+                }
+                await getBrowser(); // Launch new browser
+                targetsProcessedInCurrentBrowser = 0; // Reset counter
+            }
+
+            let session: BrowserSession | null = null;
             try {
-                page = await setupPage();
+                session = await setupPage();
                 Logger.info(`\n┌── TARGET ${idx + 1}/${targets.length}: [${target.category}] ${target.location}`);
 
                 // PG
-                const pgResults = await scrapePG(page, target, globalDedup);
+                const pgResults = await scrapePG(session.page, target, globalDedup);
                 allCompanies.push(...pgResults);
 
                 await delay(PG_LOCATION_DELAY_MS);
 
                 // Maps
-                const { newCount } = await scrapeMaps(page, target, globalDedup);
+                const { newCount } = await scrapeMaps(session.page, target, globalDedup);
                 // newCount items are already in dedup but not in allCompanies array
                 // We'll rebuild final list from dedup at the end
 
                 Logger.info(`└── DONE: ${pgResults.length} PG + ${newCount} new Maps | Running total: ${globalDedup.count}`);
 
             } finally {
-                if (page) await page.close().catch(() => { });
+                if (session) {
+                    await session.page.close().catch(() => { });
+                    await session.context.close().catch(() => { });
+                }
             }
+            targetsProcessedInCurrentBrowser++;
         }
 
         // PHASE 4: Final output

@@ -73,19 +73,9 @@ export class MunicipalitySplitter {
         Logger.info(`[MunicipalitySplitter] 🧠 Querying LLM for 5 municipalities in "${province}"...`);
 
         try {
-            const client = LLMService.getClient();
-            const response = await client.chat.completions.create({
-                model: config.llm.fastModel,
-                temperature: 0.1,
-                max_tokens: 200,
-                messages: [
-                    { role: 'system', content: SYSTEM_PROMPT },
-                    { role: 'user', content: `Province: ${province}` }
-                ],
-                response_format: { type: 'json_object' }
-            });
+            const prompt = `${SYSTEM_PROMPT}\n\nUser: Province: ${province}\n\nRespond strictly with a JSON object containing a "municipalities" array.`;
+            const raw = await LLMService.complete(prompt, 'gpt-4o-mini', ['gpt-4o']);
 
-            const raw = response.choices[0]?.message?.content?.trim();
             if (!raw) throw new Error('Empty LLM response');
 
             // Strip markdown wrapping if present

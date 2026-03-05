@@ -5,7 +5,7 @@
 
 import * as dns from 'dns';
 import * as https from 'https';
-import axios from 'axios';
+import { request } from 'undici';
 import { Logger } from './logger';
 
 export interface DomainHealth {
@@ -89,18 +89,18 @@ export class DomainValidator {
         const url = domain.startsWith('http') ? domain : `https://${hostname}`;
 
         try {
-            const resp = await axios.get(url, {
-                timeout: timeoutMs,
-                maxRedirects: 3,
-                validateStatus: () => true,
-                responseType: 'text',
+            const resp = await request(url, {
+                method: 'GET',
+                bodyTimeout: timeoutMs,
+                headersTimeout: timeoutMs,
+                // @ts-ignore - undici runtime supports maxRedirections but types are incomplete\n                maxRedirections: 3,
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                     'Accept': 'text/html',
                 },
             });
 
-            const body = typeof resp.data === 'string' ? resp.data.slice(0, 5000).toLowerCase() : '';
+            const body = (await resp.body.text()).slice(0, 5000).toLowerCase();
 
             // Empty or very short body = likely parked
             if (body.length < 100) return false;
@@ -115,10 +115,10 @@ export class DomainValidator {
 
             return true;
         } catch (err: any) {
-            // Timeouts and DNS failures → domain is unreachable, don't waste a browser slot
+            // Timeouts and DNS failures → domain is unreachable
             const code = err?.code || '';
             const msg = (err?.message || '').toLowerCase();
-            if (code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ENOTFOUND' ||
+            if (code === 'UND_ERR_CONNECT_TIMEOUT' || code === 'UND_ERR_BODY_TIMEOUT' || code === 'ENOTFOUND' ||
                 code === 'ECONNREFUSED' || msg.includes('timeout')) {
                 return false;
             }

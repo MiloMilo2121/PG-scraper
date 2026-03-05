@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { request } from 'undici';
 import * as cheerio from 'cheerio';
 
 import { CompanyInput } from '../../types';
@@ -66,22 +66,28 @@ function isLikelyOfficialWebsiteUrl(raw: string): boolean {
 }
 
 async function fetchHtml(url: string, timeoutMs: number): Promise<string> {
-  const resp = await axios.get(url, {
-    timeout: timeoutMs,
+  const resp = await request(url, {
+    method: 'GET',
+    bodyTimeout: timeoutMs,
+    headersTimeout: timeoutMs,
+    // @ts-ignore - undici runtime supports maxRedirections but types are incomplete\n    maxRedirections: 4,
     headers: {
       'User-Agent':
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     },
-    maxRedirects: 4,
-    validateStatus: (s) => s >= 200 && s < 400,
   });
 
-  if (typeof resp.data !== 'string') {
+  if (resp.statusCode < 200 || resp.statusCode >= 400) {
+    throw new Error(`HTTP ${resp.statusCode} for ${url}`);
+  }
+
+  const text = await resp.body.text();
+  if (!text) {
     throw new Error('Unexpected non-HTML response');
   }
-  return resp.data;
+  return text;
 }
 
 async function withRetry<T>(fn: () => Promise<T>, retries: number, baseDelayMs: number): Promise<T> {

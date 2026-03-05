@@ -2,9 +2,8 @@ import { Logger } from '../../utils/logger';
 import { GoogleSerpAnalyzer, BingSerpAnalyzer, SerpResult } from './serp_analyzer';
 import { DuckDuckGoSerpAnalyzer } from './ddg_analyzer';
 import { BraveSerpAnalyzer } from './brave_analyzer';
-import { TorBrowser } from '../browser/tor_browser';
 import { Retry } from '../../../utils/decorators';
-import { TorError } from '../../../utils/errors';
+import { ScraperClient } from '../../utils/scraper_client';
 
 export interface SearchProvider {
     search(query: string): Promise<SerpResult[]>;
@@ -28,32 +27,18 @@ export class DDGSearchProvider implements SearchProvider {
 
     @Retry({ attempts: 3, delay: 5000, backoff: 'exponential' })
     async search(query: string): Promise<SerpResult[]> {
-        const torBrowser = TorBrowser.getInstance();
+        const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+        Logger.info(`[DDGProvider] Searching via Proxy: ${url}`);
 
-        // Fail-fast: check if Tor ControlPort is reachable before wasting time
-        const torReady = await torBrowser.isControlPortAvailable();
-        if (!torReady) {
-            throw new TorError('Tor ControlPort 9051 is not reachable. DDG search unavailable.', false);
-        }
-
-        let page;
         try {
-            page = await torBrowser.getPage();
-
-            const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-
-            Logger.info(`[DDGProvider] Searching via Tor: ${url}`);
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }); // Increased timeout for Tor
-
-            const title = await page.title();
-            const content = await page.content();
+            const response = await ScraperClient.fetchHtml(url, { mode: 'auto', render: true, super: true });
+            const content = response.data;
+            const titleMatch = content.match(/<title>([^<]*)<\/title>/i);
+            const title = titleMatch ? titleMatch[1] : '';
 
             // Validating Content
             if (this.isBlocked(content, title)) {
-                Logger.warn(`[DDGProvider] Block detected (Title: "${title}"). Rotating IP...`);
-                await torBrowser.rotateIP();
-
-                // Throw error to trigger Retry decorator
+                Logger.warn(`[DDGProvider] Block detected (Title: "${title}"). Retrying...`);
                 throw new Error('DDG_BLOCK');
             }
 
@@ -63,9 +48,7 @@ export class DDGSearchProvider implements SearchProvider {
 
         } catch (e: unknown) {
             Logger.warn(`[DDGProvider] Search Error: ${(e as Error).message}`);
-            throw e; // Re-throw to trigger retry (or fail-fast if TorError with canRetry=false)
-        } finally {
-            if (page) await page.close().catch(() => { });
+            throw e;
         }
     }
 
@@ -85,30 +68,18 @@ export class BraveSearchProvider implements SearchProvider {
 
     @Retry({ attempts: 3, delay: 5000, backoff: 'exponential' })
     async search(query: string): Promise<SerpResult[]> {
-        const torBrowser = TorBrowser.getInstance();
+        const url = `https://search.brave.com/search?q=${encodeURIComponent(query)}`;
+        Logger.info(`[BraveProvider] Searching via Proxy: ${url}`);
 
-        const torReady = await torBrowser.isControlPortAvailable();
-        if (!torReady) {
-            throw new TorError('Tor ControlPort 9051 is not reachable. Brave search unavailable.', false);
-        }
-
-        let page;
         try {
-            page = await torBrowser.getPage();
-
-            const url = `https://search.brave.com/search?q=${encodeURIComponent(query)}`;
-
-            Logger.info(`[BraveProvider] Searching via Tor: ${url}`);
-            // Brave blocks headless fast, we try the naive Tor approach first
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-
-            const title = await page.title();
-            const content = await page.content();
+            const response = await ScraperClient.fetchHtml(url, { mode: 'auto', render: true, super: true });
+            const content = response.data;
+            const titleMatch = content.match(/<title>([^<]*)<\/title>/i);
+            const title = titleMatch ? titleMatch[1] : '';
 
             // Check blocks/captchas
             if (this.isBlocked(content, title)) {
-                Logger.warn(`[BraveProvider] Block detected (Title: "${title}"). Rotating IP...`);
-                await torBrowser.rotateIP();
+                Logger.warn(`[BraveProvider] Block detected (Title: "${title}"). Retrying...`);
                 throw new Error('BRAVE_BLOCK');
             }
 
@@ -119,8 +90,6 @@ export class BraveSearchProvider implements SearchProvider {
         } catch (e: unknown) {
             Logger.warn(`[BraveProvider] Search Error: ${(e as Error).message}`);
             throw e;
-        } finally {
-            if (page) await page.close().catch(() => { });
         }
     }
 
@@ -214,26 +183,16 @@ export class SerperSearchProvider implements SearchProvider {
 export class BingSearchProvider implements SearchProvider {
     @Retry({ attempts: 3, delay: 5000, backoff: 'exponential' })
     async search(query: string): Promise<SerpResult[]> {
-        const torBrowser = TorBrowser.getInstance();
-        const torReady = await torBrowser.isControlPortAvailable();
-        if (!torReady) {
-            throw new TorError('Tor ControlPort 9051 is not reachable. Bing search unavailable.', false);
-        }
+        const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=it`;
+        Logger.info(`[BingProvider] Searching via Proxy: ${url}`);
 
-        let page;
         try {
-            page = await torBrowser.getPage();
-            const url = `https://www.bing.com/search?q=${encodeURIComponent(query)}&setlang=it`;
-
-            Logger.info(`[BingProvider] Searching via Tor: ${url}`);
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-
-            const content = await page.content();
+            const response = await ScraperClient.fetchHtml(url, { mode: 'auto', render: true, super: true });
+            const content = response.data;
 
             // Check for Captcha/Blocks
             if (content.includes('form id="bnp_ttc_form"') || content.includes('Bing calls for human verification')) {
-                Logger.warn(`[BingProvider] Captcha/Block detected. Rotating IP...`);
-                await torBrowser.rotateIP();
+                Logger.warn(`[BingProvider] Captcha/Block detected. Retrying...`);
                 throw new Error('BING_BLOCK');
             }
 
@@ -243,8 +202,6 @@ export class BingSearchProvider implements SearchProvider {
         } catch (e: unknown) {
             Logger.warn(`[BingProvider] Search Error: ${(e as Error).message}`);
             throw e;
-        } finally {
-            if (page) await page.close().catch(() => { });
         }
     }
 }

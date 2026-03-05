@@ -8,7 +8,7 @@
  */
 
 import { Page } from 'playwright';
-import axios from 'axios';
+import { request } from 'undici';
 import { Logger } from '../../utils/logger';
 import { config } from '../../config';
 
@@ -219,8 +219,12 @@ export class CaptchaSolver {
         };
 
         try {
-            const response = await axios.post(url, null, { params: payload });
-            const data = response.data;
+            const queryString = new URLSearchParams({ ...payload } as any).toString();
+            const response = await request(`${url}?${queryString}`, {
+                method: 'GET',
+                bodyTimeout: 10000,
+            });
+            const data = await response.body.json() as any;
 
             if (data.status === 1) {
                 return data.request;
@@ -249,8 +253,12 @@ export class CaptchaSolver {
             await new Promise(r => setTimeout(r, 5000)); // Wait 5 seconds
 
             try {
-                const response = await axios.get(url, { params });
-                const data = response.data;
+                const queryString = new URLSearchParams({ ...params } as any).toString();
+                const response = await request(`${url}?${queryString}`, {
+                    method: 'GET',
+                    bodyTimeout: 10000,
+                });
+                const data = await response.body.json() as any;
 
                 if (data.status === 1) {
                     return data.request;

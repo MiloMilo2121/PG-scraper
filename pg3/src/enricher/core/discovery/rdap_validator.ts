@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { request } from 'undici';
 import { Logger } from '../../utils/logger';
 import { CompanyInput } from '../../types';
 
@@ -23,17 +23,24 @@ export class RdapValidator {
                 ? `https://rdap.nic.it/domain/${cleanDomain}`
                 : `https://rdap.org/domain/${cleanDomain}`;
 
-            const res = await axios.get(endpoint, {
-                timeout: 8000,
+            const res = await request(endpoint, {
+                method: 'GET',
+                bodyTimeout: 8000,
+                headersTimeout: 8000,
                 headers: {
                     'Accept': 'application/rdap+json',
                     'User-Agent': 'Antigravity/OMEGAv7'
                 }
             });
 
-            if (!res.data || !res.data.entities) return 0;
+            if (res.statusCode === 404 || res.statusCode === 429) return 0;
+            if (res.statusCode !== 200) return 0;
 
-            const rdapStringPayload = JSON.stringify(res.data).toLowerCase();
+            const data = await res.body.json() as any;
+
+            if (!data || !data.entities) return 0;
+
+            const rdapStringPayload = JSON.stringify(data).toLowerCase();
 
             // Check 1: P.IVA / VAT ID Match (Golden Signal)
             const piva = (company as any).piva?.replace(/[^0-9]/g, '');
@@ -43,11 +50,9 @@ export class RdapValidator {
             }
 
             // Check 2: Name Match in vCard
-            for (const entity of res.data.entities) {
+            for (const entity of data.entities) {
                 if (entity.vcardArray && entity.vcardArray[1]) {
                     for (const vcardEntry of entity.vcardArray[1]) {
-                        // vCard structure [type, params, typeHint, value]
-                        // e.g., ["fn", {}, "text", "Rossi SRL"]
                         if (vcardEntry[0] === 'fn' || vcardEntry[0] === 'org') {
                             const registrantName = (vcardEntry[3] || '').toString().toLowerCase();
                             const score = this.scoreNameMatch(company.company_name, registrantName);

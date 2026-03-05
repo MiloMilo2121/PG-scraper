@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { request } from 'undici';
 import * as cheerio from 'cheerio';
 import { SearchProvider } from './search_provider';
 import { SerpResult } from './serp_analyzer';
@@ -31,11 +31,13 @@ export class FreeProxyAggregatorProvider implements SearchProvider {
         return key;
     }
 
-    @Retry({ attempts: 2, delay: 3000, backoff: 'fixed' })
+    @Retry({ attempts: 1, delay: 3000, backoff: 'fixed' })
     async search(query: string, maxResults: number = 10): Promise<SerpResult[]> {
         const apiKey = this.getNextKey();
         if (!apiKey) {
-            throw new Error("FREE_TIER_EXHAUSTED: No keys available for FreeProxyAggregator.");
+            // Silently fail instead of throwing an error to prevent the BackpressureValve from throttling
+            Logger.warn("[FreeProxyAggregatorProvider] Inactive: No free keys available.");
+            return [];
         }
 
         // Costruiamo la URL target (Google HTML) da far proxare
@@ -47,8 +49,12 @@ export class FreeProxyAggregatorProvider implements SearchProvider {
         Logger.info(`[FreeProxyAggregatorProvider] Delegating SERP scrape to Free Proxy Network with key ***${apiKey.slice(-4)}`);
 
         try {
-            const response = await axios.get(scraperApiUrl, { timeout: 35000 });
-            const html = response.data;
+            const response = await request(scraperApiUrl, {
+                method: 'GET',
+                bodyTimeout: 35000,
+                headersTimeout: 35000,
+            });
+            const html = await response.body.text();
             const $ = cheerio.load(html);
 
             const processedResults: SerpResult[] = [];
@@ -83,7 +89,7 @@ export class FreeProxyAggregatorProvider implements SearchProvider {
 
         } catch (e: any) {
             // 429 Rate Limit from the SaaS or 403 Forbidden
-            if (e.response && (e.response.status === 429 || e.response.status === 403)) {
+            if (e.code === 'UND_ERR_CONNECT_TIMEOUT' || e.message?.includes('429') || e.message?.includes('403')) {
                 Logger.warn(`[FreeProxyAggregatorProvider] Burned key ***${apiKey.slice(-4)}. Rotating.`);
                 // Optionally remove the dead key
                 // this.apiKeys = this.apiKeys.filter(k => k !== apiKey);

@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { request } from 'undici';
 import { CompanyInput } from '../types';
 import { Logger } from '../utils/logger';
 import * as fs from 'fs';
@@ -55,8 +55,14 @@ export class AntigravityClient {
         try {
             // Mocking the actual API call for now to prevent errors if endpoint doesn't exist
             if (process.env.ANTIGRAVITY_URL) {
-                await axios.post(ANTIGRAVITY_ENDPOINT, { events: batch }, {
-                    headers: { 'Authorization': `Bearer ${API_KEY}` }
+                await request(ANTIGRAVITY_ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${API_KEY}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ events: batch }),
+                    bodyTimeout: 10000,
                 });
             }
 

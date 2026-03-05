@@ -1,7 +1,8 @@
 import { Logger } from '../utils/logger';
 import { LLMService } from '../../enricher/core/ai/llm_service';
-import { config } from '../config';
 import { ALL_PG_CATEGORIES, PG_CATEGORIES } from '../data/pg_categories';
+import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * 🧠 CATEGORY MATCHER
@@ -13,7 +14,31 @@ import { ALL_PG_CATEGORIES, PG_CATEGORIES } from '../data/pg_categories';
  * Results are cached per query (Law 503: Caching Intelligence).
  */
 
-const CACHE = new Map<string, string[]>();
+// ─── Dual-layer cache: in-memory + persistent disk ─────────────────────────
+const MEMORY_CACHE = new Map<string, string[]>();
+const DISK_CACHE_FILE = path.join(process.cwd(), 'data', 'category_matcher_cache.json');
+
+function loadDiskCache(): void {
+    try {
+        if (fs.existsSync(DISK_CACHE_FILE)) {
+            const data = JSON.parse(fs.readFileSync(DISK_CACHE_FILE, 'utf-8'));
+            for (const [k, v] of Object.entries(data)) {
+                MEMORY_CACHE.set(k, v as string[]);
+            }
+            Logger.info(`[CategoryMatcher] 💾 Loaded ${MEMORY_CACHE.size} entries from disk cache`);
+        }
+    } catch { /* Non-fatal */ }
+}
+
+function saveDiskCache(): void {
+    try {
+        fs.mkdirSync(path.dirname(DISK_CACHE_FILE), { recursive: true });
+        fs.writeFileSync(DISK_CACHE_FILE, JSON.stringify(Object.fromEntries(MEMORY_CACHE), null, 2));
+    } catch { /* Non-fatal */ }
+}
+
+// Load on startup
+loadDiskCache();
 
 const SYSTEM_PROMPT = `You are an expert in Italian business categories for PagineGialle (Yellow Pages).
 You will receive a user search query (e.g., "manifattura", "metalmeccanica", "moda") 
@@ -39,37 +64,29 @@ export class CategoryMatcher {
     public static async match(userQuery: string): Promise<string[]> {
         const cacheKey = userQuery.toLowerCase().trim();
 
-        if (CACHE.has(cacheKey)) {
-            const cached = CACHE.get(cacheKey)!;
-            Logger.info(`[CategoryMatcher] Cache hit for "${userQuery}" → ${cached.length} categories`);
+        if (MEMORY_CACHE.has(cacheKey)) {
+            const cached = MEMORY_CACHE.get(cacheKey)!;
+            Logger.info(`[CategoryMatcher] 💾 Cache hit for "${userQuery}" → ${cached.length} categories`);
             return cached;
         }
 
         Logger.info(`[CategoryMatcher] 🧠 Matching "${userQuery}" against ${ALL_PG_CATEGORIES.length} PG categories...`);
 
         try {
-            const client = LLMService.getClient();
 
-            // Build the category list grouped by sector for better understanding
             const categoryListStr = Object.entries(PG_CATEGORIES)
                 .map(([sector, cats]) => `## ${sector}\n${cats.join(', ')}`)
                 .join('\n\n');
 
-            const response = await client.chat.completions.create({
-                model: config.llm.fastModel,
-                temperature: 0,
-                max_tokens: 4000,
-                messages: [
-                    { role: 'system', content: SYSTEM_PROMPT },
-                    {
-                        role: 'user',
-                        content: `User search query: "${userQuery}"\n\nMASTER CATEGORY LIST:\n${categoryListStr}`
-                    }
-                ],
-                response_format: { type: 'json_object' }
-            });
+            // Use the resilient LLMService with a fallback chain:
+            // Z.ai (free, fast) → DeepSeek (cheap) → GPT-4o-mini (reliable)
+            const prompt = `${SYSTEM_PROMPT}\n\nUser search query: "${userQuery}"\n\nMASTER CATEGORY LIST:\n${categoryListStr}`;
+            const raw = await LLMService.complete(
+                prompt,
+                'glm-4.7-flash',        // Primary: Z.ai (free)
+                ['deepseek-chat', 'gpt-4o-mini'] // Fallbacks if 429
+            );
 
-            const raw = response.choices[0]?.message?.content?.trim();
             if (!raw) throw new Error('Empty LLM response');
 
             // Strip markdown wrapping if present
@@ -96,14 +113,9 @@ export class CategoryMatcher {
                 Logger.info(`[CategoryMatcher]    First 10: [${corrected.slice(0, 10).join(', ')}]`);
             }
 
-            // Cache
-            CACHE.set(cacheKey, corrected);
-
-            // Token usage tracking (Law 501)
-            const usage = response.usage;
-            if (usage) {
-                Logger.info(`[CategoryMatcher] 💰 Tokens: ${usage.prompt_tokens} in / ${usage.completion_tokens} out`);
-            }
+            // Dual-cache (memory + disk) — Law 503
+            MEMORY_CACHE.set(cacheKey, corrected);
+            saveDiskCache();
 
             return corrected;
 
@@ -118,7 +130,8 @@ export class CategoryMatcher {
             );
             Logger.info(`[CategoryMatcher] Fallback found: ${fallback.length} categories`);
 
-            CACHE.set(cacheKey, fallback);
+            MEMORY_CACHE.set(cacheKey, fallback);
+            saveDiskCache();
             return fallback;
         }
     }

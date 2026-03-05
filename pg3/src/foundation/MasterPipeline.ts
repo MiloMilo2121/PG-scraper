@@ -10,6 +10,8 @@ import { LinkedInSniper } from './LinkedInSniper';
 import { BrowserPool } from './BrowserPool';
 import { CostRouter } from './CostRouter';
 import { EnrichmentPostProcessor } from './EnrichmentPostProcessor';
+import { PecHunter } from './PecHunter';
+import { FatturatoItaliaHarvester } from '../enricher/core/directories/fatturato_italia';
 import { HyperGuesserVX } from '../enricher/core/discovery/hyperguesser_vx/hyper_guesser_vx';
 import { RdapValidator } from '../enricher/core/discovery/rdap_validator';
 import crypto from 'crypto';
@@ -27,6 +29,7 @@ export class MasterPipeline {
     private browserPool: BrowserPool;
     private costRouter: CostRouter;
     private postProcessor: EnrichmentPostProcessor;
+    private pecHunter: PecHunter;
 
     constructor(deps: {
         normalizer: InputNormalizer,
@@ -40,7 +43,8 @@ export class MasterPipeline {
         linkedinSniper: LinkedInSniper,
         browserPool: BrowserPool,
         costRouter: CostRouter,
-        postProcessor: EnrichmentPostProcessor
+        postProcessor: EnrichmentPostProcessor,
+        pecHunter: PecHunter
     }) {
         this.normalizer = deps.normalizer;
         this.registry = deps.registry;
@@ -54,6 +58,7 @@ export class MasterPipeline {
         this.browserPool = deps.browserPool;
         this.costRouter = deps.costRouter;
         this.postProcessor = deps.postProcessor;
+        this.pecHunter = deps.pecHunter;
     }
 
     public async processCompany(rawInput: Record<string, string>, companyIdx: number): Promise<any> {
@@ -68,7 +73,7 @@ export class MasterPipeline {
             // STAGE 0: Normalize Input
             const input = this.normalizer.normalize(rawInput);
             if (input.quality_score < 0.3) {
-                return this.buildResult(input, 'NOT_FOUND', null, '', null, null, null, layersAttempted, start);
+                return this.buildResult(input, 'NOT_FOUND', null, '', null, null, null, null, null, layersAttempted, start);
             }
 
             // STAGE 1: ShadowRegistry Local Lookup
@@ -98,7 +103,24 @@ export class MasterPipeline {
                     return true;
                 } else if (gateStatus === 'NEEDS_BROWSER') {
                     // The ultimate WAF bypass: Chromium loads it and we check HTML
-                    const nav = await this.browserPool.navigateSafe(url);
+                    let nav = await this.browserPool.navigateSafe(url);
+
+                    // 🐍 OMEGA V9: If BrowserPool returned empty/blocked, escalate to Python Oracle (Crawl4AI)
+                    if (nav.status !== 'OK' || !nav.html || nav.html.length < 500) {
+                        try {
+                            const { OracleClient } = require('../../enricher/utils/oracle_client');
+                            const oracleResult = await OracleClient.fetchHtmlStealth(url, 45000);
+                            if (oracleResult.success && oracleResult.html && oracleResult.html.length > 500) {
+                                console.log(`[MasterPipeline] 🐍 Oracle bypass succeeded for ${url}`);
+                                nav = { status: 'OK' as const, html: oracleResult.html, finalUrl: url, blocked_resources: 0, duration_ms: 0, browser_id: 'oracle-crawl4ai' };
+                            }
+                        } catch (oracleErr: any) {
+                            // Oracle offline or failed — silently continue with whatever nav we have
+                            if (oracleErr.message !== 'PYTHON_ORACLE_OFFLINE') {
+                                console.warn(`[MasterPipeline] Oracle fallback failed: ${oracleErr.message}`);
+                            }
+                        }
+                    }
                     if (nav.status === 'OK' && nav.html) {
                         // Try PIVA match first
                         if (piva) {
@@ -371,22 +393,40 @@ export class MasterPipeline {
             let financial = null;
             let decisionMaker = null;
             let employees = null;
+            let pec = null;
+            let email = null;
 
             if (discoveredUrl) {
                 // If we found it, spawn enrichments safely through priority queue
-                const [finRes, dmRes, empRes] = await Promise.all([
+                const [finRes, dmRes, empRes, fattRes, contactsRes] = await Promise.all([
                     this.bilancioHunter.hunt(companyId, input).catch(() => null),
                     this.linkedinSniper.snipe(companyId, input).catch(() => null),
-                    this.postProcessor.estimateEmployees(companyId, input, discoveredUrl).catch(() => null)
+                    this.postProcessor.estimateEmployees(companyId, input, discoveredUrl).catch(() => null),
+                    FatturatoItaliaHarvester.harvest(input as any).catch(() => null),
+                    this.pecHunter.hunt(companyId, input, discoveredUrl).catch(() => null)
                 ]);
-                financial = finRes;
+
+                // Merge financial sources (FatturatoItalia takes precedence for Revenue/Employees if found)
+                financial = { ...finRes };
+                if (fattRes) {
+                    if (fattRes.revenue) {
+                        financial.fatturato_current = parseFloat(fattRes.revenue.replace(/[^0-9]/g, ''));
+                        financial.year = parseInt(fattRes.revenueYear || '2023', 10);
+                        financial.source_url = fattRes.url;
+                    }
+                    if (fattRes.employees && (!employees || employees === 'N/A')) {
+                        employees = fattRes.employees;
+                    }
+                }
+
                 decisionMaker = dmRes;
-                employees = empRes;
+                pec = contactsRes?.pec || null;
+                email = contactsRes?.email || null;
             }
 
             const status = discoveredUrl ? 'FOUND_COMPLETE' : 'NOT_FOUND';
 
-            return this.buildResult(input, status, discoveredUrl, discoveryLayer, financial, decisionMaker, employees, layersAttempted, start);
+            return this.buildResult(input, status, discoveredUrl, discoveryLayer, financial, decisionMaker, employees, pec, email, layersAttempted, start);
         }, 1); // Priority 1 (Core Pipeline)
     }
 
@@ -398,6 +438,8 @@ export class MasterPipeline {
         fin: any,
         dm: any,
         employees: any,
+        pec: any,
+        email: any,
         layers: string[],
         start: number
     ) {
@@ -417,6 +459,8 @@ export class MasterPipeline {
                 confidence,
                 discovery_layer: discoveryLayer || layers[layers.length - 1]
             } : undefined,
+            pec: pec || undefined,
+            email: email || undefined,
             employees: employees || undefined,
             financial: fin || undefined,
             decision_maker: dm || undefined,
