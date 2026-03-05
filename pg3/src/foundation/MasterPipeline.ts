@@ -108,7 +108,7 @@ export class MasterPipeline {
                     // 🐍 OMEGA V9: If BrowserPool returned empty/blocked, escalate to Python Oracle (Crawl4AI)
                     if (nav.status !== 'OK' || !nav.html || nav.html.length < 500) {
                         try {
-                            const { OracleClient } = require('../../enricher/utils/oracle_client');
+                            const { OracleClient } = require('../enricher/utils/oracle_client');
                             const oracleResult = await OracleClient.fetchHtmlStealth(url, 45000);
                             if (oracleResult.success && oracleResult.html && oracleResult.html.length > 500) {
                                 console.log(`[MasterPipeline] 🐍 Oracle bypass succeeded for ${url}`);
