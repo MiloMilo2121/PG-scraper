@@ -18,6 +18,12 @@ export class Logger {
         this.log('ERROR', msg, args);
     }
 
+    static debug(msg: string, ...args: any[]) {
+        if (this.isDev) {
+            this.log('DEBUG', msg, args);
+        }
+    }
+
     private static log(level: string, msg: string, args: any[]) {
         const timestamp = new Date().toISOString();
 

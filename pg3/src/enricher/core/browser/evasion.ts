@@ -18,6 +18,14 @@
 
 import { Page } from 'playwright';
 import { ClientHintsData, SPEECH_VOICES } from './ua_db';
+import { Logger } from '../../utils/logger';
+import axios from 'axios';
+
+export interface CapSolverConfig {
+    apiKey?: string;
+    proxy?: string; // Must match the proxy used by the browser precisely
+    userAgent?: string; // Must match the browser's User-Agent string exactly
+}
 
 export interface EvasionConfig {
     // WebGL
@@ -42,6 +50,8 @@ export interface EvasionConfig {
     // Hardware (new)
     deviceMemory?: number;
     maxTouchPoints?: number;
+    // CapSolver (V9 Integration)
+    capsolver?: CapSolverConfig;
 }
 
 const DEFAULT_CONFIG: EvasionConfig = {
@@ -84,6 +94,76 @@ export class BrowserEvasion {
         await this.mockSpeechVoices(page, config);
         await this.mockDeviceMemory(page, config);
         await this.mockMaxTouchPoints(page, config);
+    }
+
+    /**
+     * 🧠 V9: Resolve Cloudflare Turnstile explicitly via CapSolver.
+     * Must use the exact same Proxy and User-Agent as the page to prevent IP mismatch bans.
+     */
+    public static async resolveTurnstile(page: Page, websiteUrl: string, websiteKey: string, cfg: CapSolverConfig): Promise<string> {
+        if (!cfg.apiKey) throw new Error('CapSolver API key missing');
+
+        Logger.info(`🧠 [CapSolver] Requesting Turnstile token for ${websiteUrl} ...`);
+
+        const payload = {
+            clientKey: cfg.apiKey,
+            task: {
+                type: "AntiCloudflareTask",
+                websiteURL: websiteUrl,
+                websiteKey: websiteKey,
+                proxy: cfg.proxy,
+                userAgent: cfg.userAgent
+            }
+        };
+
+        try {
+            // 1. Create Task
+            const createTaskParams = await axios.post('https://api.capsolver.com/createTask', payload);
+            if (createTaskParams.data.errorId !== 0) {
+                throw new Error(`CapSolver Create Failed: ${createTaskParams.data.errorDescription}`);
+            }
+
+            const taskId = createTaskParams.data.taskId;
+            Logger.debug(`🧠 [CapSolver] Task created: ${taskId}, waiting for resolution...`);
+
+            // 2. Poll for Result
+            let resultToken = '';
+            for (let i = 0; i < 60; i++) { // Max 60 seconds
+                await new Promise(resolve => setTimeout(resolve, 1500));
+
+                const resultParams = await axios.post('https://api.capsolver.com/getTaskResult', {
+                    clientKey: cfg.apiKey,
+                    taskId: taskId
+                });
+
+                if (resultParams.data.status === 'ready') {
+                    resultToken = resultParams.data.solution.token;
+                    Logger.info(`✅ [CapSolver] Turnstile solved successfully!`);
+                    break;
+                } else if (resultParams.data.status === 'failed') {
+                    throw new Error(`CapSolver Failed: ${resultParams.data.errorDescription}`);
+                }
+            }
+
+            if (!resultToken) {
+                throw new Error('CapSolver timed out after 60 seconds');
+            }
+
+            // 3. Inject token back into the page (if Turnstile widget exists)
+            await page.evaluate((token) => {
+                // Typical Turnstile injection vector
+                const input = document.querySelector('[name="cf-turnstile-response"]') as HTMLInputElement;
+                if (input) {
+                    input.value = token;
+                }
+            }, resultToken);
+
+            return resultToken;
+
+        } catch (error: any) {
+            Logger.error(`❌ [CapSolver] Error resolving Turnstile: ${error.message}`);
+            throw error;
+        }
     }
 
     // ── Core evasion (existing, improved) ────────────────────────────
