@@ -56,14 +56,15 @@ interface ScrapeTarget {
 }
 
 // ─── CLI PARSING ─────────────────────────────────────────────────────────────
-function parseCLI(): { query: string; provinceCodes: string[] } {
+function parseCLI(): { query: string; provinceCodes: string[]; resume: boolean } {
     const args = process.argv.slice(2);
 
     const queryArg = args.find(a => a.startsWith('--query='))?.split('=').slice(1).join('=');
     const provincesArg = args.find(a => a.startsWith('--provinces='))?.split('=').slice(1).join('=');
+    const resume = args.includes('--resume');
 
     if (!queryArg || !provincesArg) {
-        console.error('Usage: npx ts-node src/scraper/generate_campaign_v2.ts --query="manifattura" --provinces="LO,MI,BS"');
+        console.error('Usage: npx ts-node src/scraper/generate_campaign_v2.ts --query="manifattura" --provinces="LO,MI,BS" [--resume]');
         process.exit(1);
     }
 
@@ -82,7 +83,7 @@ function parseCLI(): { query: string; provinceCodes: string[] } {
         return p.toUpperCase();
     });
 
-    return { query: queryArg.trim(), provinceCodes };
+    return { query: queryArg.trim(), provinceCodes, resume };
 }
 
 /**
@@ -530,12 +531,13 @@ async function scrapeMaps(
 
 // ─── MAIN ────────────────────────────────────────────────────────────────────
 async function main() {
-    const { query, provinceCodes } = parseCLI();
+    const { query, provinceCodes, resume } = parseCLI();
 
     Logger.info(`\n${'═'.repeat(60)}`);
     Logger.info(`🚀 CAMPAIGN GENERATOR V2 — INTELLIGENT MODE`);
     Logger.info(`🔍 Query: "${query}"`);
     Logger.info(`📍 Provinces: [${provinceCodes.map(c => `${c} (${resolveProvinceName(c)})`).join(', ')}]`);
+    if (resume) Logger.info(`🔄 Resume Mode: ACTIVE (Using output/campaigns/campaign_INTERIM_CHECKPOINT.csv if available)`);
     Logger.info(`${'═'.repeat(60)}\n`);
 
     // PHASE 0: CATEGORY INTELLIGENCE
@@ -569,6 +571,37 @@ async function main() {
     const globalDedup = new Deduplicator();
     const allCompanies: CompanyInput[] = [];
 
+    // Load existing data if resuming
+    if (resume) {
+        const interimFile = path.join(OUTPUT_DIR, `campaign_INTERIM_CHECKPOINT.csv`);
+        if (fs.existsSync(interimFile)) {
+            Logger.info(`🔄 Resume: Loading existing data from ${interimFile}...`);
+            const content = fs.readFileSync(interimFile, 'utf-8');
+            const lines = content.split('\n').slice(1); // skip header
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                // Simple CSV parse for resume - assuming standard format from our writer
+                const parts = line.split(',');
+                const company = {
+                    company_name: parts[0],
+                    city: parts[1],
+                    province: parts[2],
+                    zip_code: parts[3],
+                    region: parts[4],
+                    address: parts[5],
+                    phone: parts[6],
+                    website: parts[7],
+                    category: parts[8],
+                    source: parts[9],
+                    vat_code: parts[10],
+                    pg_url: parts[11],
+                };
+                globalDedup.add(company as any);
+            }
+            Logger.info(`🔄 Resume: ${globalDedup.count} records restored.`);
+        }
+    }
+
     try {
         // PHASE 1: Pre-Flight (using province CODES for PG URLs)
         const targets = await preFlightCheck(categories, provinceCodes);
@@ -586,6 +619,16 @@ async function main() {
         let targetsProcessedInCurrentBrowser = 0;
 
         for (const [idx, target] of targets.entries()) {
+            // SKIP logic if resuming (simple heuristic: if we have record for this cat/location skip)
+            // But better: idx check if we stored it, or just rely on dedup to skip network calls.
+            // Actually, to save time, we should skip the entire target if it's already "dense" in dedup.
+            if (resume && globalDedup.count > 0) {
+                const existing = globalDedup.getAll().filter(c => c.category === target.category && (c.city === target.location || c.province === target.location));
+                if (existing.length > 5) { // Arbitrary threshold to assume target was done
+                    Logger.info(`⏭️ Skipping Target ${idx + 1}/${targets.length}: [${target.category}] ${target.location} (Already in dedup)`);
+                    continue;
+                }
+            }
             // Check if we need to restart the browser
             if (targetsProcessedInCurrentBrowser >= TARGETS_PER_BROWSER) {
                 Logger.info(`\n🔄 Reached ${TARGETS_PER_BROWSER} targets. Closing browser and launching new one...`);
@@ -622,6 +665,31 @@ async function main() {
                 }
             }
             targetsProcessedInCurrentBrowser++;
+
+            // 💾 INTERIM SAVE (Law 901: DATA PRESERVATION FIRST)
+            const interimList = globalDedup.getAll();
+            if (interimList.length > 0) {
+                const interimFile = path.join(OUTPUT_DIR, `campaign_INTERIM_CHECKPOINT.csv`);
+                const interimWriter = createObjectCsvWriter({
+                    path: interimFile,
+                    header: [
+                        { id: 'company_name', title: 'company_name' },
+                        { id: 'city', title: 'city' },
+                        { id: 'province', title: 'province' },
+                        { id: 'zip_code', title: 'zip_code' },
+                        { id: 'region', title: 'region' },
+                        { id: 'address', title: 'address' },
+                        { id: 'phone', title: 'phone' },
+                        { id: 'website', title: 'website' },
+                        { id: 'category', title: 'category' },
+                        { id: 'source', title: 'source' },
+                        { id: 'vat_code', title: 'vat_code' },
+                        { id: 'pg_url', title: 'pg_url' },
+                    ]
+                });
+                await interimWriter.writeRecords(interimList);
+                Logger.info(`💾 Interim Checkpoint: ${interimFile} (${interimList.length} companies)`);
+            }
         }
 
         // PHASE 4: Final output

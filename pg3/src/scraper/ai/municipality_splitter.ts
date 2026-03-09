@@ -74,7 +74,11 @@ export class MunicipalitySplitter {
 
         try {
             const prompt = `${SYSTEM_PROMPT}\n\nUser: Province: ${province}\n\nRespond strictly with a JSON object containing a "municipalities" array.`;
-            const raw = await LLMService.complete(prompt, 'gpt-4o-mini', ['gpt-4o']);
+            const raw = await LLMService.complete(
+                prompt,
+                'glm-4.7-flash',            // Primary: Z.ai (Free/Fast)
+                ['deepseek-chat', 'kimi-k2.5'] // Fallbacks (Law 505)
+            );
 
             if (!raw) throw new Error('Empty LLM response');
 
