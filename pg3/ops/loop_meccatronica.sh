@@ -78,8 +78,8 @@ while true; do
   rotate_log
   echo "[LOOP] Starting enrichment at $(date)..." >> "$LOG_FILE"
 
-  # Run the enrichment batch
-  npx ts-node src/enricher/runner.ts "$INPUT_FILE" >> "$LOG_FILE" 2>&1
+  # Run the enrichment batch (RunnerV6 is the active entrypoint)
+  npx ts-node src/foundation/RunnerV6.ts "$INPUT_FILE" >> "$LOG_FILE" 2>&1
   EXIT_CODE=$?
 
   echo "[LOOP] Process exited with code $EXIT_CODE." >> "$LOG_FILE"

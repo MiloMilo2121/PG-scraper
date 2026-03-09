@@ -82,10 +82,9 @@ export class Deduplicator {
      * - Merges Phones
      */
     merge(existing: CompanyInput, fresh: CompanyInput): CompanyInput {
-        // 1. Website: Prefer Fresh (Maps) if existing is empty
+        // 1. Website: prefer first non-empty candidate
         if (!existing.website && fresh.website) {
             existing.website = fresh.website;
-            existing.source = `${existing.source} + Maps`;
         }
 
         // 2. Phone: If different, maybe append? For now, we keep existing if present, else take fresh.
@@ -97,6 +96,9 @@ export class Deduplicator {
         if ((!existing.address || existing.address.length < 5) && fresh.address) {
             existing.address = fresh.address;
         }
+
+        // 4. Source: merge labels without duplicates (avoids "Maps + Maps")
+        existing.source = this.mergeSources(existing.source, fresh.source);
 
         return existing;
     }
@@ -138,5 +140,16 @@ export class Deduplicator {
         const c = city.toLowerCase().replace(/[^\w]/g, '');
         return `${n}_${c}`;
     }
-}
 
+    private mergeSources(current?: string, incoming?: string): string | undefined {
+        const parts = new Set<string>();
+        for (const source of [current, incoming]) {
+            if (!source) continue;
+            for (const chunk of source.split('+')) {
+                const cleaned = chunk.trim();
+                if (cleaned) parts.add(cleaned);
+            }
+        }
+        return parts.size > 0 ? Array.from(parts).join(' + ') : current;
+    }
+}

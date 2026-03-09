@@ -22,6 +22,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { createObjectCsvWriter } from 'csv-writer';
+import { parse as parseCsv } from 'csv-parse/sync';
 import { Page, Browser, BrowserContext } from 'playwright';
 import { chromium } from 'playwright';
 // BrowserFactory BYPASSED: its newPage() initialization pipeline (GeneticFingerprinter,
@@ -45,6 +46,144 @@ const MAX_PG_PAGES = 10;       // PG shows ~25/page, 10 pages = 250 max per loca
 const PG_PAGE_DELAY_MS = 2000; // Respect rate limits (Law 305)
 const PG_LOCATION_DELAY_MS = 3000;
 const OUTPUT_DIR = 'output/campaigns';
+const BLOCKED_WEBSITE_HOSTS = [
+    'google.com',
+    'google.it',
+    'gstatic.com',
+    'googleadservices.com',
+    'doubleclick.net'
+];
+const TRACKING_QUERY_KEYS = new Set([
+    'gclid',
+    'fbclid',
+    'msclkid',
+    'igshid',
+    'mc_cid',
+    'mc_eid'
+]);
+
+function compactText(value?: string | null): string | undefined {
+    if (!value) return undefined;
+    const cleaned = value
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return cleaned.length > 0 ? cleaned : undefined;
+}
+
+function sanitizeCompanyName(value?: string): string | undefined {
+    const cleaned = compactText(value);
+    if (!cleaned) return undefined;
+    return cleaned.replace(/\s+\|\s+/g, ' - ');
+}
+
+function isBlockedHost(hostname: string): boolean {
+    return BLOCKED_WEBSITE_HOSTS.some(h => hostname === h || hostname.endsWith(`.${h}`));
+}
+
+function normalizeWebsite(raw?: string): string | undefined {
+    let candidate = compactText(raw);
+    if (!candidate) return undefined;
+
+    // Drop non-http navigations immediately.
+    if (/^(mailto:|tel:|javascript:)/i.test(candidate)) return undefined;
+
+    candidate = candidate
+        .replace(/^<|>$/g, '')
+        .replace(/&amp;/g, '&')
+        .replace(/[)\],.;]+$/g, '');
+
+    // Relative Google redirect links from SERP/maps cards.
+    if (candidate.startsWith('/url?') || candidate.startsWith('/aclk?')) {
+        try {
+            const googleRedirect = new URL(`https://www.google.com${candidate}`);
+            const target = googleRedirect.searchParams.get('q') || googleRedirect.searchParams.get('url');
+            candidate = target || '';
+        } catch {
+            return undefined;
+        }
+        if (!candidate) return undefined;
+    }
+
+    if (!/^https?:\/\//i.test(candidate)) {
+        candidate = `https://${candidate}`;
+    }
+
+    let url: URL;
+    try {
+        url = new URL(candidate);
+    } catch {
+        return undefined;
+    }
+
+    // Unwrap absolute Google redirect URLs.
+    if (url.hostname.includes('google.') && url.pathname.startsWith('/url')) {
+        const target = url.searchParams.get('q') || url.searchParams.get('url');
+        if (!target) return undefined;
+        try {
+            url = new URL(target);
+        } catch {
+            return undefined;
+        }
+    }
+
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+    if (!hostname || !hostname.includes('.')) return undefined;
+    if (isBlockedHost(hostname)) return undefined;
+    if (url.pathname.startsWith('/aclk')) return undefined;
+
+    // Remove common tracking params but keep functional query keys.
+    const filtered = new URLSearchParams();
+    for (const [key, val] of url.searchParams.entries()) {
+        const lowKey = key.toLowerCase();
+        if (lowKey.startsWith('utm_') || TRACKING_QUERY_KEYS.has(lowKey)) continue;
+        filtered.append(key, val);
+    }
+    url.search = filtered.toString() ? `?${filtered.toString()}` : '';
+    url.hash = '';
+
+    return url.toString();
+}
+
+function sanitizeCompanyRecord(company: CompanyInput): CompanyInput | null {
+    const companyName = sanitizeCompanyName(company.company_name);
+    if (!companyName) return null;
+
+    return {
+        ...company,
+        company_name: companyName,
+        city: compactText(company.city),
+        province: compactText(company.province),
+        zip_code: compactText(company.zip_code),
+        region: compactText(company.region),
+        address: compactText(company.address),
+        phone: compactText(company.phone),
+        website: normalizeWebsite(company.website),
+        category: compactText(company.category),
+        source: compactText(company.source),
+        vat_code: compactText(company.vat_code),
+        pg_url: compactText(company.pg_url),
+    };
+}
+
+function isRecordEligible(company: CompanyInput): boolean {
+    const hasWebsite = !!company.website;
+    const phoneDigits = (company.phone || '').replace(/\D/g, '');
+    const hasPhone = phoneDigits.length >= 6;
+    const hasAddress = !!company.address && company.address.length >= 6;
+    const hasVat = !!(company.vat_code || company.piva || company.vat);
+
+    return hasWebsite || (hasPhone && hasAddress) || (hasVat && (hasPhone || hasAddress));
+}
+
+function sanitizeCompanyBatch(companies: CompanyInput[]): CompanyInput[] {
+    const sanitized: CompanyInput[] = [];
+    for (const company of companies) {
+        const cleaned = sanitizeCompanyRecord(company);
+        if (cleaned) sanitized.push(cleaned);
+    }
+    return sanitized;
+}
 
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 interface ScrapeTarget {
@@ -387,36 +526,30 @@ async function scrapePG(
                 });
 
                 items = await page.evaluate(({ loc, cat, prov }) => {
+                    const sanitize = (val?: string | null) => val ? val.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
+
                     return Array.from(document.querySelectorAll('.search-itm')).map(item => {
                         const name = item.querySelector('.search-itm__rag')?.textContent?.trim();
-                        const tel = item.querySelector('.search-itm__phone')?.textContent?.trim();
+                        const tel = sanitize(item.querySelector('.search-itm__phone')?.textContent);
 
                         // Enhanced Website Extraction
                         // 1. Standard web icon/link
-                        let web = item.querySelector('.search-itm__url')?.getAttribute('href');
+                        let web = item.querySelector('.search-itm__url')?.getAttribute('href') ||
+                            item.querySelector('a[href^="http"]:not([href*="paginegialle.it"])')?.getAttribute('href') ||
+                            item.querySelector('.search-itm__rag a')?.getAttribute('href');
 
-                        // 2. Action buttons (often "Sito Web" is a button)
-                        if (!web) {
-                            const webBtn = Array.from(item.querySelectorAll('a')).find(a =>
-                                a.textContent?.toLowerCase().includes('sito web') ||
-                                a.className.includes('web') ||
-                                a.href.includes('http') && !a.href.includes('paginegialle.it') // crude check
-                            );
-                            if (webBtn) web = webBtn.getAttribute('href');
-                        }
-
-                        // 3. Data attributes (sometimes hidden)
-                        if (!web) {
-                            web = item.getAttribute('data-url');
+                        // 2. Data attributes
+                        if (!web || web.includes('javascript')) {
+                            web = item.getAttribute('data-url') || item.getAttribute('data-href');
                         }
 
                         const pgUrl = (item.querySelector('a.remove_blank_for_app') as HTMLAnchorElement | null)?.href;
 
                         const adr = item.querySelector('.search-itm__adr') as HTMLElement | null;
-                        const rawAddr = adr?.textContent?.replace(/\s+/g, ' ')?.trim();
+                        const rawAddr = sanitize(adr?.textContent);
 
-                        const region = (adr?.querySelector('div')?.textContent || '').trim() || undefined;
-                        const spans = adr ? Array.from(adr.querySelectorAll('span')).map(s => (s.textContent || '').trim()).filter(Boolean) : [];
+                        const region = sanitize(adr?.querySelector('div')?.textContent) || undefined;
+                        const spans = adr ? Array.from(adr.querySelectorAll('span')).map(s => sanitize(s.textContent)).filter(Boolean) : [];
                         const street = spans[0] || '';
                         const zip = spans[1] || undefined;
                         const cityName = spans[2] || undefined;
@@ -425,7 +558,7 @@ async function scrapePG(
 
                         if (!name) return null;
                         return {
-                            company_name: name,
+                            company_name: sanitize(name),
                             city: cityName || loc,
                             province,
                             zip_code: zip,
@@ -439,6 +572,8 @@ async function scrapePG(
                         };
                     }).filter(x => x !== null);
                 }, { loc: target.location, cat: target.category, prov: target.province }) as CompanyInput[];
+
+                items = sanitizeCompanyBatch(items);
             } catch (evalError) {
                 const msg = (evalError as Error).message;
                 if (msg.includes('detached') || msg.includes('destroyed')) {
@@ -504,7 +639,8 @@ async function scrapeMaps(
 ): Promise<{ newCount: number; mergedCount: number }> {
     Logger.info(`   🗺️ Maps: Scraping "${target.category}" in ${target.location}...`);
 
-    const mapsResults = await MapsGridProvider.scrapeAll(page, target.category, target.location);
+    const rawMapsResults = await MapsGridProvider.scrapeAll(page, target.category, target.location);
+    const mapsResults = sanitizeCompanyBatch(rawMapsResults);
 
     let newCount = 0;
     let mergedCount = 0;
@@ -577,26 +713,32 @@ async function main() {
         if (fs.existsSync(interimFile)) {
             Logger.info(`🔄 Resume: Loading existing data from ${interimFile}...`);
             const content = fs.readFileSync(interimFile, 'utf-8');
-            const lines = content.split('\n').slice(1); // skip header
-            for (const line of lines) {
-                if (!line.trim()) continue;
-                // Simple CSV parse for resume - assuming standard format from our writer
-                const parts = line.split(',');
-                const company = {
-                    company_name: parts[0],
-                    city: parts[1],
-                    province: parts[2],
-                    zip_code: parts[3],
-                    region: parts[4],
-                    address: parts[5],
-                    phone: parts[6],
-                    website: parts[7],
-                    category: parts[8],
-                    source: parts[9],
-                    vat_code: parts[10],
-                    pg_url: parts[11],
-                };
-                globalDedup.add(company as any);
+            const rows = parseCsv(content, {
+                columns: true,
+                skip_empty_lines: true,
+                bom: true,
+                relax_quotes: true,
+            }) as Record<string, string>[];
+
+            for (const row of rows) {
+                const company = sanitizeCompanyRecord({
+                    company_name: row.company_name || '',
+                    city: row.city,
+                    province: row.province,
+                    zip_code: row.zip_code,
+                    region: row.region,
+                    address: row.address,
+                    phone: row.phone,
+                    website: row.website,
+                    category: row.category,
+                    source: row.source,
+                    vat_code: row.vat_code,
+                    pg_url: row.pg_url,
+                } as CompanyInput);
+
+                if (company) {
+                    globalDedup.add(company);
+                }
             }
             Logger.info(`🔄 Resume: ${globalDedup.count} records restored.`);
         }
@@ -692,8 +834,26 @@ async function main() {
             }
         }
 
-        // PHASE 4: Final output
-        const finalList = globalDedup.getAll();
+        // PHASE 4: Final output + quality gate
+        const rawFinalList = globalDedup.getAll();
+        let droppedInvalid = 0;
+        const normalizedFinalList: CompanyInput[] = [];
+
+        for (const company of rawFinalList) {
+            const cleaned = sanitizeCompanyRecord(company);
+            if (!cleaned) {
+                droppedInvalid++;
+                continue;
+            }
+            normalizedFinalList.push(cleaned);
+        }
+
+        const finalList = normalizedFinalList.filter(isRecordEligible);
+        const droppedLowSignal = normalizedFinalList.length - finalList.length;
+        const totalDropped = droppedInvalid + droppedLowSignal;
+        if (totalDropped > 0) {
+            Logger.info(`🧹 Quality Gate: removed ${totalDropped} rows (invalid=${droppedInvalid}, low_signal=${droppedLowSignal})`);
+        }
 
         if (finalList.length === 0) {
             Logger.warn('\n⚠️  SCRAPING FINISHED BUT NO COMPANIES FOUND.');
