@@ -42,7 +42,7 @@ describe('BlockClassifier', () => {
     // BODY-BASED CLASSIFICATION
     // =========================================================================
 
-    it('detects CAPTCHA signals in 200 response body', () => {
+    it('detects Cloudflare challenge signals in 200 response body', () => {
         const captchaBody = `
             <html>
                 <div class="cf-challenge">
@@ -52,13 +52,41 @@ describe('BlockClassifier', () => {
             </html>
         `;
         const sig = BlockClassifier.classify(200, captchaBody, 'https://target.it', 'scrape_do');
-        expect(sig.type).toBe(BlockType.CAPTCHA);
+        expect(sig.type).toBe(BlockType.CLOUDFLARE_CHALLENGE);
+        expect(sig.waf_family).toBe('cloudflare');
+        expect(sig.challenge_type).toBe('challenge');
     });
 
     it('detects challenge page signals', () => {
         const challengeBody = '<html><body>Checking your browser before accessing...</body></html>';
         const sig = BlockClassifier.classify(200, challengeBody, 'https://target.it', 'direct');
         expect(sig.type).toBe(BlockType.CHALLENGE_PAGE);
+    });
+
+    it('detects Cloudflare Turnstile specifically', () => {
+        const body = `
+            <html>
+                <div class="cf-turnstile" data-sitekey="abc"></div>
+                <input name="cf-turnstile-response" />
+            </html>
+        `;
+        const sig = BlockClassifier.classify(200, body, 'https://target.it', 'browser_pool');
+        expect(sig.type).toBe(BlockType.CLOUDFLARE_TURNSTILE);
+        expect(sig.waf_family).toBe('cloudflare');
+        expect(sig.challenge_type).toBe('turnstile');
+    });
+
+    it('detects DataDome captcha specifically', () => {
+        const body = `
+            <html>
+                <script src="https://geo.captcha-delivery.com/captcha.js"></script>
+                <div>Protected by DataDome</div>
+            </html>
+        `;
+        const sig = BlockClassifier.classify(200, body, 'https://target.it', 'browser_pool');
+        expect(sig.type).toBe(BlockType.DATADOME_CAPTCHA);
+        expect(sig.waf_family).toBe('datadome');
+        expect(sig.challenge_type).toBe('captcha');
     });
 
     it('detects empty response body', () => {

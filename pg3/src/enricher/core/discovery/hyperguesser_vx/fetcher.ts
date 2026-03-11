@@ -1,6 +1,7 @@
 import { request, Agent } from 'undici';
 import * as cheerio from 'cheerio';
 import { Logger } from '../../../utils/logger';
+import { HoneyPotDetector } from '../../security/honeypot_detector';
 
 const fetcherAgent = new Agent({
     connect: { rejectUnauthorized: false },
@@ -57,13 +58,18 @@ export class HyperGuesserVXFetcher {
                 }
             });
 
-            const html = await body.text();
-            if (typeof html !== 'string' || statusCode >= 500) {
-                return { domain, url, title: '', text: '', error: 'INVALID_RESPONSE' };
-            }
+              const html = await body.text();
+              if (typeof html !== 'string' || statusCode >= 500) {
+                  return { domain, url, title: '', text: '', error: 'INVALID_RESPONSE' };
+              }
 
-            // Extract pure text using cheerio
-            const $ = cheerio.load(html);
+              const honeypotVerdict = HoneyPotDetector.getInstance().analyzeContent(html);
+              if (!honeypotVerdict.safe) {
+                  return { domain, url, title: '', text: '', error: honeypotVerdict.reason || 'HONEYPOT_SIGNAL' };
+              }
+
+              // Extract pure text using cheerio
+              const $ = cheerio.load(html);
 
             // Remove useless tags that pollute the LLM context
             $('script, style, link, img, noscript, svg').remove();

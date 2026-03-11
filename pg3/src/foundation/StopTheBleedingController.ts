@@ -18,7 +18,7 @@ export class StopTheBleedingController {
 
     public async evaluateStatus(totalCompaniesProcessed: number): Promise<boolean> {
         // Evaluate to check if we should enter or exit BLEEDING mode
-        const health = this.ledger.getHealthSnapshot(300); // 5 min rolling window
+        const health = this.ledger.getHealthSnapshot(300, { punitiveOnly: true }); // 5 min rolling window
         const avgCost = totalCompaniesProcessed > 0 ? await this.ledger.getCostPerCompany(totalCompaniesProcessed) : 0;
         const valveMetrics = this.valve.getMetrics();
         const poolStatus = this.pool.getPoolStatus();
@@ -33,9 +33,9 @@ export class StopTheBleedingController {
         }
 
         // 2. High Error Rate
-        if (health.error_rate > 0.25) {
+        if (health.error_rate > 0.4) {
             shouldBleed = true;
-            reasons.push(`Global error rate ${Math.round(health.error_rate * 100)}% > 25%`);
+            reasons.push(`Global punitive error rate ${Math.round(health.error_rate * 100)}% > 40%`);
         }
 
         // 3. Complete system saturation (Emergency Concurrency)

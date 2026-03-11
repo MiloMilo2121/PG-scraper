@@ -67,6 +67,21 @@ export class HoneyPotDetector {
             }
         }
 
+        // 3. Basic DOM honeypot / trap pattern detection
+        const hiddenFieldTrap =
+            /<input[^>]+type=["']hidden["'][^>]+(email|phone|website|url|company)/i.test(html) ||
+            /<input[^>]+name=["'](website|url|homepage|company_website)["'][^>]+type=["']hidden["']/i.test(html);
+        if (hiddenFieldTrap) {
+            return { safe: false, reason: 'HIDDEN_FORM_TRAP' };
+        }
+
+        const hiddenLinkTrap =
+            /<a[^>]+style=["'][^"']*(display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0|left\s*:\s*-?\d{3,}px)[^"']*["']/i.test(html) ||
+            /<a[^>]+aria-hidden=["']true["'][^>]*>/i.test(html);
+        if (hiddenLinkTrap) {
+            return { safe: false, reason: 'HIDDEN_LINK_TRAP' };
+        }
+
         return { safe: true };
     }
 }

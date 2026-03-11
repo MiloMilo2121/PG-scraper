@@ -91,7 +91,7 @@ async function startupGate(): Promise<{ mode: 'FULL' | 'FREE_ONLY' | 'ABORT', av
     if (!paidOk) {
         console.log('🟡 FREE-ONLY MODE: Tutti i provider a pagamento sono invalidi o non configurati.');
         console.log('   Il batch girerà SOLO con risorse gratuite e Jina senza key.');
-        return { mode: 'FREE_ONLY', available: ['DDG', 'BRAVE', 'BING', 'JINA'] };
+        return { mode: 'FREE_ONLY', available: ['DNS-MX-MINING', 'CRTSH', 'DDG', 'BRAVE', 'BING', 'JINA'] };
     }
 
     console.log(`🟢 FULL MODE: Provider operativi rilevati: ${available.join(', ')}`);
