@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 import { Logger } from './enricher/utils/logger';
@@ -8,6 +9,39 @@ const PORT = process.env.PORT || 3000;
 
 // Track active jobs
 const activeJobs = new Map<string, { pid: number; startedAt: Date }>();
+
+function resolveProjectRoot(): string {
+    const candidates = [
+        process.cwd(),
+        path.resolve(__dirname, '..'),
+        path.resolve(__dirname, '..', '..'),
+    ];
+
+    return candidates.find((candidate) => fs.existsSync(path.join(candidate, 'package.json'))) || process.cwd();
+}
+
+function resolveRunnerLaunch(): { command: string; args: string[]; cwd: string } {
+    const projectRoot = resolveProjectRoot();
+    const builtRunner = path.join(projectRoot, 'dist', 'src', 'scraper', 'runner.js');
+    if (fs.existsSync(builtRunner)) {
+        return {
+            command: process.execPath,
+            args: [builtRunner],
+            cwd: projectRoot,
+        };
+    }
+
+    const sourceRunner = path.join(projectRoot, 'src', 'scraper', 'runner.ts');
+    if (fs.existsSync(sourceRunner)) {
+        return {
+            command: process.execPath,
+            args: ['-r', 'ts-node/register', sourceRunner],
+            cwd: projectRoot,
+        };
+    }
+
+    throw new Error('Scraper runner entrypoint not found in build or source tree');
+}
 
 export async function startServer() {
     // Middleware
@@ -57,12 +91,11 @@ export async function startServer() {
                 allLocations: location_raw
             });
 
-            // Spawn runner.ts as detached process
-            const runnerPath = path.join(process.cwd(), 'src/scraper/runner.ts');
-            const args = ['ts-node', runnerPath, `--category=${category}`, `--city=${city}`];
+            const launch = resolveRunnerLaunch();
+            const args = [...launch.args, `--category=${category}`, `--city=${city}`];
 
-            const job = spawn('npx', args, {
-                cwd: process.cwd(),
+            const job = spawn(launch.command, args, {
+                cwd: launch.cwd,
                 detached: true,
                 stdio: ['ignore', 'pipe', 'pipe'],
                 env: { ...process.env }

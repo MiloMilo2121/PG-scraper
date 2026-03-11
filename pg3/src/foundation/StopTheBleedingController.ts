@@ -68,7 +68,7 @@ export class StopTheBleedingController {
         console.error(`Reasons: ${reasons.join(' | ')}`);
 
         // Force Backpressure valve down temporarily
-        this.valve.setConcurrency(3);
+        this.valve.setConcurrency(1);
     }
 
     private exitBleedingMode() {

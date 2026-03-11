@@ -22,6 +22,7 @@ import { EnrichmentBuffer } from './EnrichmentBuffer';
 import { QuerySanitizer } from './QuerySanitizer';
 import { EnrichmentPostProcessor } from './EnrichmentPostProcessor';
 import { PecHunter } from './PecHunter';
+import { config } from '../enricher/config';
 
 export interface OmegaRuntime {
     ledger: CostLedger;
@@ -281,10 +282,13 @@ function buildProviderMap(): Map<string, ProviderAdapter> {
 }
 
 export async function createOmegaRuntime(): Promise<OmegaRuntime> {
-    const ledger = new CostLedger();
+    const ledger = new CostLedger({ filePath: config.runtime.costLedgerPath });
     const cache = new MemoryFirstCache({ l1MaxMemoryMB: 50 });
     const valve = new BackpressureValve({ ledger });
-    const pool = new BrowserPool({ ledger });
+    const pool = new BrowserPool({
+        ledger,
+        sessionStateDir: config.runtime.browserSessionDir,
+    });
     const registry = new ShadowRegistry('omega_shadow.sqlite');
     const router = new CostRouter(cache, ledger, buildProviderMap());
     const gate = new PreVerifyGate(cache, ledger);

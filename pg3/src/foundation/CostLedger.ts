@@ -46,17 +46,37 @@ export interface HealthSnapshotOptions {
     excludeModules?: string[];
 }
 
+export interface CostLedgerOptions {
+    directory?: string;
+    filePath?: string;
+    flushIntervalMs?: number;
+    persistToDisk?: boolean;
+}
+
 export class CostLedger {
     private ringBuffer: LedgerEntry[] = [];
     private readonly MAX_BUFFER_SIZE = 1000;
-    private logFilePath: string;
+    private logFilePath: string | null;
     private pendingWrites: LedgerEntry[] = [];
-    private writeInterval: NodeJS.Timeout;
+    private writeInterval: NodeJS.Timeout | null = null;
+    private readonly persistToDisk: boolean;
 
-    constructor(logDirectory: string = process.cwd()) {
-        this.logFilePath = path.join(logDirectory, 'cost_ledger.jsonl');
-        // Batch flush every 5 seconds
-        this.writeInterval = setInterval(() => this.flush(), 5000);
+    constructor(logDirectoryOrOptions: string | CostLedgerOptions = {}) {
+        const options: CostLedgerOptions = typeof logDirectoryOrOptions === 'string'
+            ? { directory: logDirectoryOrOptions }
+            : logDirectoryOrOptions;
+
+        this.persistToDisk = options.persistToDisk !== false;
+        const directory = options.directory || path.join(process.cwd(), 'data');
+        this.logFilePath = this.persistToDisk
+            ? (options.filePath || path.join(directory, 'cost_ledger.jsonl'))
+            : null;
+
+        if (this.logFilePath) {
+            fs.mkdirSync(path.dirname(this.logFilePath), { recursive: true });
+            this.writeInterval = setInterval(() => this.flush(), options.flushIntervalMs || 5000);
+            this.writeInterval.unref?.();
+        }
     }
 
     public async log(entry: LedgerEntry): Promise<void> {
@@ -71,20 +91,23 @@ export class CostLedger {
             this.ringBuffer.shift(); // Remove oldest
         }
 
-        // Add to file queue
-        this.pendingWrites.push(normalized);
-        if (this.pendingWrites.length >= 50) {
-            this.flush();
+        if (this.persistToDisk) {
+            this.pendingWrites.push(normalized);
+            if (this.pendingWrites.length >= 50) {
+                this.flush();
+            }
         }
     }
 
     private flush() {
-        if (this.pendingWrites.length === 0) return;
+        if (!this.logFilePath || this.pendingWrites.length === 0) return;
         const data = this.pendingWrites.map(e => JSON.stringify(e)).join('\n') + '\n';
         this.pendingWrites = [];
-        fs.appendFile(this.logFilePath, data, (err) => {
-            if (err) console.error('[CostLedger] Failed to flush to disk', err);
-        });
+        try {
+            fs.appendFileSync(this.logFilePath, data, 'utf8');
+        } catch (err) {
+            console.error('[CostLedger] Failed to flush to disk', err);
+        }
     }
 
     public async getSummary(since?: Date): Promise<LedgerSummary> {
@@ -204,7 +227,10 @@ export class CostLedger {
     }
 
     public cleanup() {
-        clearInterval(this.writeInterval);
+        if (this.writeInterval) {
+            clearInterval(this.writeInterval);
+            this.writeInterval = null;
+        }
         this.flush();
     }
 }

@@ -16,6 +16,7 @@ async function flushRedisDb(): Promise<boolean> {
     connectTimeout: 1000,
     retryStrategy: () => null,
   });
+  client.on('error', () => undefined);
 
   try {
     await client.connect();
@@ -31,6 +32,9 @@ async function flushRedisDb(): Promise<boolean> {
 describe('Scheduler smoke', () => {
   beforeAll(async () => {
     redisAvailable = await flushRedisDb();
+    if (!redisAvailable) {
+      throw new Error(`Redis is required for scheduler smoke tests but is unreachable at ${redisUrl}`);
+    }
   });
 
   afterAll(async () => {
@@ -40,10 +44,6 @@ describe('Scheduler smoke', () => {
   });
 
   it('loads CSV, deduplicates deterministic ids, enqueues jobs and exits cleanly', async () => {
-    if (!redisAvailable) {
-      return;
-    }
-
     const fixturePath = path.resolve(__dirname, '../fixtures/scheduler-input.csv');
 
     const summary = await runScheduler(fixturePath);
@@ -60,6 +60,7 @@ describe('Scheduler smoke', () => {
       connectTimeout: 1000,
       retryStrategy: () => null,
     });
+    redis.on('error', () => undefined);
     await redis.connect();
     const queue = new Queue(queueName, { connection: redis });
 

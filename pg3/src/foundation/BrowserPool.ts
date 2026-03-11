@@ -4,6 +4,7 @@ import * as path from 'path';
 const crypto = require('crypto');
 import { CostLedger } from './CostLedger';
 import { BlockClassifier, BlockType } from '../enricher/core/security/block_classifier';
+import { config } from '../enricher/config';
 
 export interface NavigationResult {
     status: 'OK' | 'TIMEOUT' | 'BLOCKED' | 'CF_CHALLENGE' | 'ERROR';
@@ -65,6 +66,8 @@ export class BrowserPool {
         navigationTimeout?: number;
         blockResources?: string[];
         ledger: CostLedger;
+        sessionStateDir?: string;
+        manageProcessSignals?: boolean;
     }) {
         this.maxInstances = options.maxInstances || 3;
         this.maxReqsPerInstance = options.maxRequestsPerInstance || 50;
@@ -72,21 +75,31 @@ export class BrowserPool {
         this.blockResources = options.blockResources || ['image', 'font', 'media'];
         this.ledger = options.ledger;
         this.proxyUrl = process.env.PROXY_RESIDENTIAL_URL;
-        this.sessionStateDir = path.join(process.cwd(), '.omega_browser_sessions');
+        this.sessionStateDir = options.sessionStateDir || config.runtime.browserSessionDir;
 
         fs.mkdirSync(this.sessionStateDir, { recursive: true });
 
-        this.registerCleanupHooks();
+        if (options.manageProcessSignals) {
+            this.registerCleanupHooks();
+        }
     }
 
     private registerCleanupHooks() {
-        const cleanup = async () => {
-            console.log('[BrowserPool] Process exiting. Destroying all Playwright contexts...');
-            await this.destroyAll();
-            process.exit(0);
+        let cleanupStarted = false;
+        const cleanup = async (signal: string) => {
+            if (cleanupStarted) {
+                return;
+            }
+            cleanupStarted = true;
+            console.log(`[BrowserPool] ${signal} received. Destroying all Playwright contexts...`);
+            await this.destroyAll().catch(() => undefined);
         };
-        process.on('SIGTERM', cleanup);
-        process.on('SIGINT', cleanup);
+        process.on('SIGTERM', () => {
+            void cleanup('SIGTERM');
+        });
+        process.on('SIGINT', () => {
+            void cleanup('SIGINT');
+        });
     }
 
     private async ensureBrowser(): Promise<Browser> {

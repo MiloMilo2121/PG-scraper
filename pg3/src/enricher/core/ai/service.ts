@@ -2,11 +2,10 @@
  * 🧠 AI SERVICE — Business Intelligence Layer
  * Tasks 21-30: Contact extraction, classification, navigation, VAT search.
  *
- * Uses LLMService.getClient() for provider-agnostic LLM access.
+ * Uses LLMService for provider-agnostic, model-aware LLM access.
  * Features: HTML minification, caching (Law 503), adaptive model selection (Law 505).
  */
 
-import OpenAI from 'openai';
 import * as crypto from 'crypto';
 import { Logger } from '../../utils/logger';
 import { config } from '../../config';
@@ -16,7 +15,6 @@ import { EXTRACT_CONTACTS_PROMPT, CLASSIFY_BUSINESS_PROMPT } from './prompt_temp
 
 const AI_MODEL_FAST = config.llm.fastModel;
 const AI_MODEL_SMART = config.llm.smartModel;
-const AI_MAX_TOKENS = config.llm.maxTokens;
 const AI_CACHE_MAX_ENTRIES = config.ai.cacheMaxEntries;
 const AI_CACHE_TTL_MS = config.ai.cacheTtlMs;
 
@@ -77,13 +75,10 @@ export interface AIExtractionResult {
 }
 
 export class AIService {
-    private openai: OpenAI;
     private fastModel: string;
     private smartModel: string;
 
     constructor() {
-        // Use centralized LLMService client (Z.ai or OpenAI)
-        this.openai = LLMService.getClient();
         this.fastModel = AI_MODEL_FAST;
         this.smartModel = AI_MODEL_SMART;
     }
@@ -139,31 +134,17 @@ export class AIService {
         }
 
         try {
-            const completion = await this.openai.chat.completions.create({
-                model,
-                messages: [{ role: 'user', content: prompt }],
-                max_tokens: AI_MAX_TOKENS,
-                temperature: 0.1, // Low temperature for factual extraction
-            });
-
-            const response = completion.choices[0]?.message?.content?.trim() || '';
-            const inputTokens = completion.usage?.prompt_tokens || 0;
-            const outputTokens = completion.usage?.completion_tokens || 0;
-
-            // Task 30: Track token usage
-            totalInputTokens += inputTokens;
-            totalOutputTokens += outputTokens;
+            const response = (await LLMService.complete(prompt, model)).trim();
 
             // Cache response
             setCache(cacheKey, {
                 response,
-                tokens: inputTokens + outputTokens,
+                tokens: 0,
             });
 
             Logger.info('🤖 AI call completed', {
                 model,
-                input_tokens: inputTokens,
-                output_tokens: outputTokens,
+                provider_routed: true,
             });
 
             return response;
@@ -403,14 +384,10 @@ Answer ONLY "yes" or "no".`;
         estimatedCostUSD: number;
         cacheHits: number;
     } {
-        // Approximate pricing (GLM-4-flash)
-        const inputCost = (totalInputTokens / 1000000) * 0.10;
-        const outputCost = (totalOutputTokens / 1000000) * 0.40;
-
         return {
             totalInputTokens,
             totalOutputTokens,
-            estimatedCostUSD: inputCost + outputCost,
+            estimatedCostUSD: LLMService.getTotalCost(),
             cacheHits: totalCacheHits,
         };
     }

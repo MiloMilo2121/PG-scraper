@@ -5,8 +5,9 @@ import { Logger } from '../enricher/utils/logger';
 async function test() {
     console.log("🚀 Testing Serper.dev connectivity...");
 
-    // Configura key manuale se non in .env
-    process.env.SERPER_API_KEY = process.env.SERPER_API_KEY || 'e0feae3b0d8ba0ebcdc8a70874543e15bd6bf01a';
+    if (!process.env.SERPER_API_KEY) {
+        throw new Error('SERPER_API_KEY is required to run this connectivity check');
+    }
 
     const provider = new SerperSearchProvider();
     const query = "site:it Trattoria da Mario Roma p.iva";

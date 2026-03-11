@@ -10,7 +10,7 @@ describe('CostLedger punitive snapshots', () => {
     });
 
     it('excludes non-punitive browser pool errors from punitive health snapshots', async () => {
-        ledger = new CostLedger(process.cwd());
+        ledger = new CostLedger({ persistToDisk: false });
 
         await ledger.log({
             timestamp: new Date().toISOString(),

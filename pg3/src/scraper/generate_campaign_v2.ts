@@ -290,9 +290,6 @@ async function getBrowser(): Promise<Browser> {
         if (browserInstance) await browserInstance.close().catch(() => { });
     } catch { }
 
-    const browserProfileDir = path.join(process.cwd(), 'search_profile_scraper');
-    if (!fs.existsSync(browserProfileDir)) fs.mkdirSync(browserProfileDir, { recursive: true });
-
     browserInstance = await chromium.launch({
         headless: true,
         args: [

@@ -1,4 +1,5 @@
 import * as dotenv from 'dotenv';
+import * as path from 'path';
 import { z } from 'zod';
 
 dotenv.config();
@@ -18,17 +19,20 @@ const EnvSchema = z.object({
   SERVICE_NAME: z.string().default('antigravity-enricher'),
   SQLITE_PATH: z.string().default('./data/antigravity.db'),
   HEALTH_PORT: z.coerce.number().min(1).max(65535).default(3000),
+  RUNTIME_DATA_DIR: z.string().default('./data'),
+  COST_LEDGER_PATH: z.string().optional(),
+  BROWSER_SESSION_DIR: z.string().optional(),
 
   // 🤖 AI / LLM
   OPENAI_API_KEY: CommaSeparatedString.optional(),
   Z_AI_API_KEY: CommaSeparatedString.optional(),
   DEEPSEEK_API_KEY: CommaSeparatedString.optional(),
   KIMI_API_KEY: CommaSeparatedString.optional(),
-  LLM_MODEL: z.string().default('glm-5'),
+  LLM_MODEL: z.string().optional(),
   LLM_MODEL_FAST: z.string().optional(),
   LLM_MODEL_SMART: z.string().optional(),
-  AI_MODEL_FAST: z.string().default('glm-4-flash'),
-  AI_MODEL_SMART: z.string().default('glm-5'),
+  AI_MODEL_FAST: z.string().optional(),
+  AI_MODEL_SMART: z.string().optional(),
   AI_MAX_TOKENS: z.coerce.number().min(100).max(10000).default(500),
 
   // 🔴 REDIS
@@ -131,6 +135,46 @@ if (!_env.success) {
 
 const env = _env.data;
 
+function resolveFsPath(targetPath: string): string {
+  return path.isAbsolute(targetPath) ? targetPath : path.resolve(targetPath);
+}
+
+function deriveLlmDefaults() {
+  if (env.Z_AI_API_KEY?.length) {
+    return {
+      fast: 'glm-4.7-flash',
+      smart: 'glm-5',
+    };
+  }
+
+  if (env.DEEPSEEK_API_KEY?.length) {
+    return {
+      fast: 'deepseek-chat',
+      smart: 'deepseek-reasoner',
+    };
+  }
+
+  if (env.KIMI_API_KEY?.length) {
+    return {
+      fast: 'kimi-k2.5',
+      smart: 'kimi-k2-thinking',
+    };
+  }
+
+  return {
+    fast: 'gpt-4o-mini',
+    smart: 'gpt-4o',
+  };
+}
+
+const llmDefaults = deriveLlmDefaults();
+const resolvedFastModel = env.AI_MODEL_FAST || env.LLM_MODEL_FAST || llmDefaults.fast;
+const resolvedSmartModel = env.AI_MODEL_SMART || env.LLM_MODEL_SMART || env.LLM_MODEL || llmDefaults.smart;
+const resolvedDefaultModel = env.LLM_MODEL || resolvedSmartModel;
+const runtimeDataDir = resolveFsPath(env.RUNTIME_DATA_DIR);
+const costLedgerPath = resolveFsPath(env.COST_LEDGER_PATH || path.join(runtimeDataDir, 'cost_ledger.jsonl'));
+const browserSessionDir = resolveFsPath(env.BROWSER_SESSION_DIR || path.join(runtimeDataDir, 'browser-sessions'));
+
 /**
  * Helper to derive Redis connection details
  */
@@ -187,10 +231,9 @@ export const config = {
       apiKeys: env.KIMI_API_KEY || [],
       baseUrl: 'https://api.moonshot.cn/v1',
     },
-    // Z.ai Models as defaults (GLM-5 released Feb 2026 — 745B MoE, 200K context)
-    model: env.LLM_MODEL_SMART || 'glm-5', // Flagship reasoning model
-    fastModel: env.LLM_MODEL_FAST || 'glm-4.7-flash', // FREE flash model
-    smartModel: env.AI_MODEL_SMART, // Backward compat override
+    model: resolvedDefaultModel,
+    fastModel: resolvedFastModel,
+    smartModel: resolvedSmartModel,
     maxTokens: env.AI_MAX_TOKENS,
     temperature: 0.1,
     /** Per-model pricing in $/1M tokens. Law 006: No magic numbers. Updated Feb 2026. */
@@ -281,6 +324,11 @@ export const config = {
   },
   sqlitePath: env.SQLITE_PATH,
   serviceName: env.SERVICE_NAME,
+  runtime: {
+    dataDir: runtimeDataDir,
+    costLedgerPath,
+    browserSessionDir,
+  },
   telegram: {
     botToken: env.TELEGRAM_BOT_TOKEN,
     chatId: env.TELEGRAM_CHAT_ID,

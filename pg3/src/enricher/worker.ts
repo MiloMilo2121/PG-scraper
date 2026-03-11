@@ -195,7 +195,12 @@ export async function startWorker(): Promise<void> {
         }
     });
 
+    let shuttingDown = false;
     const shutdown = async (signal: string) => {
+        if (shuttingDown) {
+            return;
+        }
+        shuttingDown = true;
         Logger.warn(`Worker shutting down on ${signal}`);
         await worker.close();
         if (metricsServer) {
@@ -204,14 +209,15 @@ export async function startWorker(): Promise<void> {
         }
         await runtime.cleanup();
         await closeQueueResources();
+        process.exitCode = 0;
     };
 
     process.on('SIGINT', () => {
-        shutdown('SIGINT').finally(() => process.exit(0));
+        void shutdown('SIGINT');
     });
 
     process.on('SIGTERM', () => {
-        shutdown('SIGTERM').finally(() => process.exit(0));
+        void shutdown('SIGTERM');
     });
 
     await worker.waitUntilReady();
@@ -220,6 +226,6 @@ export async function startWorker(): Promise<void> {
 if (require.main === module) {
     startWorker().catch((error) => {
         Logger.fatal('Worker crashed', { error: error as Error });
-        process.exit(1);
+        process.exitCode = 1;
     });
 }

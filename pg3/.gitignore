@@ -21,5 +21,10 @@ brain/
 temp_profiles/
 output_server/
 *.pid
+cost_ledger.jsonl
+data/cost_ledger.jsonl
+data/browser-sessions/
+.omega_browser_sessions/
+search_profile_scraper/
 data/*.db-wal
 data/*.db-shm

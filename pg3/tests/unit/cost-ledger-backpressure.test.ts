@@ -3,7 +3,7 @@ import { CostLedger } from '../../src/foundation/CostLedger';
 
 describe('CostLedger punitive snapshots', () => {
   it('excludes browser-pool and semantic-empty failures from punitive health', async () => {
-    const ledger = new CostLedger(process.cwd());
+    const ledger = new CostLedger({ persistToDisk: false });
     try {
       await ledger.log({
         timestamp: new Date().toISOString(),
@@ -67,7 +67,7 @@ describe('CostLedger punitive snapshots', () => {
   });
 
   it('still counts non-punitive failures in provider health', async () => {
-    const ledger = new CostLedger(process.cwd());
+    const ledger = new CostLedger({ persistToDisk: false });
     try {
       for (let i = 0; i < 5; i++) {
         await ledger.log({
