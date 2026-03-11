@@ -19,8 +19,10 @@ async function main(): Promise<void> {
   }
 
   if (command === 'worker') {
-    Logger.error('Worker mode is currently disabled or removed.');
-    process.exit(1);
+    Logger.info('🚀 ANTIGRAVITY starting in WORKER mode');
+    const { startWorker } = await import('./enricher/worker');
+    await startWorker();
+    return;
   }
 
   if (command === 'server') {
@@ -30,7 +32,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const csvPath = process.argv[3];
+  const csvPath = process.argv[3] || process.env.SCHEDULER_INPUT_FILE;
   if (!csvPath) {
     Logger.error('Missing CSV path for scheduler mode');
     printUsage();

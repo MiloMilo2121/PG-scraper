@@ -14,7 +14,13 @@ export interface LedgerEntry {
     duration_ms: number;
     success: boolean;
     error?: string;
+    error_class?: 'provider_auth' | 'provider_rate_limit' | 'provider_block' | 'semantic_empty' | 'transport' | 'browser_pool' | 'unknown';
+    punitive?: boolean;
     company_id?: string;
+    waf_family?: 'cloudflare' | 'datadome' | 'generic_waf';
+    challenge_type?: string;
+    session_lane_id?: string;
+    cookie_reuse_hit?: boolean;
 }
 
 export interface HealthSnapshot {
@@ -35,6 +41,11 @@ export interface LedgerSummary {
     success_rate: number;
 }
 
+export interface HealthSnapshotOptions {
+    punitiveOnly?: boolean;
+    excludeModules?: string[];
+}
+
 export class CostLedger {
     private ringBuffer: LedgerEntry[] = [];
     private readonly MAX_BUFFER_SIZE = 1000;
@@ -49,14 +60,19 @@ export class CostLedger {
     }
 
     public async log(entry: LedgerEntry): Promise<void> {
+        const normalized: LedgerEntry = {
+            ...entry,
+            punitive: entry.punitive ?? !entry.success,
+        };
+
         // Add to ring buffer
-        this.ringBuffer.push(entry);
+        this.ringBuffer.push(normalized);
         if (this.ringBuffer.length > this.MAX_BUFFER_SIZE) {
             this.ringBuffer.shift(); // Remove oldest
         }
 
         // Add to file queue
-        this.pendingWrites.push(entry);
+        this.pendingWrites.push(normalized);
         if (this.pendingWrites.length >= 50) {
             this.flush();
         }
@@ -100,13 +116,18 @@ export class CostLedger {
         return summary.total_cost_eur / totalCompanies;
     }
 
-    public getHealthSnapshot(windowSeconds: number = 30): HealthSnapshot {
+    public getHealthSnapshot(windowSeconds: number = 30, options: HealthSnapshotOptions = {}): HealthSnapshot {
         const now = Date.now();
         const cutoff = now - (windowSeconds * 1000);
 
-        const recentEntries = this.ringBuffer.filter(e => new Date(e.timestamp).getTime() > cutoff);
+        const recentEntries = this.ringBuffer
+            .filter((e) => new Date(e.timestamp).getTime() > cutoff)
+            .filter((e) => !(options.excludeModules || []).includes(e.module));
+        const snapshotEntries = options.punitiveOnly
+            ? recentEntries.filter((e) => e.punitive !== false)
+            : recentEntries;
 
-        if (recentEntries.length === 0) {
+        if (snapshotEntries.length === 0) {
             return {
                 window_seconds: windowSeconds,
                 total_calls: 0,
@@ -127,7 +148,7 @@ export class CostLedger {
         const durations: number[] = [];
         const providerErrors: Record<string, { total: number, errors: number }> = {};
 
-        for (const entry of recentEntries) {
+        for (const entry of snapshotEntries) {
             totalDuration += entry.duration_ms;
             durations.push(entry.duration_ms);
             cost += entry.cost_eur;
@@ -146,7 +167,7 @@ export class CostLedger {
         durations.sort((a, b) => a - b);
         const p95Index = Math.floor(durations.length * 0.95);
         const p95 = durations[p95Index] || 0;
-        const errorRate = errors / recentEntries.length;
+        const errorRate = errors / snapshotEntries.length;
 
         const unhealthyProviders = Object.entries(providerErrors)
             .filter(([_, stats]) => stats.total >= 5 && (stats.errors / stats.total) > 0.3)
@@ -154,14 +175,14 @@ export class CostLedger {
 
         return {
             window_seconds: windowSeconds,
-            total_calls: recentEntries.length,
+            total_calls: snapshotEntries.length,
             error_rate: errorRate,
-            avg_duration_ms: totalDuration / recentEntries.length,
+            avg_duration_ms: totalDuration / snapshotEntries.length,
             p95_duration_ms: p95,
             cost_eur: cost,
-            cache_hit_rate: cacheHits / recentEntries.length,
+            cache_hit_rate: cacheHits / snapshotEntries.length,
             providers_unhealthy: unhealthyProviders,
-            backpressure_recommended: errorRate > 0.2 || (totalDuration / recentEntries.length) > 5000
+            backpressure_recommended: errorRate > 0.4 || (totalDuration / snapshotEntries.length) > 5000
         };
     }
 

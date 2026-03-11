@@ -32,18 +32,49 @@ services:
       REDIS_PORT: 6379
     depends_on:
       - redis
-  # 🌐 ENRICHER - Main Worker (to be containerized in Task 10)
-  # enricher:
-  #   build: .
-  #   container_name: antigravity-worker
-  #   restart: unless-stopped
-  #   depends_on:
-  #     - redis
-  #   environment:
-  #     REDIS_URL: redis://redis:6379
-  #   volumes:
-  #     - ./data:/app/data
-  #     - ./output:/app/output
+
+  # 🌐 ENRICHER WORKER
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: antigravity-worker
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379
+      SQLITE_PATH: /app/data/antigravity.db
+      START_HEALTH_SERVER: "true"
+      ENABLE_PROMETHEUS_METRICS: "true"
+      HEALTH_PORT: 3000
+      METRICS_PORT: 9091
+    ports:
+      - "3000:3000"
+      - "9091:9091"
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+
+  # 🗓️ SCHEDULER SINGLETON
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: antigravity-scheduler
+    profiles: ["scheduler"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["node", "dist/src/index.js", "scheduler"]
+    environment:
+      REDIS_URL: redis://redis:6379
+      SQLITE_PATH: /app/data/antigravity.db
+      SCHEDULER_INPUT_FILE: /app/output/campaigns/BOARD_FINAL_SANITISED.csv
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
 
 volumes:
   redis_data:

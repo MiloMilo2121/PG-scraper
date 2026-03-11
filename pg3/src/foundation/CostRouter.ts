@@ -180,8 +180,15 @@ export class CostRouter {
             }
         }
 
-        const serpProviders = ['DNS-MX-MINING-0', 'CRTSH-API-1', 'SEARXNG-NET-1', 'BING-HTML-1', 'DDG-LITE-1', 'BRAVE-HTML-1', 'SERPER-1', 'JINA-1', 'FREE-AGGR-PROXY-3', 'PERPLEXITY-API-4'];
-        const httpProviders = ['HTTP-DIRECT-1', 'HTTP-PROXY-2', 'HTTP-SCRAPEDO-3', 'HTTP-BRIGHTDATA-4', 'ORACLE-CRAWL4AI-5'];
+        const serpProviders = ['SERPER-1', 'DNS-MX-MINING-0', 'CRTSH-API-1', 'JINA-1', 'DDG-LITE-1', 'BRAVE-HTML-1', 'BING-HTML-1', 'FREE-AGGR-PROXY-3', 'PERPLEXITY-API-4'];
+        const httpProviders = ['HTTP-DIRECT-1', 'HTTP-SCRAPEDO-2', 'HTTP-SCRAPEDO-3', 'HTTP-BRIGHTDATA-4', 'ORACLE-CRAWL4AI-5'];
+        const providerOrder = taskType === 'SERP'
+            ? serpProviders
+            : taskType === 'PROXY_FETCH'
+                ? httpProviders
+                : [];
+        const orderMap = new Map(providerOrder.map((providerId, index) => [providerId, index]));
+
         const sortedProviders = Array.from(this.providers.entries())
             .filter(([id, adapter]) => {
                 if (taskType === 'SERP') return serpProviders.includes(id);
@@ -190,7 +197,12 @@ export class CostRouter {
                 return true;
             })
             .filter(([id, adapter]) => !options?.maxTier || adapter.tier <= options.maxTier)
-            .sort((a, b) => a[1].tier - b[1].tier);
+            .sort((a, b) => {
+                if (orderMap.size > 0) {
+                    return (orderMap.get(a[0]) ?? Number.MAX_SAFE_INTEGER) - (orderMap.get(b[0]) ?? Number.MAX_SAFE_INTEGER);
+                }
+                return a[1].tier - b[1].tier;
+            });
 
         const failures: { provider: string; error: string; status?: number }[] = [];
 
@@ -250,7 +262,7 @@ export class CostRouter {
 
             const duration = Date.now() - start;
 
-            const isNonCriticalBlock = !!errorMsg && (errorMsg.includes('BLOCK') || errorMsg.includes('captcha') || errorMsg.includes('403') || errorMsg.includes('Timeout'));
+            const classification = this.classifyError(errorMsg, statusCode);
             await this.ledger.log({
                 timestamp: new Date().toISOString(),
                 module: 'CostRouter',
@@ -261,8 +273,10 @@ export class CostRouter {
                 cache_hit: false,
                 cache_level: 'MISS',
                 duration_ms: duration,
-                success: success || errorMsg === 'SERP_EMPTY_RESULT' || isNonCriticalBlock,
+                success,
                 error: errorMsg,
+                error_class: classification.errorClass,
+                punitive: classification.punitive,
                 company_id: options?.companyId,
             });
 
@@ -313,5 +327,26 @@ export class CostRouter {
         for (const [, bucket] of this.llmBuckets) {
             bucket.cleanup();
         }
+    }
+
+    private classifyError(errorMsg?: string, statusCode?: number): { errorClass: 'provider_auth' | 'provider_rate_limit' | 'provider_block' | 'semantic_empty' | 'transport' | 'unknown'; punitive: boolean } {
+        const message = (errorMsg || '').toLowerCase();
+
+        if (message.includes('serp_empty_result')) {
+            return { errorClass: 'semantic_empty', punitive: false };
+        }
+        if (statusCode === 401 || statusCode === 402 || message.includes('auth') || message.includes('api_key')) {
+            return { errorClass: 'provider_auth', punitive: false };
+        }
+        if (statusCode === 429 || message.includes('rate') || message.includes('queue_full')) {
+            return { errorClass: 'provider_rate_limit', punitive: true };
+        }
+        if (statusCode === 403 || message.includes('captcha') || message.includes('block')) {
+            return { errorClass: 'provider_block', punitive: true };
+        }
+        if (message.includes('timeout') || message.includes('econn') || message.includes('socket') || message.includes('network')) {
+            return { errorClass: 'transport', punitive: true };
+        }
+        return { errorClass: 'unknown', punitive: true };
     }
 }

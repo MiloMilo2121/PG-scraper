@@ -1,6 +1,9 @@
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
+import * as fs from 'fs';
+import * as path from 'path';
 const crypto = require('crypto');
 import { CostLedger } from './CostLedger';
+import { BlockClassifier, BlockType } from '../enricher/core/security/block_classifier';
 
 export interface NavigationResult {
     status: 'OK' | 'TIMEOUT' | 'BLOCKED' | 'CF_CHALLENGE' | 'ERROR';
@@ -15,6 +18,10 @@ interface ContextInstance {
     id: string;
     context: BrowserContext;
     page: Page;
+    session_key: string;
+    storage_state_path: string;
+    loaded_from_storage_state: boolean;
+    blocked_resources_current_nav: number;
     created_at: number;
     requests_served: number;
     last_error?: string;
@@ -45,6 +52,7 @@ export class BrowserPool {
     private navTimeoutMs: number;
     private blockResources: string[];
     private proxyUrl: string | undefined;
+    private sessionStateDir: string;
 
     // Stats
     private recycledTotal = 0;
@@ -61,9 +69,12 @@ export class BrowserPool {
         this.maxInstances = options.maxInstances || 3;
         this.maxReqsPerInstance = options.maxRequestsPerInstance || 50;
         this.navTimeoutMs = options.navigationTimeout || 8000;
-        this.blockResources = options.blockResources || ['image', 'stylesheet', 'font', 'media'];
+        this.blockResources = options.blockResources || ['image', 'font', 'media'];
         this.ledger = options.ledger;
         this.proxyUrl = process.env.PROXY_RESIDENTIAL_URL;
+        this.sessionStateDir = path.join(process.cwd(), '.omega_browser_sessions');
+
+        fs.mkdirSync(this.sessionStateDir, { recursive: true });
 
         this.registerCleanupHooks();
     }
@@ -100,9 +111,37 @@ export class BrowserPool {
         return this.browser;
     }
 
-    private async createInstance(): Promise<ContextInstance> {
+    private getSessionKey(url: string): string {
+        try {
+            const hostname = new URL(url).hostname.replace(/^www\./, '').toLowerCase();
+            const parts = hostname.split('.').filter(Boolean);
+            if (parts.length >= 2) {
+                return parts.slice(-2).join('.');
+            }
+            return hostname || 'generic';
+        } catch {
+            return 'generic';
+        }
+    }
+
+    private getStorageStatePath(sessionKey: string): string {
+        const safeKey = sessionKey.replace(/[^a-z0-9.-]/gi, '_');
+        return path.join(this.sessionStateDir, `${safeKey}.json`);
+    }
+
+    private async persistStorageState(instance: ContextInstance): Promise<void> {
+        try {
+            await instance.context.storageState({ path: instance.storage_state_path });
+        } catch {
+            // Ignore state persistence failures; browsing can continue cold.
+        }
+    }
+
+    private async createInstance(sessionKey: string = 'generic'): Promise<ContextInstance> {
         const id = crypto.randomUUID().substring(0, 8);
         const browser = await this.ensureBrowser();
+        const storageStatePath = this.getStorageStatePath(sessionKey);
+        const hasStorageState = fs.existsSync(storageStatePath);
 
         // Each context is fully isolated (cookies, localStorage, fingerprint)
         const context = await browser.newContext({
@@ -115,65 +154,87 @@ export class BrowserPool {
             locale: 'it-IT',
             timezoneId: 'Europe/Rome',
             ignoreHTTPSErrors: true,
+            ...(hasStorageState ? { storageState: storageStatePath } : {}),
         });
 
-        // Block heavy resources via Playwright's route() API
-        // This is the Playwright equivalent of puppeteer's setRequestInterception
-        const blockPattern = this.blockResources.map(r => `**/*.${r === 'image' ? '{png,jpg,jpeg,gif,webp,svg,ico}' : r === 'stylesheet' ? 'css' : r === 'font' ? '{woff,woff2,ttf,otf,eot}' : r === 'media' ? '{mp4,webm,ogg,mp3,wav}' : r}`);
+        const page = await context.newPage();
+
+        const instance: ContextInstance = {
+            id,
+            context,
+            page,
+            session_key: sessionKey,
+            storage_state_path: storageStatePath,
+            loaded_from_storage_state: hasStorageState,
+            blocked_resources_current_nav: 0,
+            created_at: Date.now(),
+            requests_served: 0,
+            is_busy: false,
+        };
 
         await context.route('**/*', (route) => {
             const resourceType = route.request().resourceType();
             if (this.blockResources.includes(resourceType)) {
+                instance.blocked_resources_current_nav++;
                 route.abort().catch(() => { });
             } else {
                 route.continue().catch(() => { });
             }
         });
 
-        const page = await context.newPage();
-
-        return {
-            id,
-            context,
-            page,
-            created_at: Date.now(),
-            requests_served: 0,
-            is_busy: false,
-        };
+        return instance;
     }
 
-    private async acquireInstance(): Promise<ContextInstance> {
-        // Find available
-        let available = this.instances.find(i => !i.is_busy);
+    private async acquireInstance(url: string): Promise<ContextInstance> {
+        const sessionKey = this.getSessionKey(url);
 
-        if (!available && this.instances.length < this.maxInstances) {
-            // Can spawn a new one
-            available = await this.createInstance();
+        let available = this.instances.find(i => !i.is_busy && i.session_key === sessionKey);
+        if (available) {
+            available.is_busy = true;
+            return available;
+        }
+
+        if (this.instances.length < this.maxInstances) {
+            available = await this.createInstance(sessionKey);
             this.instances.push(available);
             available.is_busy = true;
             return available;
         }
 
-        if (!available) {
-            // Wait logic
-            const start = Date.now();
-            while (Date.now() - start < 10000) {
-                await new Promise(r => setTimeout(r, 200));
-                available = this.instances.find(i => !i.is_busy);
-                if (available) {
-                    available.is_busy = true;
-                    return available;
-                }
-            }
-            throw new BrowserPoolExhaustedError();
+        const reusableOtherLane = this.instances.find(i => !i.is_busy);
+        if (reusableOtherLane) {
+            await this.recycleInstance(reusableOtherLane);
+            available = await this.createInstance(sessionKey);
+            this.instances.push(available);
+            available.is_busy = true;
+            return available;
         }
 
-        available.is_busy = true;
-        return available;
+        const start = Date.now();
+        while (Date.now() - start < 10000) {
+            await new Promise(r => setTimeout(r, 200));
+            available = this.instances.find(i => !i.is_busy && i.session_key === sessionKey);
+            if (available) {
+                available.is_busy = true;
+                return available;
+            }
+
+            const freeOtherLane = this.instances.find(i => !i.is_busy);
+            if (freeOtherLane) {
+                await this.recycleInstance(freeOtherLane);
+                available = await this.createInstance(sessionKey);
+                this.instances.push(available);
+                available.is_busy = true;
+                return available;
+            }
+        }
+
+        throw new BrowserPoolExhaustedError();
     }
 
     private async recycleInstance(instance: ContextInstance) {
         try {
+            await this.persistStorageState(instance);
             await Promise.race([
                 instance.context.close(),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout closing context')), 5000))
@@ -189,7 +250,7 @@ export class BrowserPool {
     public async navigateSafe(url: string, pivaToFind?: string): Promise<NavigationResult> {
         let instance: ContextInstance;
         try {
-            instance = await this.acquireInstance();
+            instance = await this.acquireInstance(url);
         } catch (e) {
             return {
                 status: 'ERROR', html: null, finalUrl: null, blocked_resources: 0,
@@ -201,29 +262,34 @@ export class BrowserPool {
         let status: NavigationResult['status'] = 'OK';
         let html: string | null = null;
         let finalUrl: string | null = null;
+        let wafFamily: 'cloudflare' | 'datadome' | 'generic_waf' | undefined;
+        let challengeType: string | undefined;
+        const cookieReuseHit = instance.loaded_from_storage_state || instance.requests_served > 0;
+        instance.blocked_resources_current_nav = 0;
 
         try {
             const response = await instance.page.goto(url, { waitUntil: 'domcontentloaded', timeout: this.navTimeoutMs });
             finalUrl = instance.page.url();
+            html = await instance.page.content();
 
-            if (response) {
-                const statusHttp = response.status();
-                if (statusHttp === 403 || statusHttp === 429) {
+            if (!url.startsWith('about:')) {
+                const blockSig = BlockClassifier.classify(
+                    response?.status() || 200,
+                    html,
+                    finalUrl || url,
+                    'browser_pool'
+                );
+                wafFamily = blockSig.waf_family;
+                challengeType = blockSig.challenge_type;
+
+                if (blockSig.type === BlockType.CLOUDFLARE_CHALLENGE || blockSig.type === BlockType.CLOUDFLARE_TURNSTILE) {
+                    status = 'CF_CHALLENGE';
+                } else if (blockSig.type !== BlockType.NONE) {
                     status = 'BLOCKED';
-                } else {
-                    const headers = response.headers();
-                    if (headers['cf-ray']) {
-                        // Check if it's a Cloudflare challenge page
-                        const bodyText = await instance.page.evaluate(() => document.body.innerText);
-                        if (bodyText.includes('Just a moment...') || bodyText.includes('Attention Required!')) {
-                            status = 'CF_CHALLENGE';
-                        }
-                    }
                 }
             }
-
-            if (status === 'OK') {
-                html = await instance.page.content();
+            if (status !== 'OK') {
+                html = null;
             }
 
         } catch (err: any) {
@@ -238,6 +304,8 @@ export class BrowserPool {
 
         const duration = Date.now() - start;
         instance.requests_served++;
+        await this.persistStorageState(instance);
+        instance.loaded_from_storage_state = true;
 
         // Determine if we need to recycle
         if (instance.requests_served >= this.maxReqsPerInstance || status === 'ERROR') {
@@ -249,19 +317,27 @@ export class BrowserPool {
         // Log Cost/Health
         await this.ledger.log({
             timestamp: new Date().toISOString(), module: 'BrowserPool', provider: 'playwright',
-            tier: 2, task_type: 'PROXY_FETCH', cost_eur: 0, cache_hit: false, cache_level: 'MISS',
-            duration_ms: duration, success: status === 'OK', error: status === 'OK' ? undefined : status
-        });
+              tier: 2, task_type: 'PROXY_FETCH', cost_eur: 0, cache_hit: false, cache_level: 'MISS',
+              duration_ms: duration,
+              success: status === 'OK',
+              error: status === 'OK' ? undefined : status,
+              error_class: status === 'OK' ? undefined : 'browser_pool',
+              punitive: false,
+              waf_family: wafFamily,
+              challenge_type: challengeType,
+              session_lane_id: instance.session_key,
+              cookie_reuse_hit: cookieReuseHit,
+          });
 
-        return {
-            status,
-            html,
-            finalUrl,
-            blocked_resources: 10, // Approx
-            duration_ms: duration,
-            browser_id: instance.id
-        };
-    }
+          return {
+              status,
+              html,
+              finalUrl,
+              blocked_resources: instance.blocked_resources_current_nav,
+              duration_ms: duration,
+              browser_id: instance.id
+          };
+      }
 
     public async destroyAll(): Promise<{ killed: number; lockfiles_deleted: number }> {
         let killed = 0;

@@ -25,6 +25,8 @@ export interface ValveMetrics {
 }
 
 export class BackpressureValve {
+    private static readonly EMERGENCY_ERROR_RATE = 0.6;
+    private static readonly THROTTLE_ERROR_RATE = 0.4;
     private currentConcurrency: number;
     private maxConcurrency: number;
     private minConcurrency: number;
@@ -74,25 +76,25 @@ export class BackpressureValve {
     private adjustConcurrency() {
         if (this.isPaused) return;
 
-        const health = this.ledger.getHealthSnapshot(30);
+        const health = this.ledger.getHealthSnapshot(30, { punitiveOnly: true });
 
         // Safety net: Redis down or MemoryFirstCache issues? 
         // We simulate a strict cap if things are really broken, but we don't strictly have Redis state here.
         // We just use error rates.
 
-        if (health.error_rate > 0.30) {
+        if (health.error_rate > BackpressureValve.EMERGENCY_ERROR_RATE) {
             // Emergency Mode
             if (this.targetConcurrency !== 1) {
                 this.targetConcurrency = 1;
                 this.adjustmentsMade++;
-                console.warn('[BackpressureValve] EMERGENCY MODE ACTIVATED: error_rate > 30%. Concurrency locked to 1.');
+                console.warn('[BackpressureValve] EMERGENCY MODE ACTIVATED: punitive_error_rate > 60%. Concurrency locked to 1.');
             }
-        } else if (health.error_rate > 0.15 || health.avg_duration_ms > 25000) {
+        } else if (health.error_rate > BackpressureValve.THROTTLE_ERROR_RATE || health.avg_duration_ms > 25000) {
             // Multiplicative Decrease
             const newTarget = Math.floor(this.targetConcurrency / 2);
             this.targetConcurrency = Math.max(this.minConcurrency, newTarget);
             this.adjustmentsMade++;
-            console.warn(`[BackpressureValve] THROTTLING: error_rate=${(health.error_rate * 100).toFixed(1)}%, avg_ms=${health.avg_duration_ms.toFixed(0)}. Concurrency halved to ${this.targetConcurrency}.`);
+            console.warn(`[BackpressureValve] THROTTLING: punitive_error_rate=${(health.error_rate * 100).toFixed(1)}%, avg_ms=${health.avg_duration_ms.toFixed(0)}. Concurrency halved to ${this.targetConcurrency}.`);
         } else if (health.error_rate < 0.05 && health.avg_duration_ms < 12000) {
             // Additive Increase
             if (this.targetConcurrency < this.maxConcurrency) {
@@ -173,7 +175,7 @@ export class BackpressureValve {
     }
 
     public getMetrics(): ValveMetrics {
-        const health = this.ledger.getHealthSnapshot(300); // 5m
+        const health = this.ledger.getHealthSnapshot(300, { punitiveOnly: true }); // 5m
         return {
             current_concurrency: this.currentConcurrency,
             max_concurrency: this.maxConcurrency,

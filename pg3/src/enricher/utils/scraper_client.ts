@@ -8,12 +8,9 @@ const globalDispatcher = new Agent({
   keepAliveTimeout: 15000,
   keepAliveMaxTimeout: 30000,
   connections: 50,
-  connect: {
-    rejectUnauthorized: false
-  }
 });
 
-export type ScraperClientMode = 'auto' | 'direct' | 'scrape_do' | 'brightdata' | 'jina_reader' | 'jina_search';
+export type ScraperClientMode = 'auto' | 'direct' | 'scrape_do' | 'brightdata' | 'oracle' | 'jina_reader' | 'jina_search';
 
 export interface ScraperClientOptions {
   mode?: ScraperClientMode;
@@ -23,10 +20,11 @@ export interface ScraperClientOptions {
   timeoutMs?: number;
   maxRetries?: number;
   headers?: Record<string, string>;
+  allowOracleFallback?: boolean;
 }
 
 export interface ScraperClientResponse {
-  via: 'direct' | 'scrape_do' | 'brightdata' | 'jina_reader' | 'jina_search';
+  via: 'direct' | 'scrape_do' | 'brightdata' | 'oracle' | 'jina_reader' | 'jina_search';
   status: number;
   finalUrl: string;
   headers: Record<string, string | string[] | undefined>;
@@ -210,6 +208,89 @@ export class ScraperClient {
     };
   }
 
+  private static async oracleGet(targetUrl: string, options: ScraperClientOptions): Promise<ScraperClientResponse> {
+    const timeoutMs = options.timeoutMs ?? 60000;
+    const { OracleClient } = await import('./oracle_client');
+    const result = await OracleClient.fetchHtmlStealth(targetUrl, timeoutMs);
+
+    return {
+      via: 'oracle',
+      status: result.success ? 200 : 503,
+      finalUrl: targetUrl,
+      headers: {},
+      data: result.html || '',
+    };
+  }
+
+  private static async runAuto(targetUrl: string, options: ScraperClientOptions, retries: number): Promise<ScraperClientResponse> {
+    const allowOracleFallback = options.allowOracleFallback ?? true;
+    const steps: Array<{ label: string; run: () => Promise<ScraperClientResponse> }> = [
+      {
+        label: 'direct',
+        run: () => this.directGet(targetUrl, options),
+      },
+    ];
+
+    if (this.isScrapeDoEnabled()) {
+      steps.push({
+        label: 'scrape_do_html',
+        run: () => this.scrapeDoGet(targetUrl, { ...options, render: false, super: false }),
+      });
+      steps.push({
+        label: 'scrape_do_rendered',
+        run: () => this.scrapeDoGet(targetUrl, { ...options, render: true, super: true }),
+      });
+    }
+
+    if (this.isBrightDataEnabled()) {
+      steps.push({
+        label: 'brightdata_unlocker',
+        run: () => this.brightDataGet(targetUrl, options),
+      });
+    }
+
+    if (allowOracleFallback) {
+      steps.push({
+        label: 'oracle',
+        run: () => this.oracleGet(targetUrl, options),
+      });
+    }
+
+    let lastError: Error | null = null;
+    let lastResponse: ScraperClientResponse | null = null;
+
+    for (const step of steps) {
+      try {
+        const response = await withRetry(() => step.run(), retries);
+        lastResponse = response;
+
+        if (!looksBlocked(response.status, response.data, targetUrl)) {
+          return response;
+        }
+
+        Logger.warn('[ScraperClient] Step looks blocked; escalating', {
+          host: safeHost(targetUrl),
+          via: response.via,
+          step: step.label,
+          status: response.status,
+        });
+      } catch (error) {
+        lastError = error as Error;
+        Logger.warn('[ScraperClient] Step failed; escalating', {
+          host: safeHost(targetUrl),
+          step: step.label,
+          error: error as Error,
+        });
+      }
+    }
+
+    if (lastResponse) {
+      return lastResponse;
+    }
+
+    throw lastError || new Error(`AUTO_FETCH_FAILED: ${targetUrl}`);
+  }
+
   public static async fetchHtml(targetUrl: string, options: ScraperClientOptions = {}): Promise<ScraperClientResponse> {
     const mode: ScraperClientMode = options.mode || 'auto';
     const retries = options.maxRetries ?? 1;
@@ -226,34 +307,11 @@ export class ScraperClient {
       return await withRetry(() => this.brightDataGet(targetUrl, options), retries);
     }
 
-    // AUTO MODE:
-    // - for hard targets, go Scrape.do first (if configured)
-    // - otherwise try direct, then fallback to Scrape.do if blocked
-    const preferScrapeDoFirst = this.isScrapeDoEnabled() && isHardTarget(targetUrl);
-
-    if (preferScrapeDoFirst) {
-      try {
-        return await withRetry(() => this.scrapeDoGet(targetUrl, options), retries);
-      } catch (e) {
-        Logger.warn('[ScraperClient] Scrape.do failed, falling back to direct', {
-          host: safeHost(targetUrl),
-          error: e as Error,
-        });
-        return await withRetry(() => this.directGet(targetUrl, options), retries);
-      }
+    if (mode === 'oracle') {
+      return await withRetry(() => this.oracleGet(targetUrl, options), retries);
     }
 
-    const direct = await withRetry(() => this.directGet(targetUrl, options), retries);
-    if (!looksBlocked(direct.status, direct.data, targetUrl)) {
-      return direct;
-    }
-
-    if (!this.isScrapeDoEnabled()) {
-      return direct;
-    }
-
-    Logger.info('[ScraperClient] Direct request looks blocked; retrying via Scrape.do', { host: safeHost(targetUrl) });
-    return await withRetry(() => this.scrapeDoGet(targetUrl, options), retries);
+    return await this.runAuto(targetUrl, options, retries);
   }
 
   public static async fetchText(targetUrl: string, options: ScraperClientOptions = {}): Promise<string> {

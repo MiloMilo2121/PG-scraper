@@ -53,9 +53,10 @@ export class ProxyManagerV9 {
     private static instance: ProxyManagerV9;
 
     // Core Pools
-    private datacenterPool: string | undefined;
-    private residentialPool: string | undefined;
-    private mobilePool: string | undefined;
+    private datacenterPool: string[] = [];
+    private residentialPool: string[] = [];
+    private mobilePool: string[] = [];
+    private nextProxyIndex: Map<ProxyTier, number> = new Map();
 
     // Telemetry & State
     private failedProxies: Set<string> = new Set();
@@ -72,16 +73,16 @@ export class ProxyManagerV9 {
         }
 
         // Initialize Pools
-        this.datacenterPool = PROXY_DATACENTER_URL;
-        this.residentialPool = PROXY_RESIDENTIAL_URL;
-        this.mobilePool = PROXY_MOBILE_URL;
+        this.datacenterPool = this.parseProxyPool(PROXY_DATACENTER_URL);
+        this.residentialPool = this.parseProxyPool(PROXY_RESIDENTIAL_URL);
+        this.mobilePool = this.parseProxyPool(PROXY_MOBILE_URL);
 
         Logger.info('🌊 OMEGA V9 Proxy Manager Initialized');
-        if (this.datacenterPool) Logger.info(' ├─ Tier 1: Datacenter Active');
-        if (this.residentialPool) Logger.info(' ├─ Tier 2: Residential Active');
-        if (this.mobilePool) Logger.info(' └─ Tier 3: Mobile 5G Active');
+        if (this.datacenterPool.length > 0) Logger.info(` ├─ Tier 1: Datacenter Active (${this.datacenterPool.length} nodes)`);
+        if (this.residentialPool.length > 0) Logger.info(` ├─ Tier 2: Residential Active (${this.residentialPool.length} nodes)`);
+        if (this.mobilePool.length > 0) Logger.info(` └─ Tier 3: Mobile 5G Active (${this.mobilePool.length} nodes)`);
 
-        if (!this.datacenterPool && !this.residentialPool && !this.mobilePool) {
+        if (this.datacenterPool.length === 0 && this.residentialPool.length === 0 && this.mobilePool.length === 0) {
             Logger.warn('⚠️ CRITICAL: No proxy pools configured. OMEGA V9 operating bare-metal (DIRECT).');
         }
     }
@@ -107,7 +108,7 @@ export class ProxyManagerV9 {
 
             // 1. Extreme Threat ➔ Force Tier 3 (Mobile)
             if (THREAT_MATRIX.EXTREME.some(t => hostname.includes(t))) {
-                return this.mobilePool ? ProxyTier.MOBILE : ProxyTier.RESIDENTIAL;
+                return this.mobilePool.length > 0 ? ProxyTier.MOBILE : ProxyTier.RESIDENTIAL;
             }
 
             // 2. High Threat ➔ Force Tier 2 (Residential)
@@ -115,18 +116,18 @@ export class ProxyManagerV9 {
                 // If standard residential fails on a high threat, escalate to Mobile
                 if (requiresFallback) {
                     Logger.info(`⚡ OMEGA V9 Escalation: High target fallback requested. Routing to MOBILE.`);
-                    return this.mobilePool ? ProxyTier.MOBILE : ProxyTier.RESIDENTIAL;
+                    return this.mobilePool.length > 0 ? ProxyTier.MOBILE : ProxyTier.RESIDENTIAL;
                 }
-                return this.residentialPool ? ProxyTier.RESIDENTIAL : ProxyTier.DATACENTER;
+                return this.residentialPool.length > 0 ? ProxyTier.RESIDENTIAL : ProxyTier.DATACENTER;
             }
 
             // 3. Normal Threat (Datacenter default, unless fallback requested)
             if (requiresFallback) {
                 Logger.info(`⚡ OMEGA V9 Fallback: Standard target rejected. Routing to RESIDENTIAL.`);
-                return this.residentialPool ? ProxyTier.RESIDENTIAL : ProxyTier.DATACENTER;
+                return this.residentialPool.length > 0 ? ProxyTier.RESIDENTIAL : ProxyTier.DATACENTER;
             }
 
-            return this.datacenterPool ? ProxyTier.DATACENTER : ProxyTier.DIRECT;
+            return this.datacenterPool.length > 0 ? ProxyTier.DATACENTER : ProxyTier.DIRECT;
 
         } catch {
             return ProxyTier.DATACENTER; // Default safe fallback for malformed URLs
@@ -145,21 +146,7 @@ export class ProxyManagerV9 {
      * 🔌 Extract raw string by tier
      */
     public getProxyForTier(tier: ProxyTier): ProxyConfig {
-        let proxyUrl: string | undefined;
-
-        switch (tier) {
-            case ProxyTier.MOBILE:
-                proxyUrl = this.mobilePool || this.residentialPool || this.datacenterPool;
-                break;
-            case ProxyTier.RESIDENTIAL:
-                proxyUrl = this.residentialPool || this.datacenterPool;
-                break;
-            case ProxyTier.DATACENTER:
-                proxyUrl = this.datacenterPool || this.residentialPool;
-                break;
-            case ProxyTier.DIRECT:
-                return {};
-        }
+        const proxyUrl = this.selectProxyUrl(tier);
 
         if (!proxyUrl) return {};
         return this.parseProxyUrl(proxyUrl);
@@ -237,6 +224,84 @@ export class ProxyManagerV9 {
         }
         this.failedProxyTimers.clear();
         this.failedProxies.clear();
+    }
+
+    private parseProxyPool(proxyPool?: string): string[] {
+        if (!proxyPool) {
+            return [];
+        }
+
+        return proxyPool
+            .split(/[\n,;]+/)
+            .map((entry) => entry.trim())
+            .filter((entry) => entry.length > 0);
+    }
+
+    private selectProxyUrl(tier: ProxyTier): string | undefined {
+        if (tier === ProxyTier.DIRECT) {
+            return undefined;
+        }
+
+        const tierCandidates = this.getTierCandidateOrder(tier);
+
+        for (const candidateTier of tierCandidates) {
+            const healthy = this.getHealthyPool(candidateTier);
+            const selected = this.pickFromPool(candidateTier, healthy);
+            if (selected) {
+                return selected;
+            }
+        }
+
+        // If every node is in cooldown, allow a last-resort selection to avoid total outage.
+        for (const candidateTier of tierCandidates) {
+            const selected = this.pickFromPool(candidateTier, this.getPool(candidateTier));
+            if (selected) {
+                return selected;
+            }
+        }
+
+        return undefined;
+    }
+
+    private getTierCandidateOrder(tier: ProxyTier): ProxyTier[] {
+        switch (tier) {
+            case ProxyTier.MOBILE:
+                return [ProxyTier.MOBILE, ProxyTier.RESIDENTIAL, ProxyTier.DATACENTER];
+            case ProxyTier.RESIDENTIAL:
+                return [ProxyTier.RESIDENTIAL, ProxyTier.DATACENTER];
+            case ProxyTier.DATACENTER:
+                return [ProxyTier.DATACENTER, ProxyTier.RESIDENTIAL];
+            case ProxyTier.DIRECT:
+                return [];
+        }
+    }
+
+    private getPool(tier: ProxyTier): string[] {
+        switch (tier) {
+            case ProxyTier.MOBILE:
+                return this.mobilePool;
+            case ProxyTier.RESIDENTIAL:
+                return this.residentialPool;
+            case ProxyTier.DATACENTER:
+                return this.datacenterPool;
+            case ProxyTier.DIRECT:
+                return [];
+        }
+    }
+
+    private getHealthyPool(tier: ProxyTier): string[] {
+        return this.getPool(tier).filter((proxyUrl) => !this.failedProxies.has(proxyUrl));
+    }
+
+    private pickFromPool(tier: ProxyTier, pool: string[]): string | undefined {
+        if (pool.length === 0) {
+            return undefined;
+        }
+
+        const currentIndex = this.nextProxyIndex.get(tier) || 0;
+        const proxyUrl = pool[currentIndex % pool.length];
+        this.nextProxyIndex.set(tier, (currentIndex + 1) % pool.length);
+        return proxyUrl;
     }
 
     private redactProxy(proxyUrl: string): string {
