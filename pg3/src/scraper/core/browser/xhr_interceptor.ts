@@ -1,18 +1,18 @@
 /**
  * 📡 OMEGA V9: XHR/FETCH PAYLOAD INTERCEPTOR
- * Task 4.2: Extracting raw JSON from SPA backend calls.
  *
- * Problem: Modern sites load data via XHR/Fetch after initial HTML render.
- *          Parsing HTML that is DOM-rendered client-side wastes bandwidth and CPU.
- * Solution: Intercept XHR/Fetch responses at the network level, extract raw JSON.
- *           This is strictly more efficient and more reliable than HTML parsing for SPAs.
- *
- * Law 002: O(1) JSON parse vs O(n) DOM traversal.
- * Law 603: Request Interception - only load what contains data.
+ * Extracts raw JSON from SPA backend calls and annotates GraphQL envelopes when present.
  */
 
 import { Page, Response } from 'playwright';
 import { Logger } from '../../utils/logger';
+
+export interface GraphQLMetadata {
+    operationName?: string;
+    variables?: Record<string, unknown>;
+    hasPersistedQuery: boolean;
+    hasErrors: boolean;
+}
 
 export interface CapturedPayload {
     url: string;
@@ -20,15 +20,14 @@ export interface CapturedPayload {
     status: number;
     contentType: string;
     body: any; // Parsed JSON or raw text
+    requestBody?: unknown;
+    graphql?: GraphQLMetadata;
     timestamp: number;
 }
 
 interface XHRInterceptorOptions {
-    /** URL patterns to capture (regex). Only matching XHR/Fetch responses are stored. */
     capturePatterns: RegExp[];
-    /** Maximum number of payloads to retain in memory per page. */
     maxPayloads?: number;
-    /** If true, also captures non-JSON text responses. Default: false (JSON only). */
     captureText?: boolean;
 }
 
@@ -53,31 +52,29 @@ export class XHRInterceptor {
                 const request = response.request();
                 const resourceType = request.resourceType();
 
-                // Only intercept XHR and Fetch requests
                 if (resourceType !== 'xhr' && resourceType !== 'fetch') return;
 
-                // Check if URL matches any capture pattern
-                const matches = options.capturePatterns.some(pattern => pattern.test(url));
+                const matches = options.capturePatterns.some((pattern) => pattern.test(url));
                 if (!matches) return;
 
                 const status = response.status();
                 const contentType = response.headers()['content-type'] || '';
                 const isJson = contentType.includes('application/json');
-
                 if (!isJson && !captureText) return;
 
-                // Extract body
-                let body: any;
+                let body: unknown;
                 try {
                     const text = await response.text();
                     body = isJson ? JSON.parse(text) : text;
                 } catch {
-                    return; // Body extraction failed (redirects, etc.)
+                    return;
                 }
 
-                // Store payload
+                const requestBody = XHRInterceptor.parseRequestBody(request.postData());
+                const graphql = XHRInterceptor.detectGraphQLPayload(url, requestBody, body);
+
                 if (payloads.length >= maxPayloads) {
-                    payloads.shift(); // FIFO eviction
+                    payloads.shift();
                 }
 
                 payloads.push({
@@ -86,42 +83,39 @@ export class XHRInterceptor {
                     status,
                     contentType,
                     body,
+                    requestBody,
+                    graphql,
                     timestamp: Date.now(),
                 });
 
                 Logger.debug(`📡 [XHRInterceptor] Captured ${request.method()} ${url} (${status})`);
             } catch {
-                // Silent — non-blocking interception
+                // Non-blocking interception
             }
         });
     }
 
-    /**
-     * 📦 Retrieve all captured payloads for a page.
-     */
     static getPayloads(page: Page): CapturedPayload[] {
         return pagePayloads.get(page) ?? [];
     }
 
-    /**
-     * 🔍 Find payloads matching a URL pattern.
-     */
     static findPayloads(page: Page, pattern: RegExp): CapturedPayload[] {
-        return XHRInterceptor.getPayloads(page).filter(p => pattern.test(p.url));
+        return XHRInterceptor.getPayloads(page).filter((payload) => pattern.test(payload.url));
     }
 
-    /**
-     * 🧹 Clear captured payloads (memory hygiene).
-     */
+    static findGraphQLPayloads(page: Page, operationPattern?: RegExp): CapturedPayload[] {
+        return XHRInterceptor.getPayloads(page).filter((payload) => {
+            if (!payload.graphql) return false;
+            if (!operationPattern) return true;
+            return operationPattern.test(payload.graphql.operationName || '');
+        });
+    }
+
     static clearPayloads(page: Page): void {
         const payloads = pagePayloads.get(page);
         if (payloads) payloads.length = 0;
     }
 
-    /**
-     * 📊 Extract specific fields from captured JSON payloads.
-     * Useful for extracting company data from SPA API calls.
-     */
     static extractFields<T>(page: Page, urlPattern: RegExp, fieldExtractor: (body: any) => T | null): T[] {
         const payloads = XHRInterceptor.findPayloads(page, urlPattern);
         const results: T[] = [];
@@ -133,10 +127,59 @@ export class XHRInterceptor {
                     results.push(extracted);
                 }
             } catch {
-                // Extraction failed for this payload
+                // Ignore malformed payloads
             }
         }
 
         return results;
+    }
+
+    static detectGraphQLPayload(url: string, requestBody?: unknown, responseBody?: unknown): GraphQLMetadata | undefined {
+        const requestEnvelope = XHRInterceptor.asGraphQLEnvelope(requestBody);
+        const responseEnvelope = XHRInterceptor.asGraphQLEnvelope(responseBody);
+        const looksGraphQL = /graphql/i.test(url) || !!requestEnvelope || !!responseEnvelope;
+
+        if (!looksGraphQL) return undefined;
+
+        const requestRecord = requestEnvelope || {};
+        const responseRecord = responseEnvelope || {};
+        const extensions = (requestRecord.extensions && typeof requestRecord.extensions === 'object')
+            ? requestRecord.extensions as Record<string, unknown>
+            : {};
+
+        return {
+            operationName: typeof requestRecord.operationName === 'string'
+                ? requestRecord.operationName
+                : typeof responseRecord.operationName === 'string'
+                    ? responseRecord.operationName
+                    : undefined,
+            variables: typeof requestRecord.variables === 'object'
+                ? requestRecord.variables as Record<string, unknown>
+                : undefined,
+            hasPersistedQuery: !!(extensions.persistedQuery),
+            hasErrors: Array.isArray(responseRecord.errors) && responseRecord.errors.length > 0,
+        };
+    }
+
+    private static parseRequestBody(postData: string | null): unknown {
+        if (!postData) return undefined;
+        try {
+            return JSON.parse(postData);
+        } catch {
+            return postData;
+        }
+    }
+
+    private static asGraphQLEnvelope(value: unknown): Record<string, unknown> | undefined {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            return undefined;
+        }
+
+        const record = value as Record<string, unknown>;
+        if ('query' in record || 'operationName' in record || 'data' in record || 'errors' in record) {
+            return record;
+        }
+
+        return undefined;
     }
 }

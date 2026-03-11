@@ -2,96 +2,134 @@ import { config } from '../../config';
 import { Logger } from '../../utils/logger';
 
 /**
- * 🚦 MODEL ROUTER — Intelligent AI Selection (Updated Feb 2026)
+ * 🚦 MODEL ROUTER — Task-aware AI selection
  *
- * Decides which model to use based on the complexity of the task.
- * Cost-optimized chains — cheapest viable model first, quality fallbacks after.
- *
- * Strategies:
- * - SIMPLE: glm-4.7-flash (FREE!) → deepseek-chat ($0.14/$0.28) → gpt-4o-mini
- * - MODERATE: deepseek-chat → glm-4.7-flash (FREE) → gpt-4o-mini
- * - COMPLEX: glm-5 ($1/$3.2) → kimi-k2.5 ($0.6/$3) → deepseek-chat → gpt-4o
- * - HARD: kimi-k2.5 → deepseek-reasoner ($0.55/$2.19) → glm-5 → gpt-4o
+ * Routes by capability first, difficulty second.
+ * The goal is the cheapest model chain that still satisfies the task contract.
  */
 
 export enum TaskDifficulty {
-    SIMPLE = 'SIMPLE',       // Validation, simple classification
-    MODERATE = 'MODERATE',   // Extraction, JSON parsing, basic summaries
-    COMPLEX = 'COMPLEX',     // Agent planning, strategy execution
-    HARD = 'HARD'            // Fallback for agent failures, deep analysis
+    SIMPLE = 'SIMPLE',
+    MODERATE = 'MODERATE',
+    COMPLEX = 'COMPLEX',
+    HARD = 'HARD'
 }
 
-export class ModelRouter {
+export type LLMTaskProfile =
+    | 'company_validation'
+    | 'contact_extraction'
+    | 'business_classification'
+    | 'serp_url_selection'
+    | 'agent_navigation'
+    | 'deep_reasoning';
 
-    /**
-     * Selects the best available model for the given difficulty tier.
-     * Falls back to safer options if specific tier models aren't configured.
-     */
+export class ModelRouter {
+    private static roundRobinIndex = 0;
+
     public static selectModel(difficulty: TaskDifficulty): string {
         return this.selectModelChain(difficulty)[0];
     }
 
-    private static roundRobinIndex = 0;
+    public static selectTaskChain(task: LLMTaskProfile, options?: { strictJson?: boolean }): string[] {
+        const strictJson = options?.strictJson ?? false;
+        const preferred = (() => {
+            switch (task) {
+                case 'company_validation':
+                    return strictJson
+                        ? ['deepseek-chat', 'glm-4.7-flash', 'gpt-4o-mini', 'kimi-k2.5']
+                        : ['glm-4.7-flash', 'deepseek-chat', 'gpt-4o-mini'];
+                case 'contact_extraction':
+                    return strictJson
+                        ? ['deepseek-chat', 'glm-4.7-flash', 'gpt-4o-mini']
+                        : ['glm-4.7-flash', 'deepseek-chat', 'gpt-4o-mini'];
+                case 'business_classification':
+                    return ['glm-4.7-flash', 'deepseek-chat', 'gpt-4o-mini', 'kimi-k2.5'];
+                case 'serp_url_selection':
+                    return strictJson
+                        ? ['deepseek-chat', 'gpt-4o-mini', 'glm-4.7-flash']
+                        : ['glm-4.7-flash', 'deepseek-chat', 'gpt-4o-mini'];
+                case 'agent_navigation':
+                    return ['kimi-k2.5', 'deepseek-reasoner', 'glm-5', 'gpt-4o'];
+                case 'deep_reasoning':
+                default:
+                    return ['deepseek-reasoner', 'kimi-k2.5', 'glm-5', 'gpt-4o'];
+            }
+        })();
 
-    /**
-     * Returns an ordered fallback chain of models for the given difficulty tier.
-     * When the primary model returns 429/5xx, callers should try the next model in the chain.
-     * Implements Round-Robin across free tier providers to distribute load.
-     */
-    public static selectModelChain(difficulty: TaskDifficulty): string[] {
-        const chain: string[] = [];
-
-        const freeModels: string[] = [];
-        if (config.llm.z_ai.apiKeys.length > 0) freeModels.push('glm-4.7-flash');
-        if (config.llm.deepseek.apiKeys.length > 0) freeModels.push('deepseek-chat');
-        if (config.llm.kimi.apiKeys.length > 0) freeModels.push('kimi-k2.5');
-
-        let rotatedFreeModels: string[] = [];
-        if (freeModels.length > 0) {
-            this.roundRobinIndex = (this.roundRobinIndex + 1) % freeModels.length;
-            rotatedFreeModels = [
-                ...freeModels.slice(this.roundRobinIndex),
-                ...freeModels.slice(0, this.roundRobinIndex)
-            ];
+        const chain = this.filterAvailable(preferred);
+        if (chain.length > 0) {
+            return chain;
         }
 
-        switch (difficulty) {
-            case TaskDifficulty.SIMPLE:
-            case TaskDifficulty.MODERATE:
-            case TaskDifficulty.COMPLEX:
-                // ZERO COST OVERRIDE: Distribute all load across free models evenly!
-                chain.push(...rotatedFreeModels);
-                if (config.llm.apiKeys && config.llm.apiKeys.length > 0) chain.push('gpt-4o-mini');
-                break;
-
-            case TaskDifficulty.HARD:
-                // K2.5 best for deep reasoning, then reasoning specialists
-                if (config.llm.kimi.apiKeys.length > 0) chain.push('kimi-k2.5');
-                if (config.llm.deepseek.apiKeys.length > 0) chain.push('deepseek-reasoner');
-                if (config.llm.z_ai.apiKeys.length > 0) chain.push('glm-5');
-                if (config.llm.apiKeys && config.llm.apiKeys.length > 0) chain.push('gpt-4o');
-                break;
-
-            default:
-                Logger.warn(`[ModelRouter] Unknown difficulty ${difficulty}, defaulting to SIMPLE`);
-                chain.push(...rotatedFreeModels);
-                if (config.llm.apiKeys && config.llm.apiKeys.length > 0) chain.push('gpt-4o-mini');
-                break;
-        }
-
-        // Guarantee at least one model in the chain
-        if (chain.length === 0) {
-            chain.push('gpt-4o-mini'); // Final safety catch
-        }
-
-        return chain;
+        return this.selectModelChain(this.mapTaskToDifficulty(task));
     }
 
-    /**
-     * Logs the selection decision for observability.
-     */
+    public static selectModelChain(difficulty: TaskDifficulty): string[] {
+        switch (difficulty) {
+            case TaskDifficulty.SIMPLE:
+                return this.filterAvailable(this.rotateFreeModels(['glm-4.7-flash', 'deepseek-chat', 'kimi-k2.5', 'gpt-4o-mini']));
+            case TaskDifficulty.MODERATE:
+                return this.filterAvailable(this.rotateFreeModels(['deepseek-chat', 'glm-4.7-flash', 'kimi-k2.5', 'gpt-4o-mini']));
+            case TaskDifficulty.COMPLEX:
+                return this.filterAvailable(['glm-5', 'kimi-k2.5', 'deepseek-chat', 'gpt-4o-mini']);
+            case TaskDifficulty.HARD:
+            default:
+                return this.filterAvailable(['kimi-k2.5', 'deepseek-reasoner', 'glm-5', 'gpt-4o']);
+        }
+    }
+
     public static logSelection(taskName: string, difficulty: TaskDifficulty): void {
         const chain = this.selectModelChain(difficulty);
         Logger.info(`🚦 [ModelRouter] Task: "${taskName}" [${difficulty}] -> Primary: ${chain[0]}, Fallbacks: [${chain.slice(1).join(', ')}]`);
+    }
+
+    public static logTaskSelection(taskName: LLMTaskProfile, options?: { strictJson?: boolean }): void {
+        const chain = this.selectTaskChain(taskName, options);
+        Logger.info(`🚦 [ModelRouter] Task Profile: "${taskName}" -> Primary: ${chain[0]}, Fallbacks: [${chain.slice(1).join(', ')}]`);
+    }
+
+    private static rotateFreeModels(models: string[]): string[] {
+        const available = this.filterAvailable(models);
+        if (available.length === 0) {
+            return ['gpt-4o-mini'];
+        }
+
+        this.roundRobinIndex = (this.roundRobinIndex + 1) % available.length;
+        return [
+            ...available.slice(this.roundRobinIndex),
+            ...available.slice(0, this.roundRobinIndex),
+        ];
+    }
+
+    private static filterAvailable(models: string[]): string[] {
+        const uniqueModels = [...new Set(models)];
+        const chain = uniqueModels.filter((model) => this.isModelAvailable(model));
+        if (chain.length === 0 && config.llm.apiKeys && config.llm.apiKeys.length > 0) {
+            return ['gpt-4o-mini'];
+        }
+        return chain;
+    }
+
+    private static isModelAvailable(model: string): boolean {
+        if (model.startsWith('glm-')) return config.llm.z_ai.apiKeys.length > 0;
+        if (model.startsWith('deepseek-')) return config.llm.deepseek.apiKeys.length > 0;
+        if (model.startsWith('moonshot-') || model.startsWith('kimi-')) return config.llm.kimi.apiKeys.length > 0;
+        return !!(config.llm.apiKeys && config.llm.apiKeys.length > 0);
+    }
+
+    private static mapTaskToDifficulty(task: LLMTaskProfile): TaskDifficulty {
+        switch (task) {
+            case 'company_validation':
+            case 'contact_extraction':
+                return TaskDifficulty.SIMPLE;
+            case 'business_classification':
+            case 'serp_url_selection':
+                return TaskDifficulty.MODERATE;
+            case 'agent_navigation':
+                return TaskDifficulty.COMPLEX;
+            case 'deep_reasoning':
+            default:
+                return TaskDifficulty.HARD;
+        }
     }
 }

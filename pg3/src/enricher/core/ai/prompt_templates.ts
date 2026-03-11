@@ -9,7 +9,7 @@ import { CompanyInput } from '../../types';
  * - ALLCAPS section headers for visual parsing
  * - Explicit JSON schemas with type hints
  * - Few-shot examples for complex tasks
- * - Chain-of-thought prompting for reasoning
+ * - Evidence-first structured outputs
  *
  * **Law 506: Prompt Versioning** — All prompts are code.
  */
@@ -55,10 +55,11 @@ Example 1: ✅ STRONG MATCH
 Input: Target="Acme Srl" (Milano), Content="Benvenuti in Acme Srl, leader a Milano. P.IVA 12345678901."
 Output:
 {
-  "thought": "The webpage explicitly mentions 'Acme Srl' and the location 'Milano'. The VAT number is present. This is clearly the official site.",
   "isValid": true,
   "confidence": 0.95,
   "reasoning": "Exact name and city match. VAT number found.",
+  "matched_signals": ["exact_name", "city_match", "vat_present"],
+  "rejected_signals": [],
   "entity_type": "official_site",
   "next_action": "accept"
 }
@@ -67,10 +68,11 @@ Example 2: ❌ REJECT (Directory)
 Input: Target="Beta Spa" (Roma), Content="PagineGialle: Beta Spa a Roma. Telefono..."
 Output:
 {
-  "thought": "The content is from PagineGialle, which is a business directory, not the official website of 'Beta Spa'. matching name but wrong entity type.",
   "isValid": false,
   "confidence": 0.1,
   "reasoning": "Detected directory/aggregator site (PagineGialle).",
+  "matched_signals": ["name_match"],
+  "rejected_signals": ["directory_detected"],
   "entity_type": "directory",
   "next_action": "reject"
 }
@@ -79,10 +81,11 @@ Example 3: ⚠️ UNCERTAIN (Name Match, Wrong City)
 Input: Target="Gamma Snc" (Torino), Content="Gamma Snc - Sede di Napoli. Produzione di..."
 Output:
 {
-  "thought": "The company name 'Gamma Snc' matches, but the city is 'Napoli' while the target is 'Torino'. This could be a different branch or a different company with the same name.",
   "isValid": false,
   "confidence": 0.4,
   "reasoning": "Name matches but city implies different location (Napoli vs Torino).",
+  "matched_signals": ["name_match"],
+  "rejected_signals": ["city_mismatch"],
   "entity_type": "uncertain",
   "next_action": "reject"
 }
@@ -121,10 +124,11 @@ NEXT ACTION:
 OUTPUT SCHEMA:
 \`\`\`json
 {
-  "thought": "Step-by-step reasoning for the decision (REQUIRED, detailed)",
   "isValid": boolean,
   "confidence": number (0.0-1.0),
   "reasoning": "Final summary of the decision",
+  "matched_signals": string[],
+  "rejected_signals": string[],
   "entity_type": "official_site" | "directory" | "social" | "uncertain",
   "next_action": "accept" | "crawl_contact" | "reject" | "manual_review"
 }
@@ -134,10 +138,17 @@ OUTPUT SCHEMA:
     schema: {
         type: 'object' as const,
         properties: {
-            thought: { type: 'string' as const },
             isValid: { type: 'boolean' as const },
             confidence: { type: 'number' as const },
             reasoning: { type: 'string' as const },
+            matched_signals: {
+                type: 'array' as const,
+                items: { type: 'string' as const },
+            },
+            rejected_signals: {
+                type: 'array' as const,
+                items: { type: 'string' as const },
+            },
             entity_type: {
                 type: 'string' as const,
                 enum: ['official_site', 'directory', 'social', 'uncertain']
@@ -147,7 +158,7 @@ OUTPUT SCHEMA:
                 enum: ['accept', 'crawl_contact', 'reject', 'manual_review']
             },
         },
-        required: ['thought', 'isValid', 'confidence', 'reasoning', 'entity_type', 'next_action'] as const,
+        required: ['isValid', 'confidence', 'reasoning', 'matched_signals', 'rejected_signals', 'entity_type', 'next_action'] as const,
         additionalProperties: false as const,
     }
 };
@@ -159,6 +170,7 @@ OUTPUT SCHEMA:
 export interface ContactExtractionVars {
     companyName: string;
     cleanHtml: string;
+    candidateHints?: string;
 }
 
 export const EXTRACT_CONTACTS_PROMPT = {
@@ -172,6 +184,11 @@ export const EXTRACT_CONTACTS_PROMPT = {
 WEBPAGE CONTENT:
 \`\`\`
 ${vars.cleanHtml}
+\`\`\`
+
+DETERMINISTIC CANDIDATES:
+\`\`\`
+${vars.candidateHints || 'No deterministic candidates available.'}
 \`\`\`
 
 EXTRACTION RULES:
@@ -365,30 +382,30 @@ Example 1: ✅ FOUND OFFICIAL SITE
 Input: Target="Delta Srl" (Milano), Results=[{url: "https://www.deltasrl.it", title: "Delta Srl - Servizi online", snippet: "Benvenuti in Delta Srl a Milano..."}]
 Output:
 {
-  "thought": "The first result 'deltasrl.it' matches the company name exactly and the snippet mentions 'Milano'. This is a high-confidence official site.",
   "bestUrl": "https://www.deltasrl.it",
   "confidence": 0.9,
-  "reasoning": "Exact domain match and location confirmation in snippet."
+  "reasoning": "Exact domain match and location confirmation in snippet.",
+  "signals": ["exact_domain_match", "city_in_snippet"]
 }
 
 Example 2: ❌ NO OFFICIAL SITE (Directories Only)
 Input: Target="Echo Sas" (Roma), Results=[{url: "https://www.paginegialle.it/echosas", title: "Echo Sas - Roma"}, {url: "https://www.facebook.com/echo", title: "Echo - Home"}]
 Output:
 {
-  "thought": "The results contain only a directory (PagineGialle) and a social media page (Facebook). No dedicated official website detected.",
   "bestUrl": null,
   "confidence": 0.1,
-  "reasoning": "Only directory and social media results found."
+  "reasoning": "Only directory and social media results found.",
+  "signals": ["directory_only", "social_only"]
 }
 
 Example 3: ⚠️ AMBIGUOUS (Generic Name)
 Input: Target="Ristorante Roma" (Firenze), Results=[{url: "https://www.ristoranteroma.com", title: "Ristorante Roma - Cucina Romana"}, {url: "https://www.tripadvisor.it/...", title: "Ristorante Roma Firenze - Recensioni"}]
 Output:
 {
-  "thought": "Result 1 is 'ristoranteroma.com' but the snippet doesn't explicitly mention 'Firenze', giving it a medium probability. Result 2 confirms a 'Ristorante Roma' exists in Firenze on TripAdvisor. It is likely Result 1 is the site, but not 100% certain without city in snippet.",
   "bestUrl": "https://www.ristoranteroma.com",
   "confidence": 0.6,
-  "reasoning": "Domain matches, but lack of explicit city in snippet reduces confidence."
+  "reasoning": "Domain matches, but lack of explicit city in snippet reduces confidence.",
+  "signals": ["domain_name_match", "city_not_confirmed"]
 }
 
 DECISION RULES:
@@ -413,10 +430,10 @@ DECISION RULES:
 OUTPUT SCHEMA:
 \`\`\`json
 {
-  "thought": "Step-by-step analysis of the search results (REQUIRED)",
   "bestUrl": "https://example.com" or null,
   "confidence": 0.0-1.0,
-  "reasoning": "Final justification for the selection"
+  "reasoning": "Final justification for the selection",
+  "signals": string[]
 }
 \`\`\`
     `.trim(),
@@ -424,12 +441,15 @@ OUTPUT SCHEMA:
     schema: {
         type: 'object' as const,
         properties: {
-            thought: { type: 'string' as const },
             bestUrl: { type: ['string', 'null'] as any },
             confidence: { type: 'number' as const },
             reasoning: { type: 'string' as const },
+            signals: {
+                type: 'array' as const,
+                items: { type: 'string' as const },
+            },
         },
-        required: ['thought', 'bestUrl', 'confidence', 'reasoning'] as const,
+        required: ['bestUrl', 'confidence', 'reasoning', 'signals'] as const,
         additionalProperties: false as const,
     }
 };

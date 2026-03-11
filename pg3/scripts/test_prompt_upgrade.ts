@@ -37,10 +37,10 @@ async function testPrompts() {
     const valResult = await LLMValidator.validateCompany(company, mockHtml);
     console.log('Validation Result:', JSON.stringify(valResult, null, 2));
 
-    if (valResult.thought) {
-        Logger.info('✅ CoT "thought" field captured successfully in Validation!');
+    if ((valResult.matchedSignals?.length || 0) > 0 || (valResult.rejectedSignals?.length || 0) > 0) {
+        Logger.info('✅ Validation evidence fields captured successfully!');
     } else {
-        Logger.error('❌ Missing "thought" field in Validation result');
+        Logger.error('❌ Missing evidence fields in Validation result');
     }
 
     // 2. Test SELECT_BEST_URL_PROMPT
@@ -48,10 +48,10 @@ async function testPrompts() {
     const selResult = await LLMValidator.selectBestUrl(company, mockSerp);
     console.log('Selection Result:', JSON.stringify(selResult, null, 2));
 
-    if (selResult.thought) {
-        Logger.info('✅ CoT "thought" field captured successfully in Selection!');
+    if ((selResult.signals?.length || 0) > 0) {
+        Logger.info('✅ Selection evidence fields captured successfully!');
     } else {
-        Logger.error('❌ Missing "thought" field in Selection result');
+        Logger.error('❌ Missing evidence fields in Selection result');
     }
 }
 

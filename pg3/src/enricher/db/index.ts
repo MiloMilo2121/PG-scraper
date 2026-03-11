@@ -1,11 +1,8 @@
 /**
  * 🗄️ SQLITE DATABASE LAYER
- * Task 3: Persistent storage with WAL mode for concurrent access
- * 
- * Tables:
- * - companies: Raw input data
- * - enrichment_results: Enriched data with audit trail
- * - job_log: Processing history
+ *
+ * Canonical local persistence with safer upserts and lightweight provenance history.
+ * SQLite remains the local store; record replacement is avoided.
  */
 
 import Database from 'better-sqlite3';
@@ -13,40 +10,35 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { Logger } from '../utils/logger';
 import { config } from '../config';
+import { DataMerger, DataSource } from '../utils/data_merger';
 
-// Use environment or default
 const SQLITE_PATH = process.env.SQLITE_PATH || config.sqlitePath;
 
-// Ensure data directory exists
 const dataDir = path.dirname(SQLITE_PATH);
 if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
 }
 
-// Initialize database with WAL mode + production-safe pragmas
 const db = new Database(SQLITE_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
 db.pragma('cache_size = 10000');
 db.pragma('temp_store = MEMORY');
-db.pragma('busy_timeout = 30000');          // 30s wait on lock instead of immediate SQLITE_BUSY
-db.pragma('wal_autocheckpoint = 1000');     // Checkpoint every 1000 pages to bound WAL growth
-db.pragma('journal_size_limit = 16777216'); // 16MB max WAL size
+db.pragma('busy_timeout = 30000');
+db.pragma('wal_autocheckpoint = 1000');
+db.pragma('journal_size_limit = 16777216');
 
 Logger.info(`🗄️ SQLite connected: ${SQLITE_PATH} (WAL mode)`);
+
 let schemaInitialized = false;
 let statementsInitialized = false;
 
-/**
- * 📋 Initialize database schema
- */
 export function initializeDatabase(): void {
     if (schemaInitialized) {
         return;
     }
 
     db.exec(`
-        -- 📥 Input companies (raw data from CSV)
         CREATE TABLE IF NOT EXISTS companies (
             id TEXT PRIMARY KEY,
             company_name TEXT NOT NULL,
@@ -62,11 +54,11 @@ export function initializeDatabase(): void {
             vat_code TEXT,
             pg_url TEXT,
             email TEXT,
+            deleted_at DATETIME,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
-        -- 📊 Enrichment results (output data)
         CREATE TABLE IF NOT EXISTS enrichment_results (
             id TEXT PRIMARY KEY,
             company_id TEXT NOT NULL,
@@ -82,11 +74,12 @@ export function initializeDatabase(): void {
             discovery_method TEXT,
             discovery_confidence REAL,
             reason_code TEXT,
+            deleted_at DATETIME,
             enriched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (company_id) REFERENCES companies(id)
         );
 
-        -- 📜 Job processing log (audit trail)
         CREATE TABLE IF NOT EXISTS job_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             company_id TEXT NOT NULL,
@@ -101,50 +94,75 @@ export function initializeDatabase(): void {
             FOREIGN KEY (company_id) REFERENCES companies(id)
         );
 
-        -- 🏷️ Indexes for fast lookups
+        CREATE TABLE IF NOT EXISTS field_evidence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_type TEXT NOT NULL,
+            entity_id TEXT NOT NULL,
+            company_id TEXT NOT NULL,
+            field_name TEXT NOT NULL,
+            field_value TEXT NOT NULL,
+            source TEXT,
+            trust_score INTEGER DEFAULT 0,
+            run_id TEXT,
+            observed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS enrichment_result_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            result_id TEXT NOT NULL,
+            company_id TEXT NOT NULL,
+            snapshot_json TEXT NOT NULL,
+            data_source TEXT,
+            reason_code TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_companies_name ON companies(company_name);
         CREATE INDEX IF NOT EXISTS idx_companies_city ON companies(city);
         CREATE INDEX IF NOT EXISTS idx_results_company ON enrichment_results(company_id);
         CREATE INDEX IF NOT EXISTS idx_results_vat ON enrichment_results(vat);
         CREATE INDEX IF NOT EXISTS idx_job_log_company ON job_log(company_id);
         CREATE INDEX IF NOT EXISTS idx_job_log_status ON job_log(status);
+        CREATE INDEX IF NOT EXISTS idx_field_evidence_company ON field_evidence(company_id, field_name);
+        CREATE INDEX IF NOT EXISTS idx_result_versions_company ON enrichment_result_versions(company_id);
     `);
 
-    // Lightweight migrations for existing DBs (CREATE TABLE IF NOT EXISTS won't add new columns).
     try {
         const cols = db.prepare(`PRAGMA table_info(companies)`).all() as Array<{ name: string }>;
-        const names = new Set(cols.map((c) => c.name));
+        const names = new Set(cols.map((col) => col.name));
         const addIfMissing = (name: string, ddl: string) => {
-            if (!names.has(name)) {
-                db.exec(ddl);
-            }
+            if (!names.has(name)) db.exec(ddl);
         };
+
         addIfMissing('zip_code', `ALTER TABLE companies ADD COLUMN zip_code TEXT`);
         addIfMissing('region', `ALTER TABLE companies ADD COLUMN region TEXT`);
         addIfMissing('vat_code', `ALTER TABLE companies ADD COLUMN vat_code TEXT`);
         addIfMissing('pg_url', `ALTER TABLE companies ADD COLUMN pg_url TEXT`);
         addIfMissing('email', `ALTER TABLE companies ADD COLUMN email TEXT`);
+        addIfMissing('deleted_at', `ALTER TABLE companies ADD COLUMN deleted_at DATETIME`);
 
-        // Enrichment results migrations
         const erCols = db.prepare(`PRAGMA table_info(enrichment_results)`).all() as Array<{ name: string }>;
-        const erNames = new Set(erCols.map((c) => c.name));
+        const erNames = new Set(erCols.map((col) => col.name));
         const addErIfMissing = (name: string, ddl: string) => {
             if (!erNames.has(name)) db.exec(ddl);
         };
+
         addErIfMissing('discovery_method', `ALTER TABLE enrichment_results ADD COLUMN discovery_method TEXT`);
         addErIfMissing('discovery_confidence', `ALTER TABLE enrichment_results ADD COLUMN discovery_confidence REAL`);
         addErIfMissing('reason_code', `ALTER TABLE enrichment_results ADD COLUMN reason_code TEXT`);
+        addErIfMissing('updated_at', `ALTER TABLE enrichment_results ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
+        addErIfMissing('deleted_at', `ALTER TABLE enrichment_results ADD COLUMN deleted_at DATETIME`);
 
-        // Job log migrations
         const jlCols = db.prepare(`PRAGMA table_info(job_log)`).all() as Array<{ name: string }>;
-        const jlNames = new Set(jlCols.map((c) => c.name));
+        const jlNames = new Set(jlCols.map((col) => col.name));
         const addJlIfMissing = (name: string, ddl: string) => {
             if (!jlNames.has(name)) db.exec(ddl);
         };
+
         addJlIfMissing('reason_code', `ALTER TABLE job_log ADD COLUMN reason_code TEXT`);
         addJlIfMissing('run_id', `ALTER TABLE job_log ADD COLUMN run_id TEXT`);
-    } catch (e) {
-        Logger.warn('DB migration check failed (continuing)', { error: e as Error });
+    } catch (error) {
+        Logger.warn('DB migration check failed (continuing)', { error: error as Error });
     }
 
     schemaInitialized = true;
@@ -152,7 +170,6 @@ export function initializeDatabase(): void {
     Logger.info('✅ Database schema initialized');
 }
 
-// 📦 Type Definitions
 export interface Company {
     id: string;
     company_name: string;
@@ -187,23 +204,52 @@ export interface EnrichmentResult {
     reason_code?: string;
 }
 
-let insertCompanyStmt: any;
+export interface FieldEvidence {
+    entityType: 'company' | 'enrichment';
+    entityId: string;
+    companyId: string;
+    fieldName: string;
+    fieldValue: string;
+    source?: string;
+    trustScore: number;
+    runId?: string;
+}
+
+let upsertCompanyStmt: any;
 let getCompanyByIdStmt: any;
 let getCompanyByNameStmt: any;
 let getPendingCompaniesStmt: any;
-let insertResultStmt: any;
+let upsertResultStmt: any;
 let getResultByCompanyStmt: any;
 let insertJobLogStmt: any;
+let insertFieldEvidenceStmt: any;
+let insertResultVersionStmt: any;
 
 function initializeStatements(): void {
     if (statementsInitialized) {
         return;
     }
 
-    insertCompanyStmt = db.prepare(`
-        INSERT OR REPLACE INTO companies
+    upsertCompanyStmt = db.prepare(`
+        INSERT INTO companies
         (id, company_name, city, province, zip_code, region, address, phone, website, category, source, vat_code, pg_url, email, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            company_name = COALESCE(NULLIF(excluded.company_name, ''), companies.company_name),
+            city = COALESCE(NULLIF(excluded.city, ''), companies.city),
+            province = COALESCE(NULLIF(excluded.province, ''), companies.province),
+            zip_code = COALESCE(NULLIF(excluded.zip_code, ''), companies.zip_code),
+            region = COALESCE(NULLIF(excluded.region, ''), companies.region),
+            address = COALESCE(NULLIF(excluded.address, ''), companies.address),
+            phone = COALESCE(NULLIF(excluded.phone, ''), companies.phone),
+            website = COALESCE(NULLIF(excluded.website, ''), companies.website),
+            category = COALESCE(NULLIF(excluded.category, ''), companies.category),
+            source = COALESCE(NULLIF(excluded.source, ''), companies.source),
+            vat_code = COALESCE(NULLIF(excluded.vat_code, ''), companies.vat_code),
+            pg_url = COALESCE(NULLIF(excluded.pg_url, ''), companies.pg_url),
+            email = COALESCE(NULLIF(excluded.email, ''), companies.email),
+            deleted_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
     `);
 
     getCompanyByIdStmt = db.prepare('SELECT * FROM companies WHERE id = ?');
@@ -211,21 +257,47 @@ function initializeStatements(): void {
     getPendingCompaniesStmt = db.prepare(`
         SELECT c.* FROM companies c
         LEFT JOIN enrichment_results er ON c.id = er.company_id
-        WHERE er.id IS NULL
+        WHERE er.id IS NULL AND c.deleted_at IS NULL
         LIMIT ?
     `);
 
-    insertResultStmt = db.prepare(`
-        INSERT OR REPLACE INTO enrichment_results
-        (id, company_id, vat, revenue, revenue_year, employees, is_estimated_employees, pec, website_validated, lead_score, data_source, discovery_method, discovery_confidence, reason_code, enriched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    upsertResultStmt = db.prepare(`
+        INSERT INTO enrichment_results
+        (id, company_id, vat, revenue, revenue_year, employees, is_estimated_employees, pec, website_validated, lead_score, data_source, discovery_method, discovery_confidence, reason_code, enriched_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(id) DO UPDATE SET
+            company_id = COALESCE(NULLIF(excluded.company_id, ''), enrichment_results.company_id),
+            vat = COALESCE(NULLIF(excluded.vat, ''), enrichment_results.vat),
+            revenue = COALESCE(NULLIF(excluded.revenue, ''), enrichment_results.revenue),
+            revenue_year = COALESCE(NULLIF(excluded.revenue_year, ''), enrichment_results.revenue_year),
+            employees = COALESCE(NULLIF(excluded.employees, ''), enrichment_results.employees),
+            is_estimated_employees = COALESCE(excluded.is_estimated_employees, enrichment_results.is_estimated_employees),
+            pec = COALESCE(NULLIF(excluded.pec, ''), enrichment_results.pec),
+            website_validated = COALESCE(NULLIF(excluded.website_validated, ''), enrichment_results.website_validated),
+            lead_score = COALESCE(excluded.lead_score, enrichment_results.lead_score),
+            data_source = COALESCE(NULLIF(excluded.data_source, ''), enrichment_results.data_source),
+            discovery_method = COALESCE(NULLIF(excluded.discovery_method, ''), enrichment_results.discovery_method),
+            discovery_confidence = COALESCE(excluded.discovery_confidence, enrichment_results.discovery_confidence),
+            reason_code = COALESCE(NULLIF(excluded.reason_code, ''), enrichment_results.reason_code),
+            deleted_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
     `);
 
-    getResultByCompanyStmt = db.prepare('SELECT * FROM enrichment_results WHERE company_id = ?');
+    getResultByCompanyStmt = db.prepare('SELECT * FROM enrichment_results WHERE company_id = ? AND deleted_at IS NULL');
 
     insertJobLogStmt = db.prepare(`
         INSERT INTO job_log (company_id, status, error_message, error_category, reason_code, run_id, duration_ms, attempt)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertFieldEvidenceStmt = db.prepare(`
+        INSERT INTO field_evidence (entity_type, entity_id, company_id, field_name, field_value, source, trust_score, run_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertResultVersionStmt = db.prepare(`
+        INSERT INTO enrichment_result_versions (result_id, company_id, snapshot_json, data_source, reason_code)
+        VALUES (?, ?, ?, ?, ?)
     `);
 
     statementsInitialized = true;
@@ -242,7 +314,7 @@ function ensureReady(): void {
 
 export function insertCompany(company: Company): void {
     ensureReady();
-    insertCompanyStmt.run(
+    upsertCompanyStmt.run(
         company.id,
         company.company_name,
         company.city,
@@ -258,30 +330,18 @@ export function insertCompany(company: Company): void {
         company.pg_url,
         company.email
     );
+
+    recordFieldEvidence('company', company.id, company.id, company as unknown as Record<string, unknown>, company.source);
 }
 
 export function insertCompanies(companies: Company[]): void {
     ensureReady();
     const insertMany = db.transaction((items: Company[]) => {
-        for (const c of items) {
-            insertCompanyStmt.run(
-                c.id,
-                c.company_name,
-                c.city,
-                c.province,
-                c.zip_code,
-                c.region,
-                c.address,
-                c.phone,
-                c.website,
-                c.category,
-                c.source || 'CSV',
-                c.vat_code,
-                c.pg_url,
-                c.email
-            );
+        for (const company of items) {
+            insertCompany(company);
         }
     });
+
     insertMany(companies);
     Logger.info(`📥 Inserted ${companies.length} companies to database`);
 }
@@ -298,7 +358,7 @@ export function getPendingCompanies(limit: number = 100): Company[] {
 
 export function insertEnrichmentResult(result: EnrichmentResult): void {
     ensureReady();
-    insertResultStmt.run(
+    upsertResultStmt.run(
         result.id,
         result.company_id,
         result.vat,
@@ -314,6 +374,16 @@ export function insertEnrichmentResult(result: EnrichmentResult): void {
         result.discovery_confidence,
         result.reason_code
     );
+
+    insertResultVersionStmt.run(
+        result.id,
+        result.company_id,
+        JSON.stringify(result),
+        result.data_source || null,
+        result.reason_code || null
+    );
+
+    recordFieldEvidence('enrichment', result.id, result.company_id, result as unknown as Record<string, unknown>, result.data_source);
 }
 
 export function getEnrichmentResult(companyId: string): EnrichmentResult | undefined {
@@ -335,11 +405,10 @@ export function logJobResult(
     insertJobLogStmt.run(companyId, status, errorMessage, errorCategory, reasonCode, runId, durationMs, attempt);
 }
 
-// 📊 Statistics
 export function getStats(): { total: number; enriched: number; pending: number; failed: number } {
     ensureReady();
-    const total = (db.prepare('SELECT COUNT(*) as count FROM companies').get() as { count: number }).count;
-    const enriched = (db.prepare('SELECT COUNT(*) as count FROM enrichment_results').get() as { count: number }).count;
+    const total = (db.prepare('SELECT COUNT(*) as count FROM companies WHERE deleted_at IS NULL').get() as { count: number }).count;
+    const enriched = (db.prepare('SELECT COUNT(*) as count FROM enrichment_results WHERE deleted_at IS NULL').get() as { count: number }).count;
     const failed = (db.prepare('SELECT COUNT(DISTINCT company_id) as count FROM job_log WHERE status = ?').get('FAILED') as { count: number }).count;
     return {
         total,
@@ -349,15 +418,15 @@ export function getStats(): { total: number; enriched: number; pending: number; 
     };
 }
 
-// 📤 Export to CSV
 export function exportEnrichedToCSV(outputPath: string): void {
     ensureReady();
     const stmt = db.prepare(`
-        SELECT 
+        SELECT
             c.company_name, c.city, c.province, c.address, c.phone, c.category,
             er.vat, er.revenue, er.employees, er.pec, er.lead_score, er.data_source
         FROM companies c
         JOIN enrichment_results er ON c.id = er.company_id
+        WHERE c.deleted_at IS NULL AND er.deleted_at IS NULL
         ORDER BY er.lead_score DESC
     `);
 
@@ -372,6 +441,71 @@ export function exportEnrichedToCSV(outputPath: string): void {
 
     fs.writeFileSync(outputPath, [headers, ...lines].join('\n'));
     Logger.info(`📤 Exported ${rows.length} enriched companies to ${outputPath}`);
+}
+
+function recordFieldEvidence(
+    entityType: FieldEvidence['entityType'],
+    entityId: string,
+    companyId: string,
+    values: Record<string, unknown>,
+    source?: string
+): void {
+    const trustScore = resolveTrustScore(source);
+
+    for (const [fieldName, fieldValue] of Object.entries(values)) {
+        if (fieldValue === undefined || fieldValue === null || fieldValue === '') {
+            continue;
+        }
+
+        if (fieldName === 'id' || fieldName === 'company_id') {
+            continue;
+        }
+
+        insertFieldEvidenceStmt.run(
+            entityType,
+            entityId,
+            companyId,
+            fieldName,
+            stringifyEvidenceValue(fieldValue),
+            source || null,
+            trustScore,
+            null
+        );
+    }
+}
+
+function resolveTrustScore(source?: string): number {
+    if (!source) return 10;
+
+    const canonical = source.toUpperCase();
+    if (canonical in DataSource) {
+        return DataMerger.getTrustScore(DataSource[canonical as keyof typeof DataSource]);
+    }
+
+    switch (canonical) {
+        case 'CSV':
+            return 30;
+        case 'WEBSITE':
+            return DataMerger.getTrustScore(DataSource.WEBSITE);
+        case 'VIES':
+            return DataMerger.getTrustScore(DataSource.VIES);
+        case 'REGISTRY':
+        case 'REGISTRO':
+            return DataMerger.getTrustScore(DataSource.REGISTRY);
+        case 'GOOGLE_MAPS':
+        case 'MAPS':
+            return DataMerger.getTrustScore(DataSource.GOOGLE_MAPS);
+        case 'PAGINEGIALLE':
+            return DataMerger.getTrustScore(DataSource.PAGINEGIALLE);
+        case 'AI':
+            return DataMerger.getTrustScore(DataSource.AI);
+        default:
+            return 10;
+    }
+}
+
+function stringifyEvidenceValue(value: unknown): string {
+    return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
 function escapeCsvValue(value: unknown): string {

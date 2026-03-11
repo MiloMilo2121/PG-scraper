@@ -180,36 +180,67 @@ export class AIService {
         // Use HTMLCleaner for intelligent contact info extraction (Law 501)
         const cleaned = HTMLCleaner.extract(html, 2500, true);
         const cleanText = HTMLCleaner.toString(cleaned);
+        const candidates = HTMLCleaner.extractContactCandidates(html);
+        const candidateHints = HTMLCleaner.summarizeContactCandidates(candidates);
+        const deterministicFallback = HTMLCleaner.selectBestContactCandidates(candidates);
 
         // Use structured prompt template
         const prompt = EXTRACT_CONTACTS_PROMPT.template({
             companyName: companyName || 'Unknown',
             cleanHtml: cleanText,
+            candidateHints,
         });
 
         try {
             const response = await this.call(prompt, 'extract');
             const cleanJson = response.replace(/```json/g, '').replace(/```/g, '').trim();
-            const result = JSON.parse(cleanJson);
+            const result = JSON.parse(cleanJson) as AIExtractionResult;
+            const mergedResult = {
+                ...deterministicFallback,
+                ...result,
+                vat: result.vat || deterministicFallback.vat,
+                email: result.email || deterministicFallback.email,
+                phone: result.phone || deterministicFallback.phone,
+                pec: result.pec || deterministicFallback.pec,
+            };
 
             // FALLBACK STRATEGY (Law 505): If confidence is low, escalate to Smart Model (GLM-5)
-            if (!result.confidence || result.confidence < 0.6) {
-                Logger.info(`[AIService] Low confidence (${result.confidence}) in contact extraction. Retrying with GLM-5...`);
+            if (!mergedResult.confidence || mergedResult.confidence < 0.6) {
+                Logger.info(`[AIService] Low confidence (${mergedResult.confidence}) in contact extraction. Retrying with GLM-5...`);
                 const smartResponse = await this.call(prompt, 'extract', true);
                 const smartJson = smartResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-                return JSON.parse(smartJson);
+                const smartResult = JSON.parse(smartJson) as AIExtractionResult;
+                return {
+                    ...deterministicFallback,
+                    ...smartResult,
+                    vat: smartResult.vat || deterministicFallback.vat,
+                    email: smartResult.email || deterministicFallback.email,
+                    phone: smartResult.phone || deterministicFallback.phone,
+                    pec: smartResult.pec || deterministicFallback.pec,
+                };
             }
 
-            return result;
+            return mergedResult;
         } catch (error) {
             Logger.warn('[AIService] Contact extraction failed (Fast Model). Retrying with Smart Model...', { error: error as Error });
             try {
                 const smartResponse = await this.call(prompt, 'extract', true);
                 const smartJson = smartResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-                return JSON.parse(smartJson);
+                const smartResult = JSON.parse(smartJson) as AIExtractionResult;
+                return {
+                    ...deterministicFallback,
+                    ...smartResult,
+                    vat: smartResult.vat || deterministicFallback.vat,
+                    email: smartResult.email || deterministicFallback.email,
+                    phone: smartResult.phone || deterministicFallback.phone,
+                    pec: smartResult.pec || deterministicFallback.pec,
+                };
             } catch (smartError) {
                 Logger.error('[AIService] Contact extraction failed (Smart Model)', { error: smartError as Error });
-                return { confidence: 0 };
+                return {
+                    ...deterministicFallback,
+                    confidence: Object.keys(deterministicFallback).some((key) => !!(deterministicFallback as Record<string, unknown>)[key]) ? 0.55 : 0,
+                };
             }
         }
     }

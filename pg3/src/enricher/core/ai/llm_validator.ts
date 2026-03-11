@@ -2,7 +2,7 @@ import { CompanyInput } from '../../types'; // Restore CompanyInput
 import { config } from '../../config';
 import { Logger } from '../../utils/logger';
 import { LLMService } from './llm_service';
-import { ModelRouter, TaskDifficulty } from './model_router';
+import { ModelRouter } from './model_router';
 import { HTMLCleaner } from '../../utils/html_cleaner';
 import { VALIDATE_COMPANY_PROMPT, SELECT_BEST_URL_PROMPT } from './prompt_templates';
 
@@ -18,7 +18,8 @@ export interface ValidationResult {
     isValid: boolean;
     confidence: number;
     reason: string;
-    thought?: string; // Law 506: Chain-of-Thought
+    matchedSignals?: string[];
+    rejectedSignals?: string[];
     entity_type: 'official_site' | 'directory' | 'social' | 'uncertain';
     next_action: 'accept' | 'crawl_contact' | 'reject' | 'manual_review';
 }
@@ -60,15 +61,16 @@ export class LLMValidator {
         try {
             // Define a type that matches the prompt schema strictly
             type PromptResponse = {
-                thought: string;
                 isValid: boolean;
                 confidence: number;
                 reasoning: string;
+                matched_signals: string[];
+                rejected_signals: string[];
                 entity_type: 'official_site' | 'directory' | 'social' | 'uncertain';
                 next_action: 'accept' | 'crawl_contact' | 'reject' | 'manual_review';
             };
 
-            const modelChain = ModelRouter.selectModelChain(TaskDifficulty.SIMPLE);
+            const modelChain = ModelRouter.selectTaskChain('company_validation', { strictJson: true });
             const res = await LLMService.completeStructured<PromptResponse>(
                 prompt,
                 VALIDATE_COMPANY_PROMPT.schema as Record<string, unknown>,
@@ -78,7 +80,7 @@ export class LLMValidator {
 
             // Log model usage for verification (Law 007)
             if (res) {
-                ModelRouter.logSelection('CompanyValidation', TaskDifficulty.SIMPLE);
+                ModelRouter.logTaskSelection('company_validation', { strictJson: true });
             }
 
             if (res && typeof res.isValid === 'boolean' && typeof res.confidence === 'number') {
@@ -86,7 +88,8 @@ export class LLMValidator {
                     isValid: res.isValid,
                     confidence: Math.max(0, Math.min(1, res.confidence)),
                     reason: res.reasoning || 'LLM validated',
-                    thought: res.thought,
+                    matchedSignals: res.matched_signals || [],
+                    rejectedSignals: res.rejected_signals || [],
                     entity_type: res.entity_type || 'uncertain',
                     next_action: res.next_action || 'reject',
                 };
@@ -128,7 +131,7 @@ export class LLMValidator {
     public static async selectBestUrl(
         company: CompanyInput,
         serpResults: Array<{ url: string; title: string; snippet: string }>
-    ): Promise<{ bestUrl: string | null; confidence: number; reasoning: string; thought?: string }> {
+    ): Promise<{ bestUrl: string | null; confidence: number; reasoning: string; signals?: string[] }> {
         const hasAnyLLM = process.env.OPENAI_API_KEY || process.env.Z_AI_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.KIMI_API_KEY;
         if (!hasAnyLLM) {
             Logger.warn('[LLMValidator] selectBestUrl: No LLM API key configured');
@@ -148,13 +151,13 @@ export class LLMValidator {
 
         try {
             type SelectResponse = {
-                thought: string;
                 bestUrl: string | null;
                 confidence: number;
                 reasoning: string;
+                signals: string[];
             };
 
-            const selModelChain = ModelRouter.selectModelChain(TaskDifficulty.MODERATE);
+            const selModelChain = ModelRouter.selectTaskChain('serp_url_selection', { strictJson: true });
             const res = await LLMService.completeStructured<SelectResponse>(
                 prompt,
                 SELECT_BEST_URL_PROMPT.schema as Record<string, unknown>,
@@ -167,7 +170,7 @@ export class LLMValidator {
                     bestUrl: res.bestUrl,
                     confidence: Math.max(0, Math.min(1, res.confidence)),
                     reasoning: res.reasoning || 'LLM selected best URL',
-                    thought: res.thought, // Capture CoT
+                    signals: res.signals || [],
                 };
             }
         } catch (error) {
