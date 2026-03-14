@@ -1,6 +1,7 @@
 import { CostLedger } from './CostLedger';
 import { BackpressureValve } from './BackpressureValve';
 import { BrowserPool } from './BrowserPool';
+import { config } from '../enricher/config';
 
 export class StopTheBleedingController {
     private ledger: CostLedger;
@@ -27,9 +28,9 @@ export class StopTheBleedingController {
         const reasons: string[] = [];
 
         // 1. Cost Ceiling
-        if (avgCost > 0.04) {
+        if (avgCost > config.budget.maxCostPerCompanyEur) {
             shouldBleed = true;
-            reasons.push(`Avg cost/company €${avgCost.toFixed(4)} > €0.04 limit`);
+            reasons.push(`Avg cost/company €${avgCost.toFixed(4)} > €${config.budget.maxCostPerCompanyEur.toFixed(4)} limit`);
         }
 
         // 2. High Error Rate

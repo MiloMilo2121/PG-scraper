@@ -1,5 +1,7 @@
 import { MemoryFirstCache } from './MemoryFirstCache';
 import { CostLedger } from './CostLedger';
+import { HTTP_PROVIDER_ORDER, SERP_PROVIDER_ORDER } from './provider_catalog';
+import { ProviderAdapter } from './provider_adapter';
 
 export type TaskType = 'SERP' | 'LLM_CLASSIFY' | 'LLM_VISION' | 'PROXY_FETCH' | 'LLM_PARSE';
 
@@ -18,12 +20,6 @@ export interface ProviderBudget {
     current_window_count: number;
     queue_depth: number;
     is_throttled: boolean;
-}
-
-export interface ProviderAdapter {
-    execute<T>(payload: any, options?: any): Promise<T>;
-    costPerRequest: number;
-    tier: number;
 }
 
 export class ProviderOverloadedError extends Error {
@@ -180,8 +176,8 @@ export class CostRouter {
             }
         }
 
-        const serpProviders = ['SERPER-1', 'DNS-MX-MINING-0', 'CRTSH-API-1', 'JINA-1', 'DDG-LITE-1', 'BRAVE-HTML-1', 'BING-HTML-1', 'FREE-AGGR-PROXY-3', 'PERPLEXITY-API-4'];
-        const httpProviders = ['HTTP-DIRECT-1', 'HTTP-SCRAPEDO-2', 'HTTP-SCRAPEDO-3', 'HTTP-BRIGHTDATA-4', 'ORACLE-CRAWL4AI-5'];
+        const serpProviders: string[] = [...SERP_PROVIDER_ORDER];
+        const httpProviders: string[] = [...HTTP_PROVIDER_ORDER];
         const providerOrder = taskType === 'SERP'
             ? serpProviders
             : taskType === 'PROXY_FETCH'

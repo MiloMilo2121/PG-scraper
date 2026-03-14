@@ -119,7 +119,9 @@ const EnvSchema = z.object({
   GOOGLE_BROWSER_CAPTCHA_AUTO_DISABLE_THRESHOLD: z.coerce.number().min(0.01).max(1).default(0.10), // Auto disable if > 10% hit rate
 
   // 💰 BUDGET LIMITS
-  MAX_COST_PER_COMPANY_EUR: z.coerce.number().min(0.0001).max(0.1).default(0.0015),
+  MAX_COST_PER_COMPANY_EUR: z.coerce.number().min(0.0001).max(0.1).default(0.01),
+  LOCAL_BROWSER_NAV_COST_EUR: z.coerce.number().min(0).max(0.1).default(0),
+  LOCAL_ORACLE_FETCH_COST_EUR: z.coerce.number().min(0).max(0.1).default(0),
 });
 
 // Parse and validate process.env
@@ -352,7 +354,11 @@ export const config = {
   // 💰 BUDGET LIMITS
   budget: {
     maxCostPerCompanyEur: env.MAX_COST_PER_COMPANY_EUR,
-  }
+  },
+  costing: {
+    localBrowserNavCostEur: env.LOCAL_BROWSER_NAV_COST_EUR,
+    localOracleFetchCostEur: env.LOCAL_ORACLE_FETCH_COST_EUR,
+  },
 } as const;
 
 export type AppConfig = typeof config;

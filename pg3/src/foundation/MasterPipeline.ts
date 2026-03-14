@@ -68,7 +68,8 @@ export class MasterPipeline {
             const layersAttempted: string[] = [];
 
             // Check Circuit Breaker
-            const isBleeding = await this.bleedingCtrl.evaluateStatus(companyIdx);
+            const processedCompanies = Math.max(1, companyIdx + 1);
+            const isBleeding = await this.bleedingCtrl.evaluateStatus(processedCompanies);
 
             // STAGE 0: Normalize Input
             const input = this.normalizer.normalize(rawInput);

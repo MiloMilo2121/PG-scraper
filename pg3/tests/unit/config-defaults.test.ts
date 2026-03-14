@@ -15,14 +15,26 @@ const RESET_KEYS = [
   'RUNTIME_DATA_DIR',
   'COST_LEDGER_PATH',
   'BROWSER_SESSION_DIR',
+  'MAX_COST_PER_COMPANY_EUR',
+  'LOCAL_BROWSER_NAV_COST_EUR',
+  'LOCAL_ORACLE_FETCH_COST_EUR',
 ];
+const NUMERIC_RESET_KEYS = new Set([
+  'MAX_COST_PER_COMPANY_EUR',
+  'LOCAL_BROWSER_NAV_COST_EUR',
+  'LOCAL_ORACLE_FETCH_COST_EUR',
+]);
 
 async function loadConfig(overrides: Record<string, string>) {
   vi.resetModules();
 
   const nextEnv = { ...ORIGINAL_ENV };
   for (const key of RESET_KEYS) {
-    nextEnv[key] = '';
+    if (NUMERIC_RESET_KEYS.has(key)) {
+      delete nextEnv[key];
+    } else {
+      nextEnv[key] = '';
+    }
   }
   for (const [key, value] of Object.entries(overrides)) {
     nextEnv[key] = value;
@@ -58,5 +70,15 @@ describe('config defaults', () => {
     expect(config.runtime.dataDir).toBe(path.resolve('./tmp/runtime-state'));
     expect(config.runtime.costLedgerPath).toBe(path.resolve('./tmp/runtime-state/cost_ledger.jsonl'));
     expect(config.runtime.browserSessionDir).toBe(path.resolve('./tmp/runtime-state/browser-sessions'));
+  });
+
+  it('exposes coherent budget and local cost defaults', async () => {
+    const config = await loadConfig({
+      OPENAI_API_KEY: 'test-openai-key',
+    });
+
+    expect(config.budget.maxCostPerCompanyEur).toBe(0.01);
+    expect(config.costing.localBrowserNavCostEur).toBe(0);
+    expect(config.costing.localOracleFetchCostEur).toBe(0);
   });
 });

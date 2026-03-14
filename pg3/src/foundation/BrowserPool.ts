@@ -330,7 +330,7 @@ export class BrowserPool {
         // Log Cost/Health
         await this.ledger.log({
             timestamp: new Date().toISOString(), module: 'BrowserPool', provider: 'playwright',
-              tier: 2, task_type: 'PROXY_FETCH', cost_eur: 0, cache_hit: false, cache_level: 'MISS',
+              tier: 2, task_type: 'PROXY_FETCH', cost_eur: config.costing.localBrowserNavCostEur, cache_hit: false, cache_level: 'MISS',
               duration_ms: duration,
               success: status === 'OK',
               error: status === 'OK' ? undefined : status,
