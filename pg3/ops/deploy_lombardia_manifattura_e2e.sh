@@ -41,9 +41,9 @@ $SSH_CMD root@"$SERVER_IP" "bash -s" <<EOF
 
   echo "🛑 Stopping previous mission launcher if present..."
   pkill -f "mission_lombardia_manifattura_e2e.sh" || true
-  pkill -f "$REMOTE_DIR/node_modules/.bin/ts-node src/scraper/generate_campaign_v2.ts" || true
-  pkill -f "$REMOTE_DIR/node_modules/.bin/ts-node src/index.ts worker" || true
-  pkill -f "$REMOTE_DIR/node_modules/.bin/ts-node src/index.ts scheduler" || true
+  pkill -f "src/scraper/generate_campaign_v2.ts" || true
+  pkill -f "src/index.ts worker" || true
+  pkill -f "src/index.ts scheduler" || true
 
   echo "🔥 Starting mission in background..."
   nohup ./ops/mission_lombardia_manifattura_e2e.sh > "$REMOTE_LOG" 2>&1 &
