@@ -15,7 +15,7 @@ class CrawlResponse(BaseModel):
     html: str
     markdown: str
     success: bool
-    error: str = None
+    error: str | None = None
 
 crawler = None
 
@@ -52,8 +52,8 @@ async def extract_content(req: CrawlRequest):
         
         return CrawlResponse(
             url=req.url,
-            html=result.html, # Used by MasterPipeline
-            markdown=result.markdown, # Used by Perplexity Oracle if needed
+            html=result.html or "", # Used by MasterPipeline
+            markdown=result.markdown or "", # Used by Perplexity Oracle if needed
             success=result.success,
             error=result.error_message
         )
