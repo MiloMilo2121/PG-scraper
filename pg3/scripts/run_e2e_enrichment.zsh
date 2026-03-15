@@ -1,8 +1,8 @@
 #!/usr/bin/env zsh
 set -euo pipefail
 
-SCRIPT_DIR="${0:A:h}"
-REPO_ROOT="${SCRIPT_DIR:h}"
+SCRIPT_DIR="$(cd -- "$(/usr/bin/dirname -- "$0")" && pwd)"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 for dotenv_file in ".env" ".env.local"; do
