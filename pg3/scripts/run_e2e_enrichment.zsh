@@ -1,6 +1,18 @@
 #!/usr/bin/env zsh
 set -euo pipefail
 
+SCRIPT_DIR="${0:A:h}"
+REPO_ROOT="${SCRIPT_DIR:h}"
+cd "$REPO_ROOT"
+
+for dotenv_file in ".env" ".env.local"; do
+  if [[ -f "$dotenv_file" ]]; then
+    set -a
+    source "$dotenv_file"
+    set +a
+  fi
+done
+
 INPUT_CSV="${1:-}"
 TEST_PREFIX="${2:-e2e}"
 
@@ -27,15 +39,6 @@ echo "input_csv=$INPUT_CSV" >> "$OUT_DIR/run_meta.txt"
 
 echo "cwd=$(pwd)" >> "$OUT_DIR/run_meta.txt"
 
-echo "env.DISABLE_PROXY=${DISABLE_PROXY:-}" >> "$OUT_DIR/run_meta.txt"
-echo "env.REDIS_URL=${REDIS_URL:-}" >> "$OUT_DIR/run_meta.txt"
-
-echo "env.SCRAPE_DO_TOKEN=${SCRAPE_DO_TOKEN:+(set)}" >> "$OUT_DIR/run_meta.txt"
-
-echo "env.PROXY_RESIDENTIAL_URL=${PROXY_RESIDENTIAL_URL:+(set)}" >> "$OUT_DIR/run_meta.txt"
-
-echo "env.PROXY_DATACENTER_URL=${PROXY_DATACENTER_URL:+(set)}" >> "$OUT_DIR/run_meta.txt"
-
 # Defaults for isolated runs
 export DISABLE_PROXY="${DISABLE_PROXY:-true}"
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379/15}"
@@ -43,6 +46,19 @@ export SQLITE_PATH="$DB_PATH"
 export OUT_DIR
 export WORKER_PROCESSES="${WORKER_PROCESSES:-1}"
 export USE_DIST_RUNTIME="${USE_DIST_RUNTIME:-false}"
+export E2E_WAIT_TIMEOUT_MINUTES="${E2E_WAIT_TIMEOUT_MINUTES:-720}"
+export E2E_PROGRESS_POLL_SECONDS="${E2E_PROGRESS_POLL_SECONDS:-5}"
+
+echo "env.DISABLE_PROXY=${DISABLE_PROXY:-}" >> "$OUT_DIR/run_meta.txt"
+echo "env.REDIS_URL=${REDIS_URL:-}" >> "$OUT_DIR/run_meta.txt"
+echo "env.SCRAPE_DO_TOKEN=${SCRAPE_DO_TOKEN:+(set)}" >> "$OUT_DIR/run_meta.txt"
+echo "env.PROXY_RESIDENTIAL_URL=${PROXY_RESIDENTIAL_URL:+(set)}" >> "$OUT_DIR/run_meta.txt"
+echo "env.PROXY_DATACENTER_URL=${PROXY_DATACENTER_URL:+(set)}" >> "$OUT_DIR/run_meta.txt"
+echo "env.CONCURRENCY_LIMIT=${CONCURRENCY_LIMIT:-}" >> "$OUT_DIR/run_meta.txt"
+echo "env.BACKPRESSURE_INITIAL_CONCURRENCY=${BACKPRESSURE_INITIAL_CONCURRENCY:-}" >> "$OUT_DIR/run_meta.txt"
+echo "env.BACKPRESSURE_MAX_CONCURRENCY=${BACKPRESSURE_MAX_CONCURRENCY:-}" >> "$OUT_DIR/run_meta.txt"
+echo "env.BROWSER_POOL_MAX_INSTANCES=${BROWSER_POOL_MAX_INSTANCES:-}" >> "$OUT_DIR/run_meta.txt"
+echo "env.E2E_WAIT_TIMEOUT_MINUTES=${E2E_WAIT_TIMEOUT_MINUTES:-}" >> "$OUT_DIR/run_meta.txt"
 
 # Flush redis (best-effort)
 if command -v redis-cli >/dev/null 2>&1; then
@@ -99,6 +115,8 @@ python3 - <<'PY'
 import os, sqlite3, time, sys
 
 db_path = os.environ["SQLITE_PATH"]
+timeout_minutes = int(os.environ.get("E2E_WAIT_TIMEOUT_MINUTES", "720"))
+poll_seconds = float(os.environ.get("E2E_PROGRESS_POLL_SECONDS", "5"))
 
 expected = None
 for _ in range(180):
@@ -121,8 +139,12 @@ if not expected:
     sys.exit(2)
 
 print(f"Expected companies: {expected}")
+if timeout_minutes > 0:
+    print(f"Timeout budget: {timeout_minutes} minutes")
+else:
+    print("Timeout budget: unlimited")
 
-deadline = time.time() + 40*60
+deadline = time.time() + timeout_minutes * 60 if timeout_minutes > 0 else None
 while True:
     con = sqlite3.connect(db_path)
     cur = con.cursor()
@@ -136,10 +158,10 @@ while True:
 
     if terminal >= expected:
         break
-    if time.time() > deadline:
-        print("ERROR: timeout waiting for jobs", file=sys.stderr)
+    if deadline is not None and time.time() > deadline:
+        print(f"ERROR: timeout waiting for jobs after {timeout_minutes} minutes", file=sys.stderr)
         sys.exit(3)
-    time.sleep(5)
+    time.sleep(poll_seconds)
 PY
 
 # Stop workers
