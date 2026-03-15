@@ -22,6 +22,11 @@ const EnvSchema = z.object({
   RUNTIME_DATA_DIR: z.string().default('./data'),
   COST_LEDGER_PATH: z.string().optional(),
   BROWSER_SESSION_DIR: z.string().optional(),
+  BROWSER_POOL_MAX_INSTANCES: z.coerce.number().min(1).max(32).default(3),
+  BROWSER_POOL_MAX_REQUESTS_PER_INSTANCE: z.coerce.number().min(1).max(500).default(50),
+  BROWSER_POOL_NAV_TIMEOUT_MS: z.coerce.number().min(1000).max(120000).default(8000),
+  BACKPRESSURE_INITIAL_CONCURRENCY: z.coerce.number().min(1).max(100).default(3),
+  BACKPRESSURE_MAX_CONCURRENCY: z.coerce.number().min(1).max(200).default(15),
 
   // 🤖 AI / LLM
   OPENAI_API_KEY: CommaSeparatedString.optional(),
@@ -330,6 +335,11 @@ export const config = {
     dataDir: runtimeDataDir,
     costLedgerPath,
     browserSessionDir,
+    browserPoolMaxInstances: env.BROWSER_POOL_MAX_INSTANCES,
+    browserPoolMaxRequestsPerInstance: env.BROWSER_POOL_MAX_REQUESTS_PER_INSTANCE,
+    browserPoolNavTimeoutMs: env.BROWSER_POOL_NAV_TIMEOUT_MS,
+    backpressureInitialConcurrency: env.BACKPRESSURE_INITIAL_CONCURRENCY,
+    backpressureMaxConcurrency: env.BACKPRESSURE_MAX_CONCURRENCY,
   },
   telegram: {
     botToken: env.TELEGRAM_BOT_TOKEN,

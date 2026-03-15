@@ -35,9 +35,16 @@ export interface OmegaRuntime {
 export async function createOmegaRuntime(): Promise<OmegaRuntime> {
     const ledger = new CostLedger({ filePath: config.runtime.costLedgerPath });
     const cache = new MemoryFirstCache({ l1MaxMemoryMB: 50 });
-    const valve = new BackpressureValve({ ledger });
+    const valve = new BackpressureValve({
+        ledger,
+        initialConcurrency: config.runtime.backpressureInitialConcurrency,
+        maxConcurrency: config.runtime.backpressureMaxConcurrency,
+    });
     const pool = new BrowserPool({
         ledger,
+        maxInstances: config.runtime.browserPoolMaxInstances,
+        maxRequestsPerInstance: config.runtime.browserPoolMaxRequestsPerInstance,
+        navigationTimeout: config.runtime.browserPoolNavTimeoutMs,
         sessionStateDir: config.runtime.browserSessionDir,
     });
     const registry = new ShadowRegistry('omega_shadow.sqlite');

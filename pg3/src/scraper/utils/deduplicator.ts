@@ -9,7 +9,7 @@ export class Deduplicator {
     private vatIndex = new Map<string, CompanyInput>();
     private phoneIndex = new Map<string, CompanyInput>();
     private fingerPrintIndex = new Map<string, CompanyInput>();
-    private domainCache = new Set<string>();
+    private domainIndex = new Map<string, CompanyInput>();
 
     constructor() { }
 
@@ -39,11 +39,10 @@ export class Deduplicator {
         // 4. Domain Match
         if (company.website) {
             try {
-                const domain = new URL(company.website).hostname.replace('www.', '');
-                // We can't easily return the object from a Set<string>, so we rely on other methods mostly.
-                // But if we wanted to enforce domain uniqueness we could. 
-                // For now, let's stick to the indices that map to objects.
-                // If we really want to check domain duplication returning the object, we'd need a map.
+                const domain = this.normalizeDomain(company.website);
+                if (domain && this.domainIndex.has(domain)) {
+                    return this.domainIndex.get(domain)!;
+                }
             } catch { }
         }
 
@@ -69,8 +68,8 @@ export class Deduplicator {
         // Domain
         if (company.website) {
             try {
-                const domain = new URL(company.website).hostname.replace('www.', '');
-                this.domainCache.add(domain);
+                const domain = this.normalizeDomain(company.website);
+                if (domain) this.domainIndex.set(domain, company);
             } catch { }
         }
     }
@@ -85,6 +84,10 @@ export class Deduplicator {
         // 1. Website: prefer first non-empty candidate
         if (!existing.website && fresh.website) {
             existing.website = fresh.website;
+            const domain = this.normalizeDomain(fresh.website);
+            if (domain) {
+                this.domainIndex.set(domain, existing);
+            }
         }
 
         // 2. Phone: If different, maybe append? For now, we keep existing if present, else take fresh.
@@ -131,6 +134,11 @@ export class Deduplicator {
     private normalizePhone(phone?: string): string {
         if (!phone) return '';
         return phone.replace(/[^0-9]/g, '');
+    }
+
+    private normalizeDomain(website?: string): string {
+        if (!website) return '';
+        return new URL(website).hostname.replace(/^www\./, '').toLowerCase();
     }
 
     private generateFingerprint(name: string, city: string = ''): string {

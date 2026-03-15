@@ -23,8 +23,10 @@ import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { createObjectCsvWriter } from 'csv-writer';
 import { parse as parseCsv } from 'csv-parse/sync';
+import pLimit from 'p-limit';
 import { Page, Browser, BrowserContext } from 'playwright';
 import { chromium } from 'playwright';
+import { Mutex } from 'async-mutex';
 // BrowserFactory BYPASSED: its newPage() initialization pipeline (GeneticFingerprinter,
 // BrowserEvasion, ProxyManager, CookieConsent) detaches the page frame on the server.
 // Raw puppeteer.launch() works perfectly (confirmed by diagnostic).
@@ -61,6 +63,16 @@ const TRACKING_QUERY_KEYS = new Set([
     'mc_cid',
     'mc_eid'
 ]);
+const DEFAULT_SCRAPER_TARGET_CONCURRENCY = resolveParallelism(
+    process.env.SCRAPER_TARGET_CONCURRENCY || process.env.CONCURRENCY_LIMIT,
+    4,
+    8
+);
+const DEFAULT_PREFLIGHT_CONCURRENCY = resolveParallelism(
+    process.env.SCRAPER_PREFLIGHT_CONCURRENCY || process.env.SCRAPER_TARGET_CONCURRENCY || process.env.CONCURRENCY_LIMIT,
+    Math.min(DEFAULT_SCRAPER_TARGET_CONCURRENCY, 4),
+    6
+);
 
 function compactText(value?: unknown): string | undefined {
     if (value === undefined || value === null) return undefined;
@@ -74,6 +86,14 @@ function compactText(value?: unknown): string | undefined {
         .replace(/\s+/g, ' ')
         .trim();
     return cleaned.length > 0 ? cleaned : undefined;
+}
+
+function resolveParallelism(rawValue: string | undefined, fallback: number, upperBound: number): number {
+    const parsed = Number.parseInt(rawValue || '', 10);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+        return fallback;
+    }
+    return Math.max(1, Math.min(parsed, upperBound));
 }
 
 function sanitizeCompanyName(value?: string): string | undefined {
@@ -281,6 +301,9 @@ function pgProvinceName(code: string): string {
 const TARGETS_PER_BROWSER = 250; // Safe for 32GB RAM now that rogue processes are dead
 let browserInstance: Browser | null = null;
 let targetsCount = 0;
+let activeSessions = 0;
+const browserLaunchMutex = new Mutex();
+const checkpointMutex = new Mutex();
 
 export interface BrowserSession {
     page: Page;
@@ -288,27 +311,25 @@ export interface BrowserSession {
 }
 
 async function getBrowser(): Promise<Browser> {
-    if (browserInstance && browserInstance.isConnected() && targetsCount < TARGETS_PER_BROWSER) {
+    return browserLaunchMutex.runExclusive(async () => {
+        if (browserInstance && browserInstance.isConnected()) {
+            return browserInstance;
+        }
+
+        Logger.info(`[Browser] 🔄 Launching shared browser (Sessions served: ${targetsCount})...`);
+        targetsCount = 0;
+        browserInstance = await chromium.launch({
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage', // 🔑 CRITICAL for server stability
+                '--ignore-certificate-errors',
+            ],
+            executablePath: process.env.CHROME_BIN || process.env.CHROME_PATH || undefined,
+        });
         return browserInstance;
-    }
-
-    Logger.info(`[Browser] 🔄 (Re)launching browser (Current count: ${targetsCount})...`);
-    targetsCount = 0; // Reset count
-    try {
-        if (browserInstance) await browserInstance.close().catch(() => { });
-    } catch { }
-
-    browserInstance = await chromium.launch({
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage', // 🔑 CRITICAL for server stability
-            '--ignore-certificate-errors',
-        ],
-        executablePath: process.env.CHROME_BIN || undefined,
     });
-    return browserInstance!;
 }
 
 async function setupPage(): Promise<BrowserSession> {
@@ -327,23 +348,210 @@ async function setupPage(): Promise<BrowserSession> {
             page.setDefaultNavigationTimeout(45000);
 
             targetsCount++;
+            activeSessions++;
             return { page, context };
         } catch (e) {
             lastError = e as Error;
             Logger.warn(`[Browser] ⚠️ setupPage failed (Attempt ${i + 1}/${maxRetries}): ${lastError.message}`);
-
-            // Force reset on failure
-            if (browserInstance) {
-                await browserInstance.close().catch(() => { });
-                browserInstance = null;
-                targetsCount = 0;
-            }
-
             await delay(2000 * (i + 1));
         }
     }
 
     throw new Error(`Failed to setup page after ${maxRetries} attempts. Last error: ${lastError?.message}`);
+}
+
+async function closeSession(session: BrowserSession | null): Promise<void> {
+    if (!session) {
+        return;
+    }
+
+    await session.page.close().catch(() => { });
+    await session.context.close().catch(() => { });
+    activeSessions = Math.max(0, activeSessions - 1);
+}
+
+async function flushInterimCheckpoint(interimFile: string, dedup: Deduplicator): Promise<void> {
+    const interimList = dedup.getAll();
+    if (interimList.length === 0) {
+        return;
+    }
+
+    await checkpointMutex.runExclusive(async () => {
+        const interimWriter = createObjectCsvWriter({
+            path: interimFile,
+            header: [
+                { id: 'company_name', title: 'company_name' },
+                { id: 'city', title: 'city' },
+                { id: 'province', title: 'province' },
+                { id: 'zip_code', title: 'zip_code' },
+                { id: 'region', title: 'region' },
+                { id: 'address', title: 'address' },
+                { id: 'phone', title: 'phone' },
+                { id: 'website', title: 'website' },
+                { id: 'category', title: 'category' },
+                { id: 'source', title: 'source' },
+                { id: 'vat_code', title: 'vat_code' },
+                { id: 'pg_url', title: 'pg_url' },
+            ]
+        });
+        await interimWriter.writeRecords(interimList);
+        Logger.info(`💾 Interim Checkpoint: ${interimFile} (${interimList.length} companies)`);
+    });
+}
+
+function shouldSkipTargetOnResume(target: ScrapeTarget, dedup: Deduplicator): boolean {
+    const existing = dedup
+        .getAll()
+        .filter(c => c.category === target.category && (c.city === target.location || c.province === target.location));
+    return existing.length > 5;
+}
+
+async function preFlightSingle(category: string, province: string): Promise<ScrapeTarget[]> {
+    let session: BrowserSession | null = null;
+    try {
+        session = await setupPage();
+        const page = session.page;
+
+        Logger.info(`\n🔍 Checking: "${category}" in ${province}...`);
+
+        const pgLocation = pgProvinceName(province);
+        const pgUrl = `https://www.paginegialle.it/ricerca/${encodeURIComponent(category)}/${encodeURIComponent(pgLocation)}`;
+
+        await page.goto(pgUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+        if (await CaptchaSolver.neutralizeGatekeeper(page)) {
+            Logger.info(`   🔓 Captcha solved for ${category}/${province}. Reloading...`);
+            await page.reload({ waitUntil: 'domcontentloaded' });
+        }
+
+        await CookieConsent.handle(page);
+        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => { });
+
+        await Promise.race([
+            page.waitForSelector('.search-itm', { state: 'attached', timeout: 15000 }),
+            page.waitForSelector('.no-result', { state: 'attached', timeout: 15000 }),
+            page.waitForSelector('.listing-res__numresults span', { state: 'attached', timeout: 15000 }),
+            page.waitForSelector('.search-ind__res', { state: 'attached', timeout: 15000 }),
+            page.waitForSelector('.listingresults__numresults span', { state: 'attached', timeout: 15000 }),
+        ]).catch(() => {
+            Logger.warn(`   ⚠️ Pre-flight wait timed out for ${category}/${province}. Attempting DOM read anyway.`);
+        });
+
+        let countText = '0';
+        try {
+            countText = await page.evaluate(() => {
+                const candidates = [
+                    '.listing-res__numresults span',
+                    '.listing-res__numresults',
+                    '.search-ind__res',
+                    '.listingresults__numresults span',
+                    '.listingresults__numresults',
+                    '[class*="numresults"]',
+                ];
+
+                for (const selector of candidates) {
+                    const el = document.querySelector(selector);
+                    const text = el?.textContent?.trim();
+                    if (text && /\d/.test(text)) {
+                        return text;
+                    }
+                }
+
+                return '0';
+            }) || '0';
+        } catch (e) {
+            const msg = (e as Error).message;
+            if (msg.includes('detached') || msg.includes('destroyed')) {
+                Logger.warn(`   ⚠️ Frame detached during pre-flight for ${category}/${province}. Retrying...`);
+                await delay(1000);
+                countText = await page.evaluate(() => {
+                    const candidates = [
+                        '.listing-res__numresults span',
+                        '.listing-res__numresults',
+                        '.search-ind__res',
+                        '.listingresults__numresults span',
+                        '.listingresults__numresults',
+                        '[class*="numresults"]',
+                    ];
+
+                    for (const selector of candidates) {
+                        const el = document.querySelector(selector);
+                        const text = el?.textContent?.trim();
+                        if (text && /\d/.test(text)) {
+                            return text;
+                        }
+                    }
+
+                    return '0';
+                }) || '0';
+            } else {
+                throw e;
+            }
+        }
+
+        const visibleListings = await page.locator('.search-itm').count().catch(() => 0);
+        let totalResults = parseInt(countText?.replace(/\./g, '').replace(/[^\d]/g, '') || '0', 10);
+        if (totalResults === 0 && visibleListings > 0) {
+            totalResults = visibleListings;
+            Logger.warn(`   ⚠️ Count selector returned 0 for ${category}/${province}, but ${visibleListings} listings are visible. Using visible count as lower bound.`);
+        }
+        Logger.info(`   📊 PG Results: ${totalResults}`);
+
+        if (totalResults > PG_OVERFLOW_THRESHOLD) {
+            Logger.info(`   🚨 OVERFLOW (>${PG_OVERFLOW_THRESHOLD})! Splitting by municipality...`);
+
+            const municipalities = await MunicipalitySplitter.getMunicipalities(province);
+            Logger.info(`   🏘️ GPT municipalities: [${municipalities.join(', ')}]`);
+
+            const splitTargets: ScrapeTarget[] = [];
+            for (const muni of municipalities) {
+                const municipalityName = compactText(muni);
+                if (!municipalityName) {
+                    Logger.warn(`   ⚠️ Skipping invalid municipality for ${province}: ${String(muni)}`);
+                    continue;
+                }
+
+                splitTargets.push({
+                    category,
+                    location: municipalityName,
+                    province,
+                    isMunicipality: true,
+                    pgResultCount: totalResults,
+                });
+            }
+            return splitTargets;
+        }
+
+        if (totalResults > 0) {
+            return [{
+                category,
+                location: province,
+                province,
+                isMunicipality: false,
+                pgResultCount: totalResults,
+            }];
+        }
+
+        Logger.warn(`   ⚠️ 0 results parsed for "${category}" in ${province}. Proceeding with province scrape (Fallback).`);
+        return [{
+            category,
+            location: province,
+            province,
+            isMunicipality: false,
+            pgResultCount: -1,
+        }];
+    } catch (error) {
+        Logger.error(`   ❌ Pre-flight failed for ${category}/${province}: ${(error as Error).message}`);
+        return [{
+            category,
+            location: province,
+            province,
+            isMunicipality: false,
+            pgResultCount: -1,
+        }];
+    } finally {
+        await closeSession(session);
+    }
 }
 
 // ─── PHASE 1: PRE-FLIGHT INTEL ──────────────────────────────────────────────
@@ -352,185 +560,26 @@ async function preFlightCheck(
     categories: string[],
     provinces: string[]
 ): Promise<ScrapeTarget[]> {
-    const targets: ScrapeTarget[] = [];
-
     Logger.info(`\n${'═'.repeat(60)}`);
     Logger.info(`📡 PHASE 1: PRE-FLIGHT INTELLIGENCE`);
     Logger.info(`${'═'.repeat(60)}`);
+    Logger.info(`⚙️ Pre-flight concurrency: ${DEFAULT_PREFLIGHT_CONCURRENCY}`);
 
-    let preflightTargets = 0;
+    const limit = pLimit(DEFAULT_PREFLIGHT_CONCURRENCY);
+    const jobs: Array<Promise<ScrapeTarget[]>> = [];
 
     for (const province of provinces) {
         for (const category of categories) {
-            // Check if we need to restart the browser to prevent OOM
-            if (preflightTargets >= TARGETS_PER_BROWSER) {
-                Logger.info(`\n🔄 Pre-Flight: Reached ${TARGETS_PER_BROWSER} checks. Recycling browser memory...`);
-                if (browserInstance) {
-                    await browserInstance.close().catch(e => Logger.error(`Error closing browser: ${e.message}`));
-                    browserInstance = null;
-                }
-                await getBrowser();
-                preflightTargets = 0;
-            }
-
-            let session: BrowserSession | null = null;
-            try {
-                session = await setupPage();
-                const page = session.page;
-
-                Logger.info(`\n🔍 Checking: "${category}" in ${province}...`);
-
-                // Use 'Provincia di X' format to force province-level search on PagineGialle
-                // e.g. 'Verona' = solo comune, 'Provincia di Verona' = intera provincia
-                const pgLocation = pgProvinceName(province);
-                const pgUrl = `https://www.paginegialle.it/ricerca/${encodeURIComponent(category)}/${encodeURIComponent(pgLocation)}`;
-
-                await page.goto(pgUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-                // 🛡️ CAPTCHA CHECK
-                if (await CaptchaSolver.neutralizeGatekeeper(page)) {
-                    Logger.info(`   🔓 Captcha solved for ${category}/${province}. Reloading...`);
-                    await page.reload({ waitUntil: 'domcontentloaded' });
-                }
-
-                await CookieConsent.handle(page);
-                await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => { });
-
-                await Promise.race([
-                    page.waitForSelector('.search-itm', { state: 'attached', timeout: 15000 }),
-                    page.waitForSelector('.no-result', { state: 'attached', timeout: 15000 }),
-                    page.waitForSelector('.listing-res__numresults span', { state: 'attached', timeout: 15000 }),
-                    page.waitForSelector('.search-ind__res', { state: 'attached', timeout: 15000 }),
-                    page.waitForSelector('.listingresults__numresults span', { state: 'attached', timeout: 15000 }),
-                ]).catch(() => {
-                    Logger.warn(`   ⚠️ Pre-flight wait timed out for ${category}/${province}. Attempting DOM read anyway.`);
-                });
-
-                // Parse total count
-                let countText = '0';
-                try {
-                    countText = await page.evaluate(() => {
-                        const candidates = [
-                            '.listing-res__numresults span',
-                            '.listing-res__numresults',
-                            '.search-ind__res',
-                            '.listingresults__numresults span',
-                            '.listingresults__numresults',
-                            '[class*="numresults"]',
-                        ];
-
-                        for (const selector of candidates) {
-                            const el = document.querySelector(selector);
-                            const text = el?.textContent?.trim();
-                            if (text && /\d/.test(text)) {
-                                return text;
-                            }
-                        }
-
-                        return '0';
-                    }) || '0';
-                } catch (e) {
-                    const msg = (e as Error).message;
-                    if (msg.includes('detached') || msg.includes('destroyed')) {
-                        Logger.warn(`   ⚠️ Frame detached during pre-flight for ${category}/${province}. Retrying...`);
-                        await delay(1000);
-                        countText = await page.evaluate(() => {
-                            const candidates = [
-                                '.listing-res__numresults span',
-                                '.listing-res__numresults',
-                                '.search-ind__res',
-                                '.listingresults__numresults span',
-                                '.listingresults__numresults',
-                                '[class*="numresults"]',
-                            ];
-
-                            for (const selector of candidates) {
-                                const el = document.querySelector(selector);
-                                const text = el?.textContent?.trim();
-                                if (text && /\d/.test(text)) {
-                                    return text;
-                                }
-                            }
-
-                            return '0';
-                        }) || '0';
-                    } else {
-                        throw e;
-                    }
-                }
-
-                const visibleListings = await page.locator('.search-itm').count().catch(() => 0);
-                let totalResults = parseInt(countText?.replace(/\./g, '').replace(/[^\d]/g, '') || '0', 10);
-                if (totalResults === 0 && visibleListings > 0) {
-                    totalResults = visibleListings;
-                    Logger.warn(`   ⚠️ Count selector returned 0 for ${category}/${province}, but ${visibleListings} listings are visible. Using visible count as lower bound.`);
-                }
-                Logger.info(`   📊 PG Results: ${totalResults}`);
-
-                if (totalResults > PG_OVERFLOW_THRESHOLD) {
-                    // OVERFLOW → Split by municipality
-                    Logger.info(`   🚨 OVERFLOW (>${PG_OVERFLOW_THRESHOLD})! Splitting by municipality...`);
-
-                    const municipalities = await MunicipalitySplitter.getMunicipalities(province);
-                    Logger.info(`   🏘️ GPT municipalities: [${municipalities.join(', ')}]`);
-
-                    for (const muni of municipalities) {
-                        const municipalityName = compactText(muni);
-                        if (!municipalityName) {
-                            Logger.warn(`   ⚠️ Skipping invalid municipality for ${province}: ${String(muni)}`);
-                            continue;
-                        }
-
-                        targets.push({
-                            category,
-                            location: municipalityName,
-                            province,
-                            isMunicipality: true,
-                            pgResultCount: totalResults,
-                        });
-                    }
-                } else if (totalResults > 0) {
-                    // NORMAL → Scrape province directly
-                    targets.push({
-                        category,
-                        location: province,
-                        province,
-                        isMunicipality: false,
-                        pgResultCount: totalResults,
-                    });
-                } else {
-                    Logger.warn(`   ⚠️ 0 results parsed for "${category}" in ${province}. Proceeding with province scrape (Fallback).`);
-                    targets.push({
-                        category,
-                        location: province,
-                        province,
-                        isMunicipality: false,
-                        pgResultCount: -1,
-                    });
-                } // End if(totalResults > PG_OVERFLOW_THRESHOLD)
-            } catch (error) {
-                Logger.error(`   ❌ Pre-flight failed for ${category}/${province}: ${(error as Error).message}`);
-                // Fallback: add province anyway
-                targets.push({
-                    category,
-                    location: province,
-                    province,
-                    isMunicipality: false,
-                    pgResultCount: -1,
-                });
-            } finally {
-                if (session) {
-                    await session.page.close().catch(() => { });
-                    await session.context.close().catch(() => { });
-                }
-            }
-            preflightTargets++;
-
-            await delay(1500);
+            jobs.push(limit(async () => {
+                const result = await preFlightSingle(category, province);
+                await delay(1500);
+                return result;
+            }));
         }
-        // Force GC/Cleanup between provinces
-        if (global.gc) global.gc();
     }
+
+    const targetGroups = await Promise.all(jobs);
+    const targets = targetGroups.flat();
 
     // Summary
     Logger.info(`\n${'─'.repeat(60)}`);
@@ -812,29 +861,13 @@ async function main() {
         Logger.info(`\n${'═'.repeat(60)}`);
         Logger.info(`🔥 PHASE 2+3: SCRAPING (${targets.length} targets)`);
         Logger.info(`${'═'.repeat(60)}\n`);
+        Logger.info(`⚙️ Target concurrency: ${DEFAULT_SCRAPER_TARGET_CONCURRENCY}`);
 
-        let targetsProcessedInCurrentBrowser = 0;
-
-        for (const [idx, target] of targets.entries()) {
-            // SKIP logic if resuming (simple heuristic: if we have record for this cat/location skip)
-            // But better: idx check if we stored it, or just rely on dedup to skip network calls.
-            // Actually, to save time, we should skip the entire target if it's already "dense" in dedup.
-            if (resume && globalDedup.count > 0) {
-                const existing = globalDedup.getAll().filter(c => c.category === target.category && (c.city === target.location || c.province === target.location));
-                if (existing.length > 5) { // Arbitrary threshold to assume target was done
-                    Logger.info(`⏭️ Skipping Target ${idx + 1}/${targets.length}: [${target.category}] ${target.location} (Already in dedup)`);
-                    continue;
-                }
-            }
-            // Check if we need to restart the browser
-            if (targetsProcessedInCurrentBrowser >= TARGETS_PER_BROWSER) {
-                Logger.info(`\n🔄 Reached ${TARGETS_PER_BROWSER} targets. Closing browser and launching new one...`);
-                if (browserInstance) {
-                    await browserInstance.close().catch(e => Logger.error(`Error closing browser: ${e.message}`));
-                    browserInstance = null; // Reset instance
-                }
-                await getBrowser(); // Launch new browser
-                targetsProcessedInCurrentBrowser = 0; // Reset counter
+        const limit = pLimit(DEFAULT_SCRAPER_TARGET_CONCURRENCY);
+        await Promise.all(targets.map((target, idx) => limit(async () => {
+            if (resume && globalDedup.count > 0 && shouldSkipTargetOnResume(target, globalDedup)) {
+                Logger.info(`⏭️ Skipping Target ${idx + 1}/${targets.length}: [${target.category}] ${target.location} (Already in dedup)`);
+                return;
             }
 
             let session: BrowserSession | null = null;
@@ -842,51 +875,21 @@ async function main() {
                 session = await setupPage();
                 Logger.info(`\n┌── TARGET ${idx + 1}/${targets.length}: [${target.category}] ${target.location}`);
 
-                // PG
                 const pgResults = await scrapePG(session.page, target, globalDedup);
                 allCompanies.push(...pgResults);
 
                 await delay(PG_LOCATION_DELAY_MS);
 
-                // Maps
                 const { newCount } = await scrapeMaps(session.page, target, globalDedup);
-                // newCount items are already in dedup but not in allCompanies array
-                // We'll rebuild final list from dedup at the end
-
                 Logger.info(`└── DONE: ${pgResults.length} PG + ${newCount} new Maps | Running total: ${globalDedup.count}`);
-
+            } catch (error) {
+                Logger.error(`└── FAILED: [${target.category}] ${target.location} → ${(error as Error).message}`);
             } finally {
-                if (session) {
-                    await session.page.close().catch(() => { });
-                    await session.context.close().catch(() => { });
-                }
+                await closeSession(session);
             }
-            targetsProcessedInCurrentBrowser++;
 
-            // 💾 INTERIM SAVE (Law 901: DATA PRESERVATION FIRST)
-            const interimList = globalDedup.getAll();
-            if (interimList.length > 0) {
-                const interimWriter = createObjectCsvWriter({
-                    path: interimFile,
-                    header: [
-                        { id: 'company_name', title: 'company_name' },
-                        { id: 'city', title: 'city' },
-                        { id: 'province', title: 'province' },
-                        { id: 'zip_code', title: 'zip_code' },
-                        { id: 'region', title: 'region' },
-                        { id: 'address', title: 'address' },
-                        { id: 'phone', title: 'phone' },
-                        { id: 'website', title: 'website' },
-                        { id: 'category', title: 'category' },
-                        { id: 'source', title: 'source' },
-                        { id: 'vat_code', title: 'vat_code' },
-                        { id: 'pg_url', title: 'pg_url' },
-                    ]
-                });
-                await interimWriter.writeRecords(interimList);
-                Logger.info(`💾 Interim Checkpoint: ${interimFile} (${interimList.length} companies)`);
-            }
-        }
+            await flushInterimCheckpoint(interimFile, globalDedup);
+        })));
 
         // PHASE 4: Final output + quality gate
         const rawFinalList = globalDedup.getAll();

@@ -41,6 +41,7 @@ export DISABLE_PROXY="${DISABLE_PROXY:-true}"
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379/15}"
 export SQLITE_PATH="$DB_PATH"
 export OUT_DIR
+export WORKER_PROCESSES="${WORKER_PROCESSES:-1}"
 
 # Flush redis (best-effort)
 if command -v redis-cli >/dev/null 2>&1; then
@@ -49,11 +50,11 @@ else
   (docker exec antigravity-redis redis-cli -n 15 FLUSHDB) > "$OUT_DIR/redis_flush.log" 2>&1 || true
 fi
 
-WORKER_PID=""
+typeset -a WORKER_PIDS=()
 cleanup() {
-  if [[ -n "$WORKER_PID" ]]; then
-    kill "$WORKER_PID" 2>/dev/null || true
-  fi
+  for pid in "${WORKER_PIDS[@]}"; do
+    kill "$pid" 2>/dev/null || true
+  done
 }
 trap cleanup EXIT
 
@@ -67,10 +68,26 @@ else
   export TS_NODE_TRANSPILE_ONLY=1
 fi
 
-# Start worker
-"${WORKER_CMD[@]}" > "$OUT_DIR/worker.log" 2>&1 &
-WORKER_PID=$!
-echo "$WORKER_PID" > "$OUT_DIR/worker.pid"
+echo "env.WORKER_PROCESSES=$WORKER_PROCESSES" >> "$OUT_DIR/run_meta.txt"
+
+# Start workers
+worker_count=0
+while (( worker_count < WORKER_PROCESSES )); do
+  worker_count=$((worker_count + 1))
+  worker_log="$OUT_DIR/worker.log"
+  worker_pid_file="$OUT_DIR/worker.pid"
+  if (( worker_count > 1 )); then
+    worker_log="$OUT_DIR/worker_${worker_count}.log"
+    worker_pid_file="$OUT_DIR/worker_${worker_count}.pid"
+  fi
+
+  "${WORKER_CMD[@]}" > "$worker_log" 2>&1 &
+  worker_pid=$!
+  WORKER_PIDS+=("$worker_pid")
+  echo "$worker_pid" > "$worker_pid_file"
+done
+
+printf '%s\n' "${WORKER_PIDS[@]}" > "$OUT_DIR/worker_pids.txt"
 
 # Run scheduler
 "${SCHEDULER_CMD[@]}" > "$OUT_DIR/scheduler.log" 2>&1
@@ -123,9 +140,9 @@ while True:
     time.sleep(5)
 PY
 
-# Stop worker
-kill "$WORKER_PID" 2>/dev/null || true
-WORKER_PID=""
+# Stop workers
+cleanup
+WORKER_PIDS=()
 
 # Export joined results + summary
 python3 - <<'PY'
