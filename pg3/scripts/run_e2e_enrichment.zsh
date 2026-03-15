@@ -40,7 +40,8 @@ echo "input_csv=$INPUT_CSV" >> "$OUT_DIR/run_meta.txt"
 echo "cwd=$(pwd)" >> "$OUT_DIR/run_meta.txt"
 
 # Defaults for isolated runs
-export DISABLE_PROXY="${DISABLE_PROXY:-true}"
+export DISABLE_PROXY="${DISABLE_PROXY:-false}"
+export DISABLE_STEALTH="${DISABLE_STEALTH:-false}"
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379/15}"
 export SQLITE_PATH="$DB_PATH"
 export OUT_DIR
@@ -48,8 +49,10 @@ export WORKER_PROCESSES="${WORKER_PROCESSES:-1}"
 export USE_DIST_RUNTIME="${USE_DIST_RUNTIME:-false}"
 export E2E_WAIT_TIMEOUT_MINUTES="${E2E_WAIT_TIMEOUT_MINUTES:-720}"
 export E2E_PROGRESS_POLL_SECONDS="${E2E_PROGRESS_POLL_SECONDS:-5}"
+export REQUIRE_ORACLE_STEALTH="${REQUIRE_ORACLE_STEALTH:-true}"
 
 echo "env.DISABLE_PROXY=${DISABLE_PROXY:-}" >> "$OUT_DIR/run_meta.txt"
+echo "env.DISABLE_STEALTH=${DISABLE_STEALTH:-}" >> "$OUT_DIR/run_meta.txt"
 echo "env.REDIS_URL=${REDIS_URL:-}" >> "$OUT_DIR/run_meta.txt"
 echo "env.SCRAPE_DO_TOKEN=${SCRAPE_DO_TOKEN:+(set)}" >> "$OUT_DIR/run_meta.txt"
 echo "env.PROXY_RESIDENTIAL_URL=${PROXY_RESIDENTIAL_URL:+(set)}" >> "$OUT_DIR/run_meta.txt"
@@ -59,6 +62,14 @@ echo "env.BACKPRESSURE_INITIAL_CONCURRENCY=${BACKPRESSURE_INITIAL_CONCURRENCY:-}
 echo "env.BACKPRESSURE_MAX_CONCURRENCY=${BACKPRESSURE_MAX_CONCURRENCY:-}" >> "$OUT_DIR/run_meta.txt"
 echo "env.BROWSER_POOL_MAX_INSTANCES=${BROWSER_POOL_MAX_INSTANCES:-}" >> "$OUT_DIR/run_meta.txt"
 echo "env.E2E_WAIT_TIMEOUT_MINUTES=${E2E_WAIT_TIMEOUT_MINUTES:-}" >> "$OUT_DIR/run_meta.txt"
+echo "env.REQUIRE_ORACLE_STEALTH=${REQUIRE_ORACLE_STEALTH:-}" >> "$OUT_DIR/run_meta.txt"
+
+if [[ "$REQUIRE_ORACLE_STEALTH" == "true" ]]; then
+  if ! /bin/bash ops/oracle/manage_oracle.sh ensure > "$OUT_DIR/oracle_ensure.log" 2>&1; then
+    echo "ERROR: Oracle stealth is unavailable. See $OUT_DIR/oracle_ensure.log" >&2
+    exit 2
+  fi
+fi
 
 # Flush redis (best-effort)
 if command -v redis-cli >/dev/null 2>&1; then

@@ -15,6 +15,9 @@ $SSH_CMD root@"$SERVER_IP" "mkdir -p \"$REMOTE_DIR\""
 
 rsync -avzP --delete -e "$RSYNC_SSH" \
   --exclude 'node_modules' \
+  --exclude 'ops/oracle/venv' \
+  --exclude 'ops/oracle/.venv' \
+  --exclude '__pycache__' \
   --exclude 'browser_profile*' \
   --exclude 'search_profile*' \
   --exclude 'financial_profile*' \
@@ -35,9 +38,13 @@ $SSH_CMD root@"$SERVER_IP" "bash -s" <<EOF
   cd "$REMOTE_DIR"
   mkdir -p output
   chmod +x ops/mission_lombardia_manifattura_e2e.sh
+  chmod +x ops/oracle/manage_oracle.sh
 
   echo "📦 Installing dependencies..."
   npm ci --omit=dev
+
+  echo "🐍 Ensuring Oracle sidecar bootstrap is healthy..."
+  ORACLE_INSTALL_PLAYWRIGHT="${ORACLE_INSTALL_PLAYWRIGHT:-auto}" /bin/bash ops/oracle/manage_oracle.sh ensure > output/oracle_ensure_deploy.log 2>&1
 
   echo "🛑 Stopping previous mission launcher if present..."
   pkill -f "mission_lombardia_manifattura_e2e.sh" || true
