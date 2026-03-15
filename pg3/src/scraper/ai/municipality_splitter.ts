@@ -18,12 +18,76 @@ import * as path from 'path';
 const CACHE_FILE = path.join(process.cwd(), 'data', 'municipalities_cache.json');
 let MEMOLOCK_CACHE: Map<string, string[]> | null = null;
 
+function sanitizeMunicipalityValue(value: unknown): string | null {
+    let candidate = value;
+
+    if (Array.isArray(candidate)) {
+        candidate = candidate.find((entry) => typeof entry === 'string' || typeof entry === 'number');
+    }
+
+    if (candidate === undefined || candidate === null) {
+        return null;
+    }
+
+    const cleaned = String(candidate)
+        .replace(/[\r\n\t]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!cleaned) {
+        return null;
+    }
+
+    const withoutDirectionalSuffix = cleaned
+        .split(',')[0]
+        .replace(/\s*[-–]\s*(north|south|east|west|center|centre|nord|sud|est|ovest|centro)\b.*$/i, '')
+        .trim();
+
+    return withoutDirectionalSuffix || cleaned;
+}
+
+function sanitizeMunicipalityList(values: unknown, fallbackProvince?: string): string[] {
+    const input = Array.isArray(values) ? values : [];
+    const sanitized: string[] = [];
+    const seen = new Set<string>();
+
+    for (const raw of input) {
+        const normalized = sanitizeMunicipalityValue(raw);
+        if (!normalized) continue;
+
+        const key = normalized.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        sanitized.push(normalized);
+    }
+
+    if (sanitized.length === 0 && fallbackProvince) {
+        return [fallbackProvince];
+    }
+
+    return sanitized.slice(0, 5);
+}
+
 function loadCache(): Map<string, string[]> {
     if (MEMOLOCK_CACHE) return MEMOLOCK_CACHE;
     try {
         if (fs.existsSync(CACHE_FILE)) {
-            const data = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8'));
-            MEMOLOCK_CACHE = new Map(Object.entries(data));
+            const rawData = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8')) as Record<string, unknown>;
+            const normalizedEntries: Array<[string, string[]]> = [];
+            let cacheMutated = false;
+
+            for (const [province, values] of Object.entries(rawData)) {
+                const sanitized = sanitizeMunicipalityList(values, province.toUpperCase());
+                if (JSON.stringify(values) !== JSON.stringify(sanitized)) {
+                    cacheMutated = true;
+                }
+                normalizedEntries.push([province, sanitized]);
+            }
+
+            MEMOLOCK_CACHE = new Map(normalizedEntries);
+            if (cacheMutated) {
+                saveCache(MEMOLOCK_CACHE);
+            }
         } else {
             MEMOLOCK_CACHE = new Map();
         }
@@ -67,7 +131,9 @@ export class MunicipalitySplitter {
         // Persistent Cache hit
         if (cache.has(cacheKey)) {
             Logger.info(`[MunicipalitySplitter] 💾 Persistent Cache hit for "${province}"`);
-            return cache.get(cacheKey)!;
+            const sanitized = sanitizeMunicipalityList(cache.get(cacheKey)!, province);
+            cache.set(cacheKey, sanitized);
+            return sanitized;
         }
 
         Logger.info(`[MunicipalitySplitter] 🧠 Querying LLM for 5 municipalities in "${province}"...`);
@@ -104,6 +170,8 @@ export class MunicipalitySplitter {
             }
 
             // Validate
+            municipalities = sanitizeMunicipalityList(municipalities, province);
+
             if (municipalities.length < 3 || municipalities.length > 8) {
                 throw new Error(`Expected 5 municipalities, got ${municipalities.length}: ${JSON.stringify(municipalities)}`);
             }

@@ -62,9 +62,14 @@ const TRACKING_QUERY_KEYS = new Set([
     'mc_eid'
 ]);
 
-function compactText(value?: string | null): string | undefined {
-    if (!value) return undefined;
-    const cleaned = value
+function compactText(value?: unknown): string | undefined {
+    if (value === undefined || value === null) return undefined;
+
+    const raw = Array.isArray(value)
+        ? value.flat(Infinity).map((part) => String(part ?? '')).join(' ')
+        : String(value);
+
+    const cleaned = raw
         .replace(/[\r\n\t]+/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
@@ -467,9 +472,15 @@ async function preFlightCheck(
                     Logger.info(`   🏘️ GPT municipalities: [${municipalities.join(', ')}]`);
 
                     for (const muni of municipalities) {
+                        const municipalityName = compactText(muni);
+                        if (!municipalityName) {
+                            Logger.warn(`   ⚠️ Skipping invalid municipality for ${province}: ${String(muni)}`);
+                            continue;
+                        }
+
                         targets.push({
                             category,
-                            location: muni,
+                            location: municipalityName,
                             province,
                             isMunicipality: true,
                             pgResultCount: totalResults,

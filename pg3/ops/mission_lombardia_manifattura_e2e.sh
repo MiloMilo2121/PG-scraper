@@ -52,6 +52,7 @@ export RUNNER_CONCURRENCY_LIMIT="${RUNNER_CONCURRENCY_LIMIT:-4}"
 export CHROME_BIN="${CHROME_BIN:-$(resolve_chrome_bin)}"
 export CHROME_PATH="${CHROME_PATH:-$CHROME_BIN}"
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379/15}"
+export SCRAPER_RESUME="${SCRAPER_RESUME:-false}"
 
 if [ -z "$CHROME_BIN" ]; then
   echo "❌ Chromium binary not found. Set CHROME_BIN/CHROME_PATH explicitly." >&2
@@ -125,10 +126,16 @@ ensure_redis
 START_TS="$(date +%s)"
 
 echo "--- 📡 PHASE 1: SCRAPING / CAMPAIGN GENERATION ---"
-npx ts-node src/scraper/generate_campaign_v2.ts \
-  --query="$QUERY" \
-  --provinces="$PROVINCES" \
-  > "$GENERATION_LOG" 2>&1
+SCRAPER_ARGS=(
+  "--query=$QUERY"
+  "--provinces=$PROVINCES"
+)
+
+if [ "$SCRAPER_RESUME" = "true" ]; then
+  SCRAPER_ARGS+=("--resume")
+fi
+
+npx ts-node src/scraper/generate_campaign_v2.ts "${SCRAPER_ARGS[@]}" > "$GENERATION_LOG" 2>&1
 
 LATEST_CSV="$(find_latest_combined_csv)"
 if [ -z "$LATEST_CSV" ]; then

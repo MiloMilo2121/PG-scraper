@@ -46,7 +46,7 @@ $SSH_CMD root@"$SERVER_IP" "bash -s" <<EOF
   pkill -f "src/index.ts scheduler" || true
 
   echo "🔥 Starting mission in background..."
-  nohup ./ops/mission_lombardia_manifattura_e2e.sh > "$REMOTE_LOG" 2>&1 &
+  SCRAPER_RESUME="${SCRAPER_RESUME:-false}" nohup ./ops/mission_lombardia_manifattura_e2e.sh > "$REMOTE_LOG" 2>&1 &
   echo "REMOTE_LOG=$REMOTE_LOG"
 EOF
 
