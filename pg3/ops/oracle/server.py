@@ -24,7 +24,7 @@ async def startup_event():
     global crawler
     print("🚀 Starting OMEGA Python Oracle [Crawl4AI Module]...")
     crawler = AsyncWebCrawler()
-    await crawler.start()
+    await crawler.__aenter__()
     print("✅ WebCrawler started.")
 
 @app.on_event("shutdown")
@@ -32,7 +32,7 @@ async def shutdown_event():
     global crawler
     if crawler:
         print("🛑 Shutting down WebCrawler...")
-        await crawler.close()
+        await crawler.__aexit__(None, None, None)
 
 @app.post("/api/v1/extract", response_model=CrawlResponse)
 async def extract_content(req: CrawlRequest):
