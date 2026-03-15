@@ -386,15 +386,40 @@ async function preFlightCheck(
                 }
 
                 await CookieConsent.handle(page);
+                await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => { });
+
+                await Promise.race([
+                    page.waitForSelector('.search-itm', { state: 'attached', timeout: 15000 }),
+                    page.waitForSelector('.no-result', { state: 'attached', timeout: 15000 }),
+                    page.waitForSelector('.listing-res__numresults span', { state: 'attached', timeout: 15000 }),
+                    page.waitForSelector('.search-ind__res', { state: 'attached', timeout: 15000 }),
+                    page.waitForSelector('.listingresults__numresults span', { state: 'attached', timeout: 15000 }),
+                ]).catch(() => {
+                    Logger.warn(`   ⚠️ Pre-flight wait timed out for ${category}/${province}. Attempting DOM read anyway.`);
+                });
 
                 // Parse total count
                 let countText = '0';
                 try {
                     countText = await page.evaluate(() => {
-                        const el = document.querySelector('.listing-res__numresults span') ||
-                            document.querySelector('.search-ind__res') ||
-                            document.querySelector('.listingresults__numresults span');
-                        return el ? el.textContent : '0';
+                        const candidates = [
+                            '.listing-res__numresults span',
+                            '.listing-res__numresults',
+                            '.search-ind__res',
+                            '.listingresults__numresults span',
+                            '.listingresults__numresults',
+                            '[class*="numresults"]',
+                        ];
+
+                        for (const selector of candidates) {
+                            const el = document.querySelector(selector);
+                            const text = el?.textContent?.trim();
+                            if (text && /\d/.test(text)) {
+                                return text;
+                            }
+                        }
+
+                        return '0';
                     }) || '0';
                 } catch (e) {
                     const msg = (e as Error).message;
@@ -402,17 +427,36 @@ async function preFlightCheck(
                         Logger.warn(`   ⚠️ Frame detached during pre-flight for ${category}/${province}. Retrying...`);
                         await delay(1000);
                         countText = await page.evaluate(() => {
-                            const el = document.querySelector('.listing-res__numresults span') ||
-                                document.querySelector('.search-ind__res') ||
-                                document.querySelector('.listingresults__numresults span');
-                            return el ? el.textContent : '0';
+                            const candidates = [
+                                '.listing-res__numresults span',
+                                '.listing-res__numresults',
+                                '.search-ind__res',
+                                '.listingresults__numresults span',
+                                '.listingresults__numresults',
+                                '[class*="numresults"]',
+                            ];
+
+                            for (const selector of candidates) {
+                                const el = document.querySelector(selector);
+                                const text = el?.textContent?.trim();
+                                if (text && /\d/.test(text)) {
+                                    return text;
+                                }
+                            }
+
+                            return '0';
                         }) || '0';
                     } else {
                         throw e;
                     }
                 }
 
-                const totalResults = parseInt(countText?.replace(/\./g, '').replace(/[^\d]/g, '') || '0', 10);
+                const visibleListings = await page.locator('.search-itm').count().catch(() => 0);
+                let totalResults = parseInt(countText?.replace(/\./g, '').replace(/[^\d]/g, '') || '0', 10);
+                if (totalResults === 0 && visibleListings > 0) {
+                    totalResults = visibleListings;
+                    Logger.warn(`   ⚠️ Count selector returned 0 for ${category}/${province}, but ${visibleListings} listings are visible. Using visible count as lower bound.`);
+                }
                 Logger.info(`   📊 PG Results: ${totalResults}`);
 
                 if (totalResults > PG_OVERFLOW_THRESHOLD) {

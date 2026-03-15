@@ -114,6 +114,10 @@ export class BrowserPool {
                 ],
             };
 
+            if (config.browser.chromePath) {
+                launchOptions.executablePath = config.browser.chromePath;
+            }
+
             // Route all browser traffic through the residential proxy if configured
             if (this.proxyUrl) {
                 launchOptions.proxy = { server: this.proxyUrl };
