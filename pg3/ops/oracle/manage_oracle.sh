@@ -124,7 +124,7 @@ bootstrap_env() {
   pip_bin="$(venv_pip)"
   python_bin="$(venv_python)"
 
-  "${pip_bin}" install --upgrade pip setuptools wheel
+  "${pip_bin}" install --upgrade pip 'setuptools<81' wheel
   "${pip_bin}" install -r "${ORACLE_REQUIREMENTS_FILE}"
 
   case "${ORACLE_INSTALL_PLAYWRIGHT}" in
