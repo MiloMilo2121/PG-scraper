@@ -1,6 +1,7 @@
 import { Logger } from '../utils/logger';
 import { LLMService } from '../../enricher/core/ai/llm_service';
 import { config } from '../config';
+import { PROVINCE_CODES } from '../data/pg_categories';
 
 /**
  * 🏘️ MUNICIPALITY SPLITTER
@@ -17,6 +18,7 @@ import * as path from 'path';
 
 const CACHE_FILE = path.join(process.cwd(), 'data', 'municipalities_cache.json');
 let MEMOLOCK_CACHE: Map<string, string[]> | null = null;
+const INFLIGHT_REQUESTS = new Map<string, Promise<string[]>>();
 
 function sanitizeMunicipalityValue(value: unknown): string | null {
     let candidate = value;
@@ -126,68 +128,75 @@ export class MunicipalitySplitter {
      */
     public static async getMunicipalities(province: string): Promise<string[]> {
         const cache = loadCache();
-        const cacheKey = province.toLowerCase().trim();
+        const resolvedProvince = PROVINCE_CODES[province.toUpperCase()] || province;
+        const cacheKey = resolvedProvince.toLowerCase().trim();
 
         // Persistent Cache hit
         if (cache.has(cacheKey)) {
             Logger.info(`[MunicipalitySplitter] 💾 Persistent Cache hit for "${province}"`);
-            const sanitized = sanitizeMunicipalityList(cache.get(cacheKey)!, province);
+            const sanitized = sanitizeMunicipalityList(cache.get(cacheKey)!, resolvedProvince);
             cache.set(cacheKey, sanitized);
             return sanitized;
         }
 
-        Logger.info(`[MunicipalitySplitter] 🧠 Querying LLM for 5 municipalities in "${province}"...`);
-
-        try {
-            const prompt = `${SYSTEM_PROMPT}\n\nUser: Province: ${province}\n\nRespond strictly with a JSON object containing a "municipalities" array.`;
-            const raw = await LLMService.complete(
-                prompt,
-                'glm-4.7-flash',            // Primary: Z.ai (Free/Fast)
-                ['deepseek-chat', 'kimi-k2.5'] // Fallbacks (Law 505)
-            );
-
-            if (!raw) throw new Error('Empty LLM response');
-
-            // Strip markdown wrapping if present
-            const cleanRaw = raw.replace(/```json/g, '').replace(/```/g, '').trim();
-
-            // Parse — handle both array and object formats
-            let municipalities: string[];
-            const parsed = JSON.parse(cleanRaw);
-
-            if (Array.isArray(parsed)) {
-                municipalities = parsed;
-            } else if (parsed.municipalities && Array.isArray(parsed.municipalities)) {
-                municipalities = parsed.municipalities;
-            } else {
-                // Extract first array value from any key
-                const firstArray = Object.values(parsed).find(v => Array.isArray(v)) as string[] | undefined;
-                if (firstArray) {
-                    municipalities = firstArray;
-                } else {
-                    throw new Error(`Unexpected LLM format: ${cleanRaw}`);
-                }
-            }
-
-            // Validate
-            municipalities = sanitizeMunicipalityList(municipalities, province);
-
-            if (municipalities.length < 3 || municipalities.length > 8) {
-                throw new Error(`Expected 5 municipalities, got ${municipalities.length}: ${JSON.stringify(municipalities)}`);
-            }
-
-            Logger.info(`[MunicipalitySplitter] ✅ ${province} → [${municipalities.join(', ')}]`);
-
-            // Save to Persistent Cache
-            cache.set(cacheKey, municipalities);
-            saveCache(cache);
-
-            return municipalities;
-
-        } catch (error) {
-            Logger.error(`[MunicipalitySplitter] ❌ Failed for "${province}": ${(error as Error).message}`);
-            // Fallback: return just the province capital
-            return [province];
+        if (INFLIGHT_REQUESTS.has(cacheKey)) {
+            Logger.info(`[MunicipalitySplitter] ⏳ Joining in-flight lookup for "${resolvedProvince}"`);
+            return INFLIGHT_REQUESTS.get(cacheKey)!;
         }
+
+        Logger.info(`[MunicipalitySplitter] 🧠 Querying LLM for 5 municipalities in "${resolvedProvince}"...`);
+
+        const request = (async () => {
+            try {
+                const prompt = `${SYSTEM_PROMPT}\n\nUser: Province: ${resolvedProvince}\n\nRespond strictly with a JSON object containing a "municipalities" array.`;
+                const raw = await LLMService.complete(
+                    prompt,
+                    'glm-4.7-flash',            // Primary: Z.ai (Free/Fast)
+                    ['deepseek-chat', 'kimi-k2.5'] // Fallbacks (Law 505)
+                );
+
+                if (!raw) throw new Error('Empty LLM response');
+
+                const cleanRaw = raw.replace(/```json/g, '').replace(/```/g, '').trim();
+
+                let municipalities: string[];
+                const parsed = JSON.parse(cleanRaw);
+
+                if (Array.isArray(parsed)) {
+                    municipalities = parsed;
+                } else if (parsed.municipalities && Array.isArray(parsed.municipalities)) {
+                    municipalities = parsed.municipalities;
+                } else {
+                    const firstArray = Object.values(parsed).find(v => Array.isArray(v)) as string[] | undefined;
+                    if (firstArray) {
+                        municipalities = firstArray;
+                    } else {
+                        throw new Error(`Unexpected LLM format: ${cleanRaw}`);
+                    }
+                }
+
+                municipalities = sanitizeMunicipalityList(municipalities, resolvedProvince);
+
+                if (municipalities.length < 3 || municipalities.length > 8) {
+                    throw new Error(`Expected 5 municipalities, got ${municipalities.length}: ${JSON.stringify(municipalities)}`);
+                }
+
+                Logger.info(`[MunicipalitySplitter] ✅ ${resolvedProvince} → [${municipalities.join(', ')}]`);
+
+                cache.set(cacheKey, municipalities);
+                saveCache(cache);
+
+                return municipalities;
+
+            } catch (error) {
+                Logger.error(`[MunicipalitySplitter] ❌ Failed for "${resolvedProvince}": ${(error as Error).message}`);
+                return [resolvedProvince];
+            } finally {
+                INFLIGHT_REQUESTS.delete(cacheKey);
+            }
+        })();
+
+        INFLIGHT_REQUESTS.set(cacheKey, request);
+        return request;
     }
 }
