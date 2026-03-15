@@ -43,7 +43,11 @@ export SQLITE_PATH="$DB_PATH"
 export OUT_DIR
 
 # Flush redis (best-effort)
-(docker exec antigravity-redis redis-cli -n 15 FLUSHDB) > "$OUT_DIR/redis_flush.log" 2>&1 || true
+if command -v redis-cli >/dev/null 2>&1; then
+  (redis-cli -u "$REDIS_URL" FLUSHDB) > "$OUT_DIR/redis_flush.log" 2>&1 || true
+else
+  (docker exec antigravity-redis redis-cli -n 15 FLUSHDB) > "$OUT_DIR/redis_flush.log" 2>&1 || true
+fi
 
 WORKER_PID=""
 cleanup() {
@@ -53,13 +57,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Prefer built runtime when available; fallback to ts-node transpile-only.
+if [[ -f "dist/src/index.js" ]]; then
+  WORKER_CMD=(node dist/src/index.js worker)
+  SCHEDULER_CMD=(node dist/src/index.js scheduler "$OUT_DIR/input.csv")
+else
+  WORKER_CMD=(npx ts-node src/index.ts worker)
+  SCHEDULER_CMD=(npx ts-node src/index.ts scheduler "$OUT_DIR/input.csv")
+  export TS_NODE_TRANSPILE_ONLY=1
+fi
+
 # Start worker
-npx ts-node src/index.ts worker > "$OUT_DIR/worker.log" 2>&1 &
+"${WORKER_CMD[@]}" > "$OUT_DIR/worker.log" 2>&1 &
 WORKER_PID=$!
 echo "$WORKER_PID" > "$OUT_DIR/worker.pid"
 
 # Run scheduler
-npx ts-node src/index.ts scheduler "$OUT_DIR/input.csv" > "$OUT_DIR/scheduler.log" 2>&1
+"${SCHEDULER_CMD[@]}" > "$OUT_DIR/scheduler.log" 2>&1
 
 # Wait for all jobs to reach terminal state (SUCCESS/FAILED)
 python3 - <<'PY'

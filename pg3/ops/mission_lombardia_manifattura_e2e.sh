@@ -10,6 +10,7 @@ MISSION_DIR="output/missions/${MISSION_ID}"
 GENERATION_LOG="${MISSION_DIR}/generation.log"
 E2E_LOG="${MISSION_DIR}/e2e.log"
 META_FILE="${MISSION_DIR}/mission.env"
+CHECKPOINT_FILE="${MISSION_DIR}/campaign_INTERIM_CHECKPOINT.csv"
 
 QUERY="${QUERY:-Officine meccaniche,Officine meccaniche di precisione,Officine metalmeccaniche,Lavorazioni meccaniche,Costruzioni meccaniche,Carpenterie metalliche,Tornerie metalli,Fonderie,Stampaggio metalli,Stampaggio materie plastiche,Lavorazione materie plastiche,Automazione industriale,Assemblaggi industriali,Impiantistica industriale,Produzione industriale,Manifattura}"
 PROVINCES="${PROVINCES:-BG,BS,CO,CR,LC,LO,MN,MI,MB,PV,SO,VA}"
@@ -42,13 +43,37 @@ resolve_chrome_bin() {
   echo ""
 }
 
+detect_ram_gib() {
+  if [ -r /proc/meminfo ]; then
+    awk '/MemTotal/ { printf "%d\n", $2 / 1024 / 1024 }' /proc/meminfo
+    return
+  fi
+  echo 16
+}
+
+recommend_concurrency() {
+  local ram_gib="$1"
+  if [ "$ram_gib" -ge 48 ]; then
+    echo 16
+  elif [ "$ram_gib" -ge 28 ]; then
+    echo 12
+  elif [ "$ram_gib" -ge 16 ]; then
+    echo 8
+  else
+    echo 4
+  fi
+}
+
+RAM_GIB="$(detect_ram_gib)"
+RECOMMENDED_CONCURRENCY="$(recommend_concurrency "$RAM_GIB")"
+
 export HEADLESS="${HEADLESS:-true}"
 export SCRAPE_DO_ENFORCE="${SCRAPE_DO_ENFORCE:-false}"
 export DISABLE_PROXY="${DISABLE_PROXY:-true}"
 export DISABLE_STEALTH="${DISABLE_STEALTH:-true}"
-export MAX_CONCURRENCY="${MAX_CONCURRENCY:-4}"
-export CONCURRENCY_LIMIT="${CONCURRENCY_LIMIT:-4}"
-export RUNNER_CONCURRENCY_LIMIT="${RUNNER_CONCURRENCY_LIMIT:-4}"
+export CONCURRENCY_LIMIT="${CONCURRENCY_LIMIT:-$RECOMMENDED_CONCURRENCY}"
+export MAX_CONCURRENCY="${MAX_CONCURRENCY:-$CONCURRENCY_LIMIT}"
+export RUNNER_CONCURRENCY_LIMIT="${RUNNER_CONCURRENCY_LIMIT:-$CONCURRENCY_LIMIT}"
 export CHROME_BIN="${CHROME_BIN:-$(resolve_chrome_bin)}"
 export CHROME_PATH="${CHROME_PATH:-$CHROME_BIN}"
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379/15}"
@@ -65,6 +90,8 @@ write_meta() {
     echo "MISSION_DIR=$MISSION_DIR"
     echo "QUERY=$QUERY"
     echo "PROVINCES=$PROVINCES"
+    echo "RAM_GIB=$RAM_GIB"
+    echo "RECOMMENDED_CONCURRENCY=$RECOMMENDED_CONCURRENCY"
     echo "REDIS_URL=$REDIS_URL"
     echo "MAX_CONCURRENCY=$MAX_CONCURRENCY"
     echo "CONCURRENCY_LIMIT=$CONCURRENCY_LIMIT"
@@ -129,6 +156,7 @@ echo "--- 📡 PHASE 1: SCRAPING / CAMPAIGN GENERATION ---"
 SCRAPER_ARGS=(
   "--query=$QUERY"
   "--provinces=$PROVINCES"
+  "--checkpoint-file=$CHECKPOINT_FILE"
 )
 
 if [ "$SCRAPER_RESUME" = "true" ]; then

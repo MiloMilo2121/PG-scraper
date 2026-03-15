@@ -200,15 +200,16 @@ interface ScrapeTarget {
 }
 
 // ─── CLI PARSING ─────────────────────────────────────────────────────────────
-function parseCLI(): { query: string; provinceCodes: string[]; resume: boolean } {
+function parseCLI(): { query: string; provinceCodes: string[]; resume: boolean; checkpointFile: string } {
     const args = process.argv.slice(2);
 
     const queryArg = args.find(a => a.startsWith('--query='))?.split('=').slice(1).join('=');
     const provincesArg = args.find(a => a.startsWith('--provinces='))?.split('=').slice(1).join('=');
     const resume = args.includes('--resume');
+    const checkpointArg = args.find(a => a.startsWith('--checkpoint-file='))?.split('=').slice(1).join('=');
 
     if (!queryArg || !provincesArg) {
-        console.error('Usage: npx ts-node src/scraper/generate_campaign_v2.ts --query="manifattura" --provinces="LO,MI,BS" [--resume]');
+        console.error('Usage: npx ts-node src/scraper/generate_campaign_v2.ts --query="manifattura" --provinces="LO,MI,BS" [--resume] [--checkpoint-file="output/campaigns/campaign_INTERIM_CHECKPOINT.csv"]');
         process.exit(1);
     }
 
@@ -227,7 +228,9 @@ function parseCLI(): { query: string; provinceCodes: string[]; resume: boolean }
         return p.toUpperCase();
     });
 
-    return { query: queryArg.trim(), provinceCodes, resume };
+    const checkpointFile = checkpointArg?.trim() || path.join(OUTPUT_DIR, 'campaign_INTERIM_CHECKPOINT.csv');
+
+    return { query: queryArg.trim(), provinceCodes, resume, checkpointFile };
 }
 
 /**
@@ -719,13 +722,14 @@ async function scrapeMaps(
 
 // ─── MAIN ────────────────────────────────────────────────────────────────────
 async function main() {
-    const { query, provinceCodes, resume } = parseCLI();
+    const { query, provinceCodes, resume, checkpointFile } = parseCLI();
+    const interimFile = checkpointFile;
 
     Logger.info(`\n${'═'.repeat(60)}`);
     Logger.info(`🚀 CAMPAIGN GENERATOR V2 — INTELLIGENT MODE`);
     Logger.info(`🔍 Query: "${query}"`);
     Logger.info(`📍 Provinces: [${provinceCodes.map(c => `${c} (${resolveProvinceName(c)})`).join(', ')}]`);
-    if (resume) Logger.info(`🔄 Resume Mode: ACTIVE (Using output/campaigns/campaign_INTERIM_CHECKPOINT.csv if available)`);
+    if (resume) Logger.info(`🔄 Resume Mode: ACTIVE (Using ${checkpointFile} if available)`);
     Logger.info(`${'═'.repeat(60)}\n`);
 
     // PHASE 0: CATEGORY INTELLIGENCE
@@ -761,7 +765,6 @@ async function main() {
 
     // Load existing data if resuming
     if (resume) {
-        const interimFile = path.join(OUTPUT_DIR, `campaign_INTERIM_CHECKPOINT.csv`);
         if (fs.existsSync(interimFile)) {
             Logger.info(`🔄 Resume: Loading existing data from ${interimFile}...`);
             const content = fs.readFileSync(interimFile, 'utf-8');
@@ -863,7 +866,6 @@ async function main() {
             // 💾 INTERIM SAVE (Law 901: DATA PRESERVATION FIRST)
             const interimList = globalDedup.getAll();
             if (interimList.length > 0) {
-                const interimFile = path.join(OUTPUT_DIR, `campaign_INTERIM_CHECKPOINT.csv`);
                 const interimWriter = createObjectCsvWriter({
                     path: interimFile,
                     header: [
