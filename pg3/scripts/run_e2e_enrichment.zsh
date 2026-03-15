@@ -42,6 +42,7 @@ export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379/15}"
 export SQLITE_PATH="$DB_PATH"
 export OUT_DIR
 export WORKER_PROCESSES="${WORKER_PROCESSES:-1}"
+export USE_DIST_RUNTIME="${USE_DIST_RUNTIME:-false}"
 
 # Flush redis (best-effort)
 if command -v redis-cli >/dev/null 2>&1; then
@@ -58,8 +59,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Prefer built runtime when available; fallback to ts-node transpile-only.
-if [[ -f "dist/src/index.js" ]]; then
+# Prefer source runtime by default so we do not execute stale dist artifacts.
+if [[ "$USE_DIST_RUNTIME" == "true" && -f "dist/src/index.js" ]]; then
   WORKER_CMD=(node dist/src/index.js worker)
   SCHEDULER_CMD=(node dist/src/index.js scheduler "$OUT_DIR/input.csv")
 else
@@ -69,6 +70,7 @@ else
 fi
 
 echo "env.WORKER_PROCESSES=$WORKER_PROCESSES" >> "$OUT_DIR/run_meta.txt"
+echo "env.USE_DIST_RUNTIME=$USE_DIST_RUNTIME" >> "$OUT_DIR/run_meta.txt"
 
 # Start workers
 worker_count=0
