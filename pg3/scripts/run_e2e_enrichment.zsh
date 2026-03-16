@@ -50,6 +50,8 @@ export USE_DIST_RUNTIME="${USE_DIST_RUNTIME:-false}"
 export E2E_WAIT_TIMEOUT_MINUTES="${E2E_WAIT_TIMEOUT_MINUTES:-720}"
 export E2E_PROGRESS_POLL_SECONDS="${E2E_PROGRESS_POLL_SECONDS:-5}"
 export REQUIRE_ORACLE_STEALTH="${REQUIRE_ORACLE_STEALTH:-true}"
+export E2E_WORKER_READY_TIMEOUT_SECONDS="${E2E_WORKER_READY_TIMEOUT_SECONDS:-30}"
+export E2E_BROWSER_PREFLIGHT="${E2E_BROWSER_PREFLIGHT:-false}"
 
 echo "env.DISABLE_PROXY=${DISABLE_PROXY:-}" >> "$OUT_DIR/run_meta.txt"
 echo "env.DISABLE_STEALTH=${DISABLE_STEALTH:-}" >> "$OUT_DIR/run_meta.txt"
@@ -63,6 +65,231 @@ echo "env.BACKPRESSURE_MAX_CONCURRENCY=${BACKPRESSURE_MAX_CONCURRENCY:-}" >> "$O
 echo "env.BROWSER_POOL_MAX_INSTANCES=${BROWSER_POOL_MAX_INSTANCES:-}" >> "$OUT_DIR/run_meta.txt"
 echo "env.E2E_WAIT_TIMEOUT_MINUTES=${E2E_WAIT_TIMEOUT_MINUTES:-}" >> "$OUT_DIR/run_meta.txt"
 echo "env.REQUIRE_ORACLE_STEALTH=${REQUIRE_ORACLE_STEALTH:-}" >> "$OUT_DIR/run_meta.txt"
+echo "env.E2E_WORKER_READY_TIMEOUT_SECONDS=${E2E_WORKER_READY_TIMEOUT_SECONDS:-}" >> "$OUT_DIR/run_meta.txt"
+echo "env.E2E_BROWSER_PREFLIGHT=${E2E_BROWSER_PREFLIGHT:-}" >> "$OUT_DIR/run_meta.txt"
+
+typeset -a WORKER_PIDS=()
+typeset -a WORKER_LOGS=()
+typeset -gi E2E_ERROR_HANDLED=0
+
+report_failure_context() {
+  local exit_code="${1:-1}"
+  echo "ERROR: E2E launcher failed with exit code ${exit_code}" >&2
+  echo "ERROR: test_id=${TEST_ID}" >&2
+  echo "ERROR: out_dir=${OUT_DIR}" >&2
+
+  if [[ -f "$OUT_DIR/scheduler.log" ]]; then
+    echo "--- scheduler.log (tail) ---" >&2
+    /usr/bin/tail -n 80 "$OUT_DIR/scheduler.log" >&2 || true
+  fi
+
+  for worker_log in "${WORKER_LOGS[@]}"; do
+    if [[ -f "$worker_log" ]]; then
+      echo "--- ${worker_log} (tail) ---" >&2
+      /usr/bin/tail -n 80 "$worker_log" >&2 || true
+    fi
+  done
+
+  if [[ -f "$OUT_DIR/oracle_ensure.log" ]]; then
+    echo "--- oracle_ensure.log (tail) ---" >&2
+    /usr/bin/tail -n 80 "$OUT_DIR/oracle_ensure.log" >&2 || true
+  fi
+}
+
+on_error() {
+  local exit_code="$?"
+  if (( E2E_ERROR_HANDLED == 0 )); then
+    E2E_ERROR_HANDLED=1
+    report_failure_context "$exit_code"
+  fi
+  exit "$exit_code"
+}
+
+cleanup() {
+  for pid in "${WORKER_PIDS[@]}"; do
+    kill "$pid" 2>/dev/null || true
+  done
+}
+
+redis_host_port_db() {
+  python3 - "$REDIS_URL" <<'PY'
+import sys
+from urllib.parse import urlparse
+
+url = sys.argv[1]
+parsed = urlparse(url)
+host = parsed.hostname or "127.0.0.1"
+port = parsed.port or 6379
+db = (parsed.path or "/0").lstrip("/") or "0"
+print(f"{host} {port} {db}")
+PY
+}
+
+is_local_redis_host() {
+  local host="$1"
+  [[ "$host" == "127.0.0.1" || "$host" == "localhost" || "$host" == "::1" ]]
+}
+
+check_redis_ready() {
+  if command -v redis-cli >/dev/null 2>&1; then
+    redis-cli -u "$REDIS_URL" PING >/dev/null 2>&1
+    return $?
+  fi
+
+  local redis_host redis_port redis_db
+  read -r redis_host redis_port redis_db <<<"$(redis_host_port_db)"
+  python3 - "$redis_host" "$redis_port" <<'PY' >/dev/null 2>&1
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+sock = socket.socket()
+sock.settimeout(2)
+sock.connect((host, port))
+sock.close()
+PY
+}
+
+ensure_local_redis_container() {
+  local redis_host redis_port redis_db
+  read -r redis_host redis_port redis_db <<<"$(redis_host_port_db)"
+
+  if ! is_local_redis_host "$redis_host"; then
+    return 1
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    return 1
+  fi
+
+  if docker ps --format '{{.Names}}' | grep -qx 'antigravity-redis'; then
+    return 0
+  fi
+
+  if docker ps -a --format '{{.Names}}' | grep -qx 'antigravity-redis'; then
+    docker start antigravity-redis >/dev/null
+    return 0
+  fi
+
+  docker run -d \
+    --name antigravity-redis \
+    --restart unless-stopped \
+    -p "${redis_port}:6379" \
+    redis:7-alpine \
+    redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru >/dev/null
+}
+
+require_redis_ready() {
+  if check_redis_ready; then
+    return
+  fi
+
+  if ensure_local_redis_container; then
+    /bin/sleep 1
+    if check_redis_ready; then
+      return
+    fi
+  fi
+
+  echo "ERROR: Redis is unavailable at ${REDIS_URL}. Start Redis or set REDIS_URL to a reachable instance." >&2
+  exit 3
+}
+
+flush_redis() {
+  local redis_host redis_port redis_db
+  read -r redis_host redis_port redis_db <<<"$(redis_host_port_db)"
+
+  if command -v redis-cli >/dev/null 2>&1; then
+    redis-cli -u "$REDIS_URL" FLUSHDB > "$OUT_DIR/redis_flush.log" 2>&1
+    return
+  fi
+
+  if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx 'antigravity-redis'; then
+    docker exec antigravity-redis redis-cli -n "$redis_db" FLUSHDB > "$OUT_DIR/redis_flush.log" 2>&1
+    return
+  fi
+
+  echo "ERROR: Unable to flush Redis: redis-cli missing and antigravity-redis container not running." >&2
+  exit 4
+}
+
+browser_preflight() {
+  if [[ "$E2E_BROWSER_PREFLIGHT" != "true" ]]; then
+    return
+  fi
+
+  if [[ -n "${CHROME_PATH:-}" && -x "${CHROME_PATH}" ]]; then
+    echo "browser_preflight=ok (CHROME_PATH=${CHROME_PATH})" >> "$OUT_DIR/run_meta.txt"
+    return
+  fi
+
+  if [[ -n "${CHROME_BIN:-}" && -x "${CHROME_BIN}" ]]; then
+    echo "browser_preflight=ok (CHROME_BIN=${CHROME_BIN})" >> "$OUT_DIR/run_meta.txt"
+    return
+  fi
+
+  if node - <<'NODE' >/dev/null 2>&1
+const fs = require('fs');
+const { chromium } = require('playwright');
+const path = chromium.executablePath();
+if (!path || !fs.existsSync(path)) {
+  process.exit(1);
+}
+NODE
+  then
+    echo "browser_preflight=ok (playwright chromium)" >> "$OUT_DIR/run_meta.txt"
+    return
+  fi
+
+  echo "ERROR: Browser preflight failed. Set CHROME_PATH/CHROME_BIN or install Playwright Chromium." >&2
+  exit 5
+}
+
+all_workers_alive() {
+  for pid in "${WORKER_PIDS[@]}"; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+workers_ready_in_logs() {
+  local ready_count=0
+  local worker_log
+  for worker_log in "${WORKER_LOGS[@]}"; do
+    if [[ -f "$worker_log" ]] && /usr/bin/grep -q 'Worker ready' "$worker_log"; then
+      ready_count=$((ready_count + 1))
+    fi
+  done
+
+  [[ "$ready_count" -eq "${#WORKER_LOGS[@]}" ]]
+}
+
+wait_for_worker_readiness() {
+  local timeout_seconds="$1"
+  local elapsed=0
+
+  while (( elapsed < timeout_seconds )); do
+    if ! all_workers_alive; then
+      echo "ERROR: One or more worker processes exited before readiness." >&2
+      return 1
+    fi
+
+    if workers_ready_in_logs; then
+      return 0
+    fi
+
+    /bin/sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  echo "ERROR: Workers did not become ready within ${timeout_seconds}s." >&2
+  return 1
+}
+trap on_error ERR
+trap cleanup EXIT
 
 if [[ "$REQUIRE_ORACLE_STEALTH" == "true" ]]; then
   if ! /bin/bash ops/oracle/manage_oracle.sh ensure > "$OUT_DIR/oracle_ensure.log" 2>&1; then
@@ -71,20 +298,9 @@ if [[ "$REQUIRE_ORACLE_STEALTH" == "true" ]]; then
   fi
 fi
 
-# Flush redis (best-effort)
-if command -v redis-cli >/dev/null 2>&1; then
-  (redis-cli -u "$REDIS_URL" FLUSHDB) > "$OUT_DIR/redis_flush.log" 2>&1 || true
-else
-  (docker exec antigravity-redis redis-cli -n 15 FLUSHDB) > "$OUT_DIR/redis_flush.log" 2>&1 || true
-fi
-
-typeset -a WORKER_PIDS=()
-cleanup() {
-  for pid in "${WORKER_PIDS[@]}"; do
-    kill "$pid" 2>/dev/null || true
-  done
-}
-trap cleanup EXIT
+require_redis_ready
+flush_redis
+browser_preflight
 
 # Prefer source runtime by default so we do not execute stale dist artifacts.
 if [[ "$USE_DIST_RUNTIME" == "true" && -f "dist/src/index.js" ]]; then
@@ -113,21 +329,29 @@ while (( worker_count < WORKER_PROCESSES )); do
   "${WORKER_CMD[@]}" > "$worker_log" 2>&1 &
   worker_pid=$!
   WORKER_PIDS+=("$worker_pid")
+  WORKER_LOGS+=("$worker_log")
   echo "$worker_pid" > "$worker_pid_file"
 done
 
 printf '%s\n' "${WORKER_PIDS[@]}" > "$OUT_DIR/worker_pids.txt"
 
+if ! wait_for_worker_readiness "$E2E_WORKER_READY_TIMEOUT_SECONDS"; then
+  exit 6
+fi
+
 # Run scheduler
 "${SCHEDULER_CMD[@]}" > "$OUT_DIR/scheduler.log" 2>&1
 
 # Wait for all jobs to reach terminal state (SUCCESS/FAILED)
+WORKER_PIDS_CSV="$(IFS=,; echo "${WORKER_PIDS[*]}")"
+export WORKER_PIDS_CSV
 python3 - <<'PY'
 import os, sqlite3, time, sys
 
 db_path = os.environ["SQLITE_PATH"]
 timeout_minutes = int(os.environ.get("E2E_WAIT_TIMEOUT_MINUTES", "720"))
 poll_seconds = float(os.environ.get("E2E_PROGRESS_POLL_SECONDS", "5"))
+worker_pids = [int(pid) for pid in os.environ.get("WORKER_PIDS_CSV", "").split(",") if pid.strip()]
 
 expected = None
 for _ in range(180):
@@ -157,6 +381,13 @@ else:
 
 deadline = time.time() + timeout_minutes * 60 if timeout_minutes > 0 else None
 while True:
+    for pid in worker_pids:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            print(f"ERROR: worker process {pid} exited during run", file=sys.stderr)
+            sys.exit(4)
+
     con = sqlite3.connect(db_path)
     cur = con.cursor()
     cur.execute("SELECT COUNT(*) FROM enrichment_results")
