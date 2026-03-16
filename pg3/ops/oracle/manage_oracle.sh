@@ -79,11 +79,6 @@ import uvicorn  # noqa: F401
 PY
 }
 
-browser_cache_present() {
-  compgen -G "${HOME}/.cache/ms-playwright/chromium*" >/dev/null 2>&1 || \
-    compgen -G "${HOME}/.cache/ms-playwright/chromium_headless_shell*" >/dev/null 2>&1
-}
-
 needs_bootstrap() {
   local python_bin
   python_bin="$(venv_python)"
@@ -132,9 +127,7 @@ bootstrap_env() {
       "${python_bin}" -m playwright install "${ORACLE_PLAYWRIGHT_BROWSER}"
       ;;
     auto)
-      if ! browser_cache_present; then
-        "${python_bin}" -m playwright install "${ORACLE_PLAYWRIGHT_BROWSER}"
-      fi
+      "${python_bin}" -m playwright install "${ORACLE_PLAYWRIGHT_BROWSER}"
       ;;
     false)
       ;;
