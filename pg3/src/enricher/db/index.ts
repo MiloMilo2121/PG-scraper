@@ -220,6 +220,8 @@ let getCompanyByIdStmt: any;
 let getCompanyByNameStmt: any;
 let getPendingCompaniesStmt: any;
 let upsertResultStmt: any;
+let getActiveResultIdByCompanyStmt: any;
+let softDeleteOtherActiveResultsStmt: any;
 let getResultByCompanyStmt: any;
 let insertJobLogStmt: any;
 let insertFieldEvidenceStmt: any;
@@ -256,7 +258,7 @@ function initializeStatements(): void {
     getCompanyByNameStmt = db.prepare('SELECT * FROM companies WHERE company_name = ? AND city = ?');
     getPendingCompaniesStmt = db.prepare(`
         SELECT c.* FROM companies c
-        LEFT JOIN enrichment_results er ON c.id = er.company_id
+        LEFT JOIN enrichment_results er ON c.id = er.company_id AND er.deleted_at IS NULL
         WHERE er.id IS NULL AND c.deleted_at IS NULL
         LIMIT ?
     `);
@@ -283,7 +285,27 @@ function initializeStatements(): void {
             updated_at = CURRENT_TIMESTAMP
     `);
 
-    getResultByCompanyStmt = db.prepare('SELECT * FROM enrichment_results WHERE company_id = ? AND deleted_at IS NULL');
+    getActiveResultIdByCompanyStmt = db.prepare(`
+        SELECT id
+        FROM enrichment_results
+        WHERE company_id = ? AND deleted_at IS NULL
+        ORDER BY datetime(COALESCE(updated_at, enriched_at)) DESC, datetime(COALESCE(enriched_at, updated_at)) DESC, rowid DESC
+        LIMIT 1
+    `);
+
+    softDeleteOtherActiveResultsStmt = db.prepare(`
+        UPDATE enrichment_results
+        SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE company_id = ? AND id <> ? AND deleted_at IS NULL
+    `);
+
+    getResultByCompanyStmt = db.prepare(`
+        SELECT *
+        FROM enrichment_results
+        WHERE company_id = ? AND deleted_at IS NULL
+        ORDER BY datetime(COALESCE(updated_at, enriched_at)) DESC, datetime(COALESCE(enriched_at, updated_at)) DESC, rowid DESC
+        LIMIT 1
+    `);
 
     insertJobLogStmt = db.prepare(`
         INSERT INTO job_log (company_id, status, error_message, error_category, reason_code, run_id, duration_ms, attempt)
@@ -358,8 +380,15 @@ export function getPendingCompanies(limit: number = 100): Company[] {
 
 export function insertEnrichmentResult(result: EnrichmentResult): void {
     ensureReady();
+    const existing = getActiveResultIdByCompanyStmt.get(result.company_id) as { id: string } | undefined;
+    const requestedId = typeof result.id === 'string' ? result.id.trim() : '';
+    const targetResultId = existing?.id || requestedId;
+    if (!targetResultId) {
+        throw new Error(`insertEnrichmentResult requires a non-empty id for company ${result.company_id}`);
+    }
+
     upsertResultStmt.run(
-        result.id,
+        targetResultId,
         result.company_id,
         result.vat,
         result.revenue,
@@ -375,15 +404,18 @@ export function insertEnrichmentResult(result: EnrichmentResult): void {
         result.reason_code
     );
 
+    // Keep exactly one active current row per company.
+    softDeleteOtherActiveResultsStmt.run(result.company_id, targetResultId);
+
     insertResultVersionStmt.run(
-        result.id,
+        targetResultId,
         result.company_id,
         JSON.stringify(result),
         result.data_source || null,
         result.reason_code || null
     );
 
-    recordFieldEvidence('enrichment', result.id, result.company_id, result as unknown as Record<string, unknown>, result.data_source);
+    recordFieldEvidence('enrichment', targetResultId, result.company_id, result as unknown as Record<string, unknown>, result.data_source);
 }
 
 export function getEnrichmentResult(companyId: string): EnrichmentResult | undefined {
@@ -408,12 +440,12 @@ export function logJobResult(
 export function getStats(): { total: number; enriched: number; pending: number; failed: number } {
     ensureReady();
     const total = (db.prepare('SELECT COUNT(*) as count FROM companies WHERE deleted_at IS NULL').get() as { count: number }).count;
-    const enriched = (db.prepare('SELECT COUNT(*) as count FROM enrichment_results WHERE deleted_at IS NULL').get() as { count: number }).count;
+    const enriched = (db.prepare('SELECT COUNT(DISTINCT company_id) as count FROM enrichment_results WHERE deleted_at IS NULL').get() as { count: number }).count;
     const failed = (db.prepare('SELECT COUNT(DISTINCT company_id) as count FROM job_log WHERE status = ?').get('FAILED') as { count: number }).count;
     return {
         total,
         enriched,
-        pending: total - enriched,
+        pending: Math.max(total - enriched, 0),
         failed,
     };
 }
@@ -425,9 +457,15 @@ export function exportEnrichedToCSV(outputPath: string): void {
             c.company_name, c.city, c.province, c.address, c.phone, c.category,
             er.vat, er.revenue, er.employees, er.pec, er.lead_score, er.data_source
         FROM companies c
-        JOIN enrichment_results er ON c.id = er.company_id
-        WHERE c.deleted_at IS NULL AND er.deleted_at IS NULL
-        ORDER BY er.lead_score DESC
+        JOIN enrichment_results er ON er.id = (
+            SELECT er2.id
+            FROM enrichment_results er2
+            WHERE er2.company_id = c.id AND er2.deleted_at IS NULL
+            ORDER BY datetime(COALESCE(er2.updated_at, er2.enriched_at)) DESC, datetime(COALESCE(er2.enriched_at, er2.updated_at)) DESC, er2.rowid DESC
+            LIMIT 1
+        )
+        WHERE c.deleted_at IS NULL
+        ORDER BY COALESCE(er.lead_score, 0) DESC, c.company_name COLLATE NOCASE
     `);
 
     const rows = stmt.all();

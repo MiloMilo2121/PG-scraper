@@ -1,4 +1,3 @@
-import * as crypto from 'crypto';
 import { Worker, Job } from 'bullmq';
 import { config } from './config';
 import {
@@ -15,6 +14,10 @@ import { LeadScorer } from './utils/lead_scorer';
 import { Logger } from './utils/logger';
 import { MetricsServer } from './observability/metrics_server';
 import { startHealthServer } from './health';
+
+function deterministicResultId(companyId: string): string {
+    return `enrichment:${companyId}`;
+}
 
 function jobToPipelineInput(job: EnrichmentJobData): Record<string, string> {
     const input: Record<string, string> = {
@@ -82,7 +85,7 @@ function persistSuccess(job: EnrichmentJobData, pipelineResult: any, durationMs:
         } as any);
 
         insertEnrichmentResult({
-            id: crypto.randomUUID(),
+            id: deterministicResultId(job.company_id),
             company_id: job.company_id,
             vat: job.vat_code,
             revenue: result.revenue,
