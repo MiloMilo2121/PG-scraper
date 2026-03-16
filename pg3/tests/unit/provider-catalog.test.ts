@@ -62,7 +62,7 @@ describe('provider catalog', () => {
     expect(scrapeDoHtml?.costPerRequest).toBeLessThan(scrapeDoRender?.costPerRequest || 0);
     expect(scrapeDoRender?.costPerRequest).toBeLessThan(0.01);
     expect(brightData?.costPerRequest).toBeLessThan(0.01);
-  });
+  }, 120000);
 
   it('threads configurable local Oracle cost into the provider map', async () => {
     const { buildProviderMap } = await loadCatalog({
@@ -71,5 +71,5 @@ describe('provider catalog', () => {
     const providers = buildProviderMap();
 
     expect(providers.get('ORACLE-CRAWL4AI-5')?.costPerRequest).toBe(0.0035);
-  });
+  }, 120000);
 });

@@ -1,5 +1,3 @@
-import { z } from 'zod';
-
 export interface NormalizedInput {
     company_name: string;
     company_name_variants: string[];
@@ -9,6 +7,8 @@ export interface NormalizedInput {
     phone?: string;
     email?: string;
     email_domain?: string;
+    website?: string;
+    vat_code?: string;
     quality_score: number;
 }
 
@@ -36,27 +36,78 @@ export class InputNormalizer {
             return cleaned;
         };
 
+        const normalizeProvince = (value: string | undefined): string | undefined => {
+            const cleaned = cleanString(value).toUpperCase();
+            if (!cleaned) return undefined;
+
+            if (PROVINCE_CODES.has(cleaned)) {
+                return cleaned;
+            }
+
+            const inlineMatch = cleaned.match(/\b([A-Z]{2})\b/);
+            if (inlineMatch && PROVINCE_CODES.has(inlineMatch[1])) {
+                return inlineMatch[1];
+            }
+
+            return undefined;
+        };
+
+        const normalizeVat = (value: string | undefined): string | undefined => {
+            const digitsOnly = cleanString(value).replace(/^IT/i, '').replace(/\D/g, '');
+            return digitsOnly.length === 11 ? digitsOnly : undefined;
+        };
+
+        const normalizeWebsite = (value: string | undefined): string | undefined => {
+            const cleaned = cleanString(value);
+            if (!cleaned) return undefined;
+
+            const withProtocol = /^[a-z]+:\/\//i.test(cleaned)
+                ? cleaned
+                : `https://${cleaned.replace(/^\/+/, '')}`;
+
+            try {
+                const parsed = new URL(withProtocol);
+                if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                    return undefined;
+                }
+
+                parsed.hash = '';
+                parsed.search = '';
+                parsed.username = '';
+                parsed.password = '';
+                parsed.hostname = parsed.hostname.toLowerCase();
+                parsed.pathname = parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/+$/, '');
+
+                const port = parsed.port ? `:${parsed.port}` : '';
+                return `${parsed.protocol}//${parsed.hostname}${port}${parsed.pathname}`;
+            } catch {
+                return undefined;
+            }
+        };
+
         let name = cleanString(raw.company_name || raw.name || '');
         let city = cleanString(raw.city || raw.locality || '');
         let address = cleanString(raw.address || raw.street || '');
         let phone = cleanString(raw.phone || '');
         let email = cleanString(raw.email || '');
+        const website = normalizeWebsite(raw.website || raw.sito || raw.url || '');
+        const vatCode = normalizeVat(raw.vat_code || raw.vat || raw.piva || raw.vat_number || '');
 
-        let provincia: string | undefined;
+        let provincia: string | undefined = normalizeProvince(raw.province || raw.provincia);
 
         // 3. Province Extraction
         // Looking for City (BS), City - BS, City/BS
         const provMatch = city.match(/(.+?)\s*[\(\-\/]\s*([A-Za-z]{2})\s*[\)]?$/);
         if (provMatch && PROVINCE_CODES.has(provMatch[2].toUpperCase())) {
             city = provMatch[1].trim();
-            provincia = provMatch[2].toUpperCase();
-        } else if (!provMatch) {
-            // Also check company_name for (BS) anomalies (like Caino (BS))
-            const nameProvMatch = name.match(/(.+?)\s*[\(\-\/]\s*([A-Za-z]{2})\s*[\)]?$/);
-            if (nameProvMatch && PROVINCE_CODES.has(nameProvMatch[2].toUpperCase())) {
-                name = nameProvMatch[1].trim();
-                provincia = nameProvMatch[2].toUpperCase();
-            }
+            provincia = provincia || provMatch[2].toUpperCase();
+        }
+
+        // Also check company_name for (BS) anomalies (like Caino (BS))
+        const nameProvMatch = name.match(/(.+?)\s*[\(\-\/]\s*([A-Za-z]{2})\s*[\)]?$/);
+        if (nameProvMatch && PROVINCE_CODES.has(nameProvMatch[2].toUpperCase())) {
+            name = nameProvMatch[1].trim();
+            provincia = provincia || nameProvMatch[2].toUpperCase();
         }
 
         // 4. Legal Suffix Normalization
@@ -110,8 +161,13 @@ export class InputNormalizer {
         let score = 0;
         if (name && city) score += 0.5;
         if (emailDomain) score += 0.2;
-        if (phone || address) score += 0.15;
-        if (name && city && emailDomain && (phone || address)) score = 1.0;
+        if (vatCode) score += 0.2;
+        if (website) score += 0.15;
+        if (phone || address) score += 0.1;
+        if (provincia) score += 0.05;
+        if (name && city && (emailDomain || vatCode || website) && (phone || address || provincia)) {
+            score = Math.max(score, 0.85);
+        }
 
         // Minimum cap
         if (score === 0.0 && name) score = 0.1;
@@ -125,6 +181,8 @@ export class InputNormalizer {
             phone: phone || undefined,
             email: email || undefined,
             email_domain: emailDomain,
+            website,
+            vat_code: vatCode,
             quality_score: Math.min(1.0, score)
         };
     }

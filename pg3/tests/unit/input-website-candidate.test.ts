@@ -1,0 +1,19 @@
+import { describe, expect, it } from 'vitest';
+import { InputWebsiteCandidate } from '../../src/foundation/InputWebsiteCandidate';
+
+describe('InputWebsiteCandidate', () => {
+  it('rejects messaging and directory URLs as official-site candidates', () => {
+    expect(InputWebsiteCandidate.assess('https://wa.me/393331234567').reasonCode).toBe('INPUT_WEBSITE_MESSAGING_OR_REDIRECT');
+    expect(InputWebsiteCandidate.assess('https://aziende.virgilio.it/acme').reasonCode).toBe('INPUT_WEBSITE_DIRECTORY_OR_SOCIAL');
+  });
+
+  it('builds canonical candidates from a valid company website input', () => {
+    const assessment = InputWebsiteCandidate.assess('http://acme.it/contatti?utm_source=test');
+
+    expect(assessment.classification).toBe('VALID');
+    expect(assessment.candidates).toContain('http://acme.it/contatti');
+    expect(assessment.candidates).toContain('http://acme.it');
+    expect(assessment.candidates).toContain('https://acme.it/contatti');
+    expect(assessment.candidates).toContain('https://www.acme.it');
+  });
+});

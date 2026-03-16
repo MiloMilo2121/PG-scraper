@@ -51,6 +51,7 @@ function mapJobResult(job: EnrichmentJobData, pipelineResult: any): JobResult {
     const revenue = pipelineResult.financial?.fatturato_current || pipelineResult.financial?.revenue;
     const revenueYear = pipelineResult.financial?.year;
     const employees = pipelineResult.employees || pipelineResult.financial?.employees;
+    const reasonCode = pipelineResult.reason_code || pipelineResult.status;
 
     return {
         success: pipelineResult.status === 'FOUND_COMPLETE',
@@ -60,9 +61,9 @@ function mapJobResult(job: EnrichmentJobData, pipelineResult: any): JobResult {
         employees: employees ? String(employees) : undefined,
         website_found: websiteUrl ? 'true' : 'false',
         website_url: websiteUrl,
-        error: pipelineResult.status === 'FOUND_COMPLETE' ? undefined : pipelineResult.status,
+        error: pipelineResult.status === 'FOUND_COMPLETE' ? undefined : reasonCode,
         error_category: pipelineResult.status === 'FOUND_COMPLETE' ? undefined : 'NOT_FOUND',
-        reason_code: pipelineResult.status,
+        reason_code: reasonCode,
         discovery_method: pipelineResult.website?.discovery_layer,
         discovery_confidence: pipelineResult.website?.confidence,
     };
@@ -94,7 +95,7 @@ function persistSuccess(job: EnrichmentJobData, pipelineResult: any, durationMs:
             data_source: 'omega_worker',
             discovery_method: pipelineResult.website.discovery_layer,
             discovery_confidence: pipelineResult.website.confidence,
-            reason_code: pipelineResult.status,
+            reason_code: pipelineResult.reason_code || pipelineResult.status,
         });
     }
 
@@ -105,7 +106,7 @@ function persistSuccess(job: EnrichmentJobData, pipelineResult: any, durationMs:
         attempt,
         undefined,
         undefined,
-        pipelineResult.status,
+        pipelineResult.reason_code || pipelineResult.status,
         job.run_id
     );
 
