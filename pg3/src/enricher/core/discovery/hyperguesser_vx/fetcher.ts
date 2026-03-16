@@ -1,4 +1,4 @@
-import { request, Agent } from 'undici';
+import { fetch, Agent } from 'undici';
 import * as cheerio from 'cheerio';
 import { Logger } from '../../../utils/logger';
 import { HoneyPotDetector } from '../../security/honeypot_detector';
@@ -44,13 +44,11 @@ export class HyperGuesserVXFetcher {
         const url = `https://${domain}`;
         try {
             // Highly optimized HTTP request disguised as a regular browser
-            const { statusCode, body } = await request(url, {
+            const response = await fetch(url, {
                 method: 'GET',
                 dispatcher: fetcherAgent,
-                headersTimeout: 5000,
-                bodyTimeout: 5000,
-                // @ts-ignore - undici v7 types are missing maxRedirections on request() options
-                maxRedirections: 5,
+                redirect: 'follow',
+                signal: AbortSignal.timeout(5000),
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -58,8 +56,8 @@ export class HyperGuesserVXFetcher {
                 }
             });
 
-              const html = await body.text();
-              if (typeof html !== 'string' || statusCode >= 500) {
+              const html = await response.text();
+              if (typeof html !== 'string' || response.status >= 500) {
                   return { domain, url, title: '', text: '', error: 'INVALID_RESPONSE' };
               }
 
@@ -89,7 +87,7 @@ export class HyperGuesserVXFetcher {
 
             return {
                 domain,
-                url: url, // Undici doesn't expose finalURL easily on redirect directly in response data object, so fall back
+                url: response.url || url,
                 title,
                 text: truncatedText
             };

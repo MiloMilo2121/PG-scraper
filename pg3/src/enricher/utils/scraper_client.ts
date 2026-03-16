@@ -1,4 +1,4 @@
-import { request, Agent, ProxyAgent } from 'undici';
+import { fetch, Agent, ProxyAgent } from 'undici';
 import { config } from '../config';
 import { Logger } from './logger';
 import { BlockClassifier, BlockType } from '../core/security/block_classifier';
@@ -110,23 +110,20 @@ export class ScraperClient {
 
   private static async directGet(url: string, options: ScraperClientOptions): Promise<ScraperClientResponse> {
     const timeoutMs = options.timeoutMs ?? 15000;
-
-    const { statusCode, headers, body } = await request(url, {
+    const response = await fetch(url, {
       method: 'GET',
       headers: { ...this.defaultHeaders(), ...(options.headers || {}) },
       dispatcher: globalDispatcher,
-      // @ts-ignore
-      maxRedirections: 5,
-      bodyTimeout: timeoutMs,
-      headersTimeout: timeoutMs,
+      redirect: 'follow',
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
-    const dataObj = await body.text();
+    const dataObj = await response.text();
     return {
       via: 'direct',
-      status: statusCode,
-      finalUrl: url,
-      headers: headers as any,
+      status: response.status,
+      finalUrl: response.url || url,
+      headers: Object.fromEntries(response.headers.entries()),
       data: dataObj,
     };
   }
@@ -146,22 +143,20 @@ export class ScraperClient {
       keepAliveMaxTimeout: 15000,
     });
 
-    const { statusCode, headers, body } = await request(targetUrl, {
+    const response = await fetch(targetUrl, {
       method: 'GET',
       headers: { ...this.defaultHeaders(), ...(options.headers || {}) },
       dispatcher: proxyAgent,
-      // @ts-ignore
-      maxRedirections: 5,
-      bodyTimeout: timeoutMs,
-      headersTimeout: timeoutMs,
+      redirect: 'follow',
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
-    const dataObj = await body.text();
+    const dataObj = await response.text();
     return {
       via: 'brightdata',
-      status: statusCode,
-      finalUrl: targetUrl,
-      headers: headers as any,
+      status: response.status,
+      finalUrl: response.url || targetUrl,
+      headers: Object.fromEntries(response.headers.entries()),
       data: dataObj,
     };
   }
@@ -187,23 +182,21 @@ export class ScraperClient {
 
     const scrapeDoUrl = `${config.scrapeDo.apiUrl}?${urlParams.toString()}`;
 
-    const { statusCode, headers, body } = await request(scrapeDoUrl, {
+    const response = await fetch(scrapeDoUrl, {
       method: 'GET',
       headers: { ...this.defaultHeaders(), ...(options.headers || {}) },
       dispatcher: globalDispatcher,
-      // @ts-ignore
-      maxRedirections: 0,
-      bodyTimeout: timeoutMs,
-      headersTimeout: timeoutMs,
+      redirect: 'follow',
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
-    const dataObj = await body.text();
+    const dataObj = await response.text();
 
     return {
       via: 'scrape_do',
-      status: statusCode,
+      status: response.status,
       finalUrl: targetUrl,
-      headers: headers as any,
+      headers: Object.fromEntries(response.headers.entries()),
       data: dataObj,
     };
   }

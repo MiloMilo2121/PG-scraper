@@ -9,7 +9,7 @@
  *   3. Parse the found page for revenue/employees data
  */
 
-import { request } from 'undici';
+import { fetch } from 'undici';
 import * as cheerio from 'cheerio';
 
 import { CompanyInput } from '../../types';
@@ -132,11 +132,10 @@ function buildCandidateUrls(companyName: string, vat: string): string[] {
 }
 
 async function fetchWithTimeout(url: string, timeoutMs: number = 12000): Promise<{ status: number; data: string }> {
-  const resp = await request(url, {
+  const resp = await fetch(url, {
     method: 'GET',
-    bodyTimeout: timeoutMs,
-    headersTimeout: timeoutMs,
-    // @ts-ignore - undici runtime supports maxRedirections but types are incomplete\n    maxRedirections: 5,
+    redirect: 'follow',
+    signal: AbortSignal.timeout(timeoutMs),
     headers: {
       'User-Agent':
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -145,10 +144,10 @@ async function fetchWithTimeout(url: string, timeoutMs: number = 12000): Promise
     },
   });
 
-  const text = await resp.body.text();
+  const text = await resp.text();
 
   return {
-    status: resp.statusCode,
+    status: resp.status,
     data: text,
   };
 }

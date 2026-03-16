@@ -5,7 +5,7 @@
 
 import * as dns from 'dns';
 import * as https from 'https';
-import { request } from 'undici';
+import { fetch } from 'undici';
 import { Logger } from './logger';
 
 export interface DomainHealth {
@@ -89,18 +89,17 @@ export class DomainValidator {
         const url = domain.startsWith('http') ? domain : `https://${hostname}`;
 
         try {
-            const resp = await request(url, {
+            const resp = await fetch(url, {
                 method: 'GET',
-                bodyTimeout: timeoutMs,
-                headersTimeout: timeoutMs,
-                // @ts-ignore - undici runtime supports maxRedirections but types are incomplete\n                maxRedirections: 3,
+                redirect: 'follow',
+                signal: AbortSignal.timeout(timeoutMs),
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                     'Accept': 'text/html',
                 },
             });
 
-            const body = (await resp.body.text()).slice(0, 5000).toLowerCase();
+            const body = (await resp.text()).slice(0, 5000).toLowerCase();
 
             // Empty or very short body = likely parked
             if (body.length < 100) return false;
