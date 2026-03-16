@@ -13,6 +13,7 @@ import { EnrichmentPostProcessor } from './EnrichmentPostProcessor';
 import { PecHunter } from './PecHunter';
 import { InputWebsiteCandidate } from './InputWebsiteCandidate';
 import { FatturatoItaliaHarvester } from '../enricher/core/directories/fatturato_italia';
+import { PagineGialleHarvester } from '../enricher/core/directories/paginegialle';
 import { HyperGuesserVX } from '../enricher/core/discovery/hyperguesser_vx/hyper_guesser_vx';
 import { RdapValidator } from '../enricher/core/discovery/rdap_validator';
 import crypto from 'crypto';
@@ -86,6 +87,7 @@ export class MasterPipeline {
             let discoveredUrl: string | null = null;
             let discoveryLayer = '';
             let inputWebsiteReasonCode: string | undefined;
+            let phoneEntityReasonCode: string | undefined;
 
             // THE BEST LOSER TRACKER
             let bestLoser: { url: string; layer: string; score: number } | null = null;
@@ -255,6 +257,50 @@ export class MasterPipeline {
                             ? 'INPUT_WEBSITE_TIMEOUT'
                             : 'INPUT_WEBSITE_NOT_VERIFIED';
                     }
+                }
+            }
+
+            // STAGE 1.6: Exact Phone/Entity Candidate via PagineGialle
+            if (!discoveredUrl && (input.phone || rawInput['pg_url'])) {
+                layersAttempted.push('STAGE_1_6_PHONE_ENTITY');
+
+                const harvest = await PagineGialleHarvester.harvestByPhone({
+                    ...input,
+                    pg_url: rawInput['pg_url'],
+                } as any);
+
+                if (harvest?.vat && !piva) {
+                    const harvestedVat = harvest.vat.replace(/\D/g, '');
+                    if (harvestedVat.length === 11) {
+                        piva = harvestedVat;
+                    }
+                }
+
+                if (harvest?.officialWebsite) {
+                    const assessedWebsite = InputWebsiteCandidate.assess(harvest.officialWebsite);
+
+                    if (assessedWebsite.classification !== 'VALID') {
+                        phoneEntityReasonCode =
+                            MasterPipeline.toPhoneEntityReasonCode(assessedWebsite.reasonCode) ||
+                            'PHONE_ENTITY_OFFICIAL_WEBSITE_REJECTED';
+                    } else {
+                        let sawTimeout = false;
+                        for (const candidateUrl of assessedWebsite.candidates) {
+                            const outcome = await checkUrlWithTimeout(candidateUrl, 'PG_PHONE', { timeoutMs: 15000 });
+                            if (outcome.matched) {
+                                break;
+                            }
+                            sawTimeout = sawTimeout || outcome.timedOut;
+                        }
+
+                        if (!discoveredUrl) {
+                            phoneEntityReasonCode = sawTimeout
+                                ? 'PHONE_ENTITY_TIMEOUT'
+                                : 'PHONE_ENTITY_NOT_VERIFIED';
+                        }
+                    }
+                } else if (harvest?.pgUrl) {
+                    phoneEntityReasonCode = 'PHONE_ENTITY_DIRECTORY_ONLY';
                 }
             }
 
@@ -467,7 +513,9 @@ export class MasterPipeline {
             const status = discoveredUrl ? 'FOUND_COMPLETE' : 'NOT_FOUND';
             const reasonCode = discoveredUrl
                 ? 'FOUND_COMPLETE'
-                : inputWebsiteReasonCode || (isBleeding ? 'DISCOVERY_EXHAUSTED_BLEEDING_MODE' : 'DISCOVERY_EXHAUSTED');
+                : phoneEntityReasonCode
+                    || inputWebsiteReasonCode
+                    || (isBleeding ? 'DISCOVERY_EXHAUSTED_BLEEDING_MODE' : 'DISCOVERY_EXHAUSTED');
 
             return this.buildResult(input, status, discoveredUrl, discoveryLayer, financial, decisionMaker, employees, pec, email, layersAttempted, start, reasonCode);
         }, 1); // Priority 1 (Core Pipeline)
@@ -516,5 +564,17 @@ export class MasterPipeline {
             reason_code: reasonCode,
             status
         };
+    }
+
+    private static toPhoneEntityReasonCode(reasonCode?: string): string | undefined {
+        if (!reasonCode) {
+            return undefined;
+        }
+
+        if (reasonCode.startsWith('INPUT_WEBSITE_')) {
+            return reasonCode.replace(/^INPUT_WEBSITE_/, 'PHONE_ENTITY_');
+        }
+
+        return `PHONE_ENTITY_${reasonCode}`;
     }
 }
