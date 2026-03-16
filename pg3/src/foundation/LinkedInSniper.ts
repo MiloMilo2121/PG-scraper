@@ -12,6 +12,7 @@ export interface DecisionMaker {
 export class LinkedInSniper {
     private dedup: SerpDeduplicator;
     private valve: BackpressureValve;
+    private static readonly OPTIONAL_SERP_MAX_TIER = 2;
 
     constructor(dedup: SerpDeduplicator, valve: BackpressureValve) {
         this.dedup = dedup;
@@ -19,8 +20,10 @@ export class LinkedInSniper {
     }
 
     public async snipe(companyId: string, input: NormalizedInput): Promise<DecisionMaker | null> {
-        // Enqueue at Priority 2 so core discovery (P0/1) finishes first
-        const res = await this.dedup.search(companyId, input, 'linkedin');
+        // Keep optional LinkedIn lookup off the fragile Tor/Oracle tail.
+        const res = await this.dedup.search(companyId, input, 'linkedin', {
+            maxTier: LinkedInSniper.OPTIONAL_SERP_MAX_TIER,
+        });
         if (res.results.length === 0) return null;
 
         const best = res.results[0];

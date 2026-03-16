@@ -284,8 +284,7 @@ export class FatturatoItaliaHarvester {
 
   /**
    * Strategy 2: Search via DDG for the company on fatturatoitalia.it.
-   * Uses the existing DDGSearchProvider if available, otherwise falls back
-   * to a simple DuckDuckGo HTML search.
+   * Prefer Jina when configured, then fall back to DDG.
    */
   private static async searchForCompany(companyName: string, vat?: string): Promise<FatturatoItaliaResult | null> {
     const query = vat
@@ -295,7 +294,28 @@ export class FatturatoItaliaHarvester {
     Logger.info(`[FatturatoItalia] 🔍 Searching: ${query}`);
 
     try {
-      // Try using DDGSearchProvider (Tor-enabled)
+      const { JinaSearchProvider } = await import('../discovery/search_provider');
+      const jina = new JinaSearchProvider();
+      const results = await jina.search(query);
+
+      if (results && results.length > 0) {
+        const fiResult = results.find((r: { url: string }) =>
+          r.url.includes('fatturatoitalia.it/') &&
+          !r.url.endsWith('fatturatoitalia.it/') &&
+          !r.url.includes('/comune/') &&
+          !r.url.includes('/come-funziona'),
+        );
+
+        if (fiResult) {
+          Logger.info(`[FatturatoItalia] 🔗 Jina search found: ${fiResult.url}`);
+          return await this.fetchAndParse(fiResult.url);
+        }
+      }
+    } catch (e) {
+      Logger.warn(`[FatturatoItalia] Jina search failed, trying DDG fallback`, { error: e as Error });
+    }
+
+    try {
       const { DDGSearchProvider } = await import('../discovery/search_provider');
       const ddg = new DDGSearchProvider();
       const results = await ddg.search(query);
@@ -309,36 +329,12 @@ export class FatturatoItaliaHarvester {
         );
 
         if (fiResult) {
-          Logger.info(`[FatturatoItalia] 🔗 Search found: ${fiResult.url}`);
+          Logger.info(`[FatturatoItalia] 🔗 DDG search found: ${fiResult.url}`);
           return await this.fetchAndParse(fiResult.url);
         }
       }
     } catch (e) {
-      Logger.warn(`[FatturatoItalia] DDG search failed, trying Jina fallback`, { error: e as Error });
-    }
-
-    // Jina Search fallback
-    try {
-      const { ScraperClient } = await import('../../utils/scraper_client');
-      if (ScraperClient.isJinaEnabled()) {
-        const jinaResp = await ScraperClient.fetchJinaSearch(query);
-        const parsed = ScraperClient.parseJinaSearchResults(jinaResp.data);
-
-        const fiResult = parsed.find(
-          (r) =>
-            r.url.includes('fatturatoitalia.it/') &&
-            !r.url.endsWith('fatturatoitalia.it/') &&
-            !r.url.includes('/comune/') &&
-            !r.url.includes('/come-funziona'),
-        );
-
-        if (fiResult) {
-          Logger.info(`[FatturatoItalia] 🔗 Jina search found: ${fiResult.url}`);
-          return await this.fetchAndParse(fiResult.url);
-        }
-      }
-    } catch (e) {
-      Logger.warn(`[FatturatoItalia] Jina search also failed`, { error: e as Error });
+      Logger.warn(`[FatturatoItalia] DDG search also failed`, { error: e as Error });
     }
 
     Logger.info(`[FatturatoItalia] ❌ No search results for "${companyName}"`);

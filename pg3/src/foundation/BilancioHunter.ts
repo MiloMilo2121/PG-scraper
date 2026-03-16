@@ -11,6 +11,7 @@ export interface FinancialData {
 
 export class BilancioHunter {
     private dedup: SerpDeduplicator;
+    private static readonly OPTIONAL_SERP_MAX_TIER = 2;
 
     constructor(dedup: SerpDeduplicator) {
         this.dedup = dedup;
@@ -18,7 +19,9 @@ export class BilancioHunter {
 
     public async hunt(companyId: string, input: NormalizedInput): Promise<FinancialData | null> {
         // [Stage 1] SERP Dork for PDFs
-        const searchRes = await this.dedup.search(companyId, input, 'bilancio');
+        const searchRes = await this.dedup.search(companyId, input, 'bilancio', {
+            maxTier: BilancioHunter.OPTIONAL_SERP_MAX_TIER,
+        });
 
         if (searchRes.results.length === 0) {
             return null;
