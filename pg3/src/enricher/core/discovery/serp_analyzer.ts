@@ -6,6 +6,8 @@ import { Logger } from '../../utils/logger';
 export interface SerpResult {
     url: string;
     title: string;
+    snippet?: string;
+    source?: string;
 }
 
 export class GoogleSerpAnalyzer {

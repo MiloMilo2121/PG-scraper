@@ -172,6 +172,7 @@ export class SerperSearchProvider implements SearchProvider {
         return organic.map((result: any) => ({
             title: result.title,
             url: result.link,
+            snippet: result.snippet || '',
             source: 'serper_google'
         } as any));
     }

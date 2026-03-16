@@ -1,5 +1,7 @@
 import { SerpDeduplicator } from './SerpDeduplicator';
 import { NormalizedInput } from './InputNormalizer';
+import { QuerySanitizer } from './QuerySanitizer';
+import { SerperSearchProvider } from '../enricher/core/discovery/search_provider';
 
 export interface FinancialData {
     fatturato_current?: number;
@@ -11,23 +13,37 @@ export interface FinancialData {
 
 export class BilancioHunter {
     private dedup: SerpDeduplicator;
-    private static readonly OPTIONAL_SERP_MAX_TIER = 2;
+    private sanitizer = new QuerySanitizer();
 
     constructor(dedup: SerpDeduplicator) {
         this.dedup = dedup;
     }
 
     public async hunt(companyId: string, input: NormalizedInput): Promise<FinancialData | null> {
-        // [Stage 1] SERP Dork for PDFs
-        const searchRes = await this.dedup.search(companyId, input, 'bilancio', {
-            maxTier: BilancioHunter.OPTIONAL_SERP_MAX_TIER,
+        const query = this.sanitizer.buildCompanyQuery(input, {
+            target: 'bilancio',
+            fileType: 'filetype:pdf',
         });
-
-        if (searchRes.results.length === 0) {
+        if (!query) {
             return null;
         }
 
-        const bestResult = searchRes.results[0];
+        let results: Array<{ url: string; title: string; snippet?: string }> = [];
+        try {
+            results = await new SerperSearchProvider().search(query);
+        } catch {
+            return null;
+        }
+
+        const bestResult = results.find((result) => result.url?.toLowerCase().includes('.pdf'))
+            || results.find((result) => {
+                const haystack = `${result.title || ''} ${result.snippet || ''}`.toLowerCase();
+                return haystack.includes('bilancio') || haystack.includes('fatturato') || haystack.includes('stato patrimoniale');
+            })
+            || results[0];
+        if (!bestResult) {
+            return null;
+        }
 
         // We only extract the URL footprint here. Actually downloading and parsing the PDF
         // via Vision API/LLM would happen in the MasterPipeline during Enrichment Phase if the
@@ -37,7 +53,7 @@ export class BilancioHunter {
         let fatturato: number | undefined;
         let anno: number | undefined;
 
-        const snippet = bestResult.snippet.toLowerCase();
+        const snippet = (bestResult.snippet || '').toLowerCase();
 
         // Very basic heuristic for snippets like "Fatturato 2023: € 1.500.000"
         const fattMatch = snippet.match(/fatturato.*?(?:[€]\s*|eur\s*)?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)/);

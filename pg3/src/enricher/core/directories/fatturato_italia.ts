@@ -293,6 +293,28 @@ export class FatturatoItaliaHarvester {
     Logger.info(`[FatturatoItalia] 🔍 Searching: ${query}`);
 
     try {
+      const { SerperSearchProvider } = await import('../discovery/search_provider');
+      const serper = new SerperSearchProvider();
+      const results = await serper.search(query);
+
+      if (results && results.length > 0) {
+        const fiResult = results.find((r: { url: string }) =>
+          r.url.includes('fatturatoitalia.it/') &&
+          !r.url.endsWith('fatturatoitalia.it/') &&
+          !r.url.includes('/comune/') &&
+          !r.url.includes('/come-funziona'),
+        );
+
+        if (fiResult) {
+          Logger.info(`[FatturatoItalia] 🔗 Serper search found: ${fiResult.url}`);
+          return await this.fetchAndParse(fiResult.url);
+        }
+      }
+    } catch (e) {
+      Logger.warn(`[FatturatoItalia] Serper search failed, trying Jina fallback`, { error: e as Error });
+    }
+
+    try {
       const { JinaSearchProvider } = await import('../discovery/search_provider');
       const jina = new JinaSearchProvider();
       const results = await jina.search(query);
@@ -311,29 +333,7 @@ export class FatturatoItaliaHarvester {
         }
       }
     } catch (e) {
-      Logger.warn(`[FatturatoItalia] Jina search failed, trying DDG fallback`, { error: e as Error });
-    }
-
-    try {
-      const { DDGSearchProvider } = await import('../discovery/search_provider');
-      const ddg = new DDGSearchProvider();
-      const results = await ddg.search(query);
-
-      if (results && results.length > 0) {
-        const fiResult = results.find((r: { url: string }) =>
-          r.url.includes('fatturatoitalia.it/') &&
-          !r.url.endsWith('fatturatoitalia.it/') &&
-          !r.url.includes('/comune/') &&
-          !r.url.includes('/come-funziona'),
-        );
-
-        if (fiResult) {
-          Logger.info(`[FatturatoItalia] 🔗 DDG search found: ${fiResult.url}`);
-          return await this.fetchAndParse(fiResult.url);
-        }
-      }
-    } catch (e) {
-      Logger.warn(`[FatturatoItalia] DDG search also failed`, { error: e as Error });
+      Logger.warn(`[FatturatoItalia] Jina search unavailable; skipping slow DDG fallback`, { error: e as Error });
     }
 
     Logger.info(`[FatturatoItalia] ❌ No search results for "${companyName}"`);

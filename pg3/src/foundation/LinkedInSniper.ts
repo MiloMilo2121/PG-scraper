@@ -1,6 +1,8 @@
 import { SerpDeduplicator } from './SerpDeduplicator';
 import { NormalizedInput } from './InputNormalizer';
 import { BackpressureValve } from './BackpressureValve';
+import { QuerySanitizer } from './QuerySanitizer';
+import { SerperSearchProvider } from '../enricher/core/discovery/search_provider';
 
 export interface DecisionMaker {
     name?: string;
@@ -12,7 +14,7 @@ export interface DecisionMaker {
 export class LinkedInSniper {
     private dedup: SerpDeduplicator;
     private valve: BackpressureValve;
-    private static readonly OPTIONAL_SERP_MAX_TIER = 2;
+    private sanitizer = new QuerySanitizer();
 
     constructor(dedup: SerpDeduplicator, valve: BackpressureValve) {
         this.dedup = dedup;
@@ -20,13 +22,21 @@ export class LinkedInSniper {
     }
 
     public async snipe(companyId: string, input: NormalizedInput): Promise<DecisionMaker | null> {
-        // Keep optional LinkedIn lookup off the fragile Tor/Oracle tail.
-        const res = await this.dedup.search(companyId, input, 'linkedin', {
-            maxTier: LinkedInSniper.OPTIONAL_SERP_MAX_TIER,
+        const query = this.sanitizer.buildCompanyQuery(input, {
+            target: 'linkedin',
+            includeDomain: 'site:linkedin.com/in',
         });
-        if (res.results.length === 0) return null;
+        if (!query) return null;
 
-        const best = res.results[0];
+        let results: Array<{ url: string; title: string }> = [];
+        try {
+            results = await new SerperSearchProvider().search(query);
+        } catch {
+            return null;
+        }
+
+        const best = results.find((result) => result.url?.includes('linkedin.com/in/'));
+        if (!best) return null;
         const title = best.title || '';
 
         // "Marco Rossi - Titolare - Ferramenta Brescia Srl - LinkedIn" -> extract "Marco Rossi" and "Titolare"
