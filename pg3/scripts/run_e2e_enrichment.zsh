@@ -205,6 +205,11 @@ flush_redis() {
     return
   fi
 
+  if ! is_local_redis_host "$redis_host"; then
+    echo "ERROR: Cannot FLUSHDB on non-local REDIS_URL without redis-cli." >&2
+    exit 4
+  fi
+
   if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx 'antigravity-redis'; then
     docker exec antigravity-redis redis-cli -n "$redis_db" FLUSHDB > "$OUT_DIR/redis_flush.log" 2>&1
     return
@@ -342,6 +347,11 @@ fi
 # Run scheduler
 "${SCHEDULER_CMD[@]}" > "$OUT_DIR/scheduler.log" 2>&1
 
+if /usr/bin/grep -q 'Scheduler overlap detected' "$OUT_DIR/scheduler.log" 2>/dev/null; then
+  echo "ERROR: Scheduler lock overlap detected. See $OUT_DIR/scheduler.log" >&2
+  exit 7
+fi
+
 # Wait for all jobs to reach terminal state (SUCCESS/FAILED)
 WORKER_PIDS_CSV="$(IFS=,; echo "${WORKER_PIDS[*]}")"
 export WORKER_PIDS_CSV
@@ -390,7 +400,7 @@ while True:
 
     con = sqlite3.connect(db_path)
     cur = con.cursor()
-    cur.execute("SELECT COUNT(*) FROM enrichment_results")
+    cur.execute("SELECT COUNT(DISTINCT company_id) FROM enrichment_results WHERE deleted_at IS NULL")
     enriched = cur.fetchone()[0]
     cur.execute("SELECT COUNT(DISTINCT company_id) FROM job_log WHERE status IN (\"SUCCESS\", \"FAILED\")")
     terminal = cur.fetchone()[0]
@@ -449,17 +459,30 @@ SELECT
   er.is_estimated_employees,
   er.pec,
   er.data_source AS enrichment_source,
+  er.reason_code AS enrichment_reason_code,
   er.enriched_at,
   jl.status AS job_status,
   jl.attempt AS job_attempt,
   jl.duration_ms AS job_duration_ms,
   jl.error_category AS job_error_category,
   jl.error_message AS job_error_message,
+  jl.reason_code AS job_reason_code,
+  COALESCE(er.reason_code, jl.reason_code) AS final_reason_code,
   jl.processed_at AS job_processed_at
 FROM companies c
-LEFT JOIN enrichment_results er ON er.company_id = c.id
 LEFT JOIN (
-  SELECT company_id, status, error_message, error_category, duration_ms, attempt, processed_at
+  SELECT er1.*
+  FROM enrichment_results er1
+  WHERE er1.id = (
+    SELECT er2.id
+    FROM enrichment_results er2
+    WHERE er2.company_id = er1.company_id AND er2.deleted_at IS NULL
+    ORDER BY er2.updated_at DESC, er2.enriched_at DESC, er2.rowid DESC
+    LIMIT 1
+  )
+) er ON er.company_id = c.id
+LEFT JOIN (
+  SELECT company_id, status, error_message, error_category, reason_code, duration_ms, attempt, processed_at
   FROM job_log
   WHERE id IN (SELECT MAX(id) FROM job_log GROUP BY company_id)
 ) jl ON jl.company_id = c.id
@@ -488,10 +511,12 @@ employees_found_count = sum(1 for r in rows if (r.get("employees") or "").strip(
 estimated_employees_count = sum(1 for r in rows if str(r.get("is_estimated_employees") or "0") in ("1", "true", "True"))
 
 job_status_counts = Counter((r.get("job_status") or "UNKNOWN") for r in rows)
+final_reason_code_counts = Counter((r.get("final_reason_code") or "UNKNOWN") for r in rows)
 
 summary = {
     "total_companies": len(rows),
     "job_status_counts": dict(job_status_counts),
+    "final_reason_code_counts": dict(final_reason_code_counts),
     "website_validated_count": website_validated_count,
     "vat_found_count": vat_found_count,
     "pec_found_count": pec_found_count,
