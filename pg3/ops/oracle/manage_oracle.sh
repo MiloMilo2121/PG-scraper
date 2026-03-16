@@ -79,6 +79,22 @@ import uvicorn  # noqa: F401
 PY
 }
 
+browser_runtime_ready() {
+  local python_bin
+  python_bin="$(venv_python)"
+
+  local browser_path
+  browser_path="$("${python_bin}" - <<'PY' 2>/dev/null
+from playwright.sync_api import sync_playwright
+
+with sync_playwright() as playwright:
+    print(playwright.chromium.executable_path)
+PY
+)"
+
+  [[ -n "${browser_path}" && -x "${browser_path}" ]]
+}
+
 needs_bootstrap() {
   local python_bin
   python_bin="$(venv_python)"
@@ -88,6 +104,10 @@ needs_bootstrap() {
   fi
 
   if ! module_smoke_test; then
+    return 0
+  fi
+
+  if [[ "${ORACLE_INSTALL_PLAYWRIGHT}" != "false" ]] && ! browser_runtime_ready; then
     return 0
   fi
 
