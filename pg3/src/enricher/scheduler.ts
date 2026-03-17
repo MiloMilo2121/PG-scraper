@@ -39,7 +39,7 @@ export interface SchedulerSummary {
   durationMs: number;
 }
 
-interface CSVCompany {
+export interface CSVCompany {
   company_id?: string;
   company_name: string;
   city?: string;
@@ -54,6 +54,160 @@ interface CSVCompany {
   vat_code?: string;
   pg_url?: string;
   email?: string;
+}
+
+export interface CsvLoadDiagnostics {
+  totalRows: number;
+  acceptedRows: number;
+  skippedRows: number;
+  skippedMissingCompanyName: number;
+  skippedInvalidRows: number;
+  aliasHits: number;
+  unknownHeaders: Set<string>;
+  sampleIssues: string[];
+}
+
+type CanonicalCsvField = keyof CSVCompany;
+
+const HEADER_ALIASES: Record<string, CanonicalCsvField> = {
+  company_id: 'company_id',
+  id: 'company_id',
+  azienda_id: 'company_id',
+  company_name: 'company_name',
+  name: 'company_name',
+  ragione_sociale: 'company_name',
+  ragionesociale: 'company_name',
+  ragione: 'company_name',
+  denominazione: 'company_name',
+  citta: 'city',
+  city: 'city',
+  comune: 'city',
+  localita: 'city',
+  locality: 'city',
+  province: 'province',
+  provincia: 'province',
+  prov: 'province',
+  zip_code: 'zip_code',
+  zip: 'zip_code',
+  cap: 'zip_code',
+  postal_code: 'zip_code',
+  postcode: 'zip_code',
+  region: 'region',
+  regione: 'region',
+  address: 'address',
+  indirizzo: 'address',
+  street: 'address',
+  via: 'address',
+  phone: 'phone',
+  telefono: 'phone',
+  tel: 'phone',
+  cellulare: 'phone',
+  mobile: 'phone',
+  website: 'website',
+  sito: 'website',
+  sito_web: 'website',
+  sito_internet: 'website',
+  url: 'website',
+  web: 'website',
+  domain: 'website',
+  category: 'category',
+  categoria: 'category',
+  settore: 'category',
+  ateco: 'category',
+  source: 'source',
+  fonte: 'source',
+  origine: 'source',
+  vat_code: 'vat_code',
+  vat: 'vat_code',
+  vat_number: 'vat_code',
+  piva: 'vat_code',
+  partita_iva: 'vat_code',
+  pg_url: 'pg_url',
+  paginegialle: 'pg_url',
+  paginegialle_url: 'pg_url',
+  pgurl: 'pg_url',
+  pg_link: 'pg_url',
+  url_pg: 'pg_url',
+  email: 'email',
+  mail: 'email',
+  e_mail: 'email',
+  pec: 'email',
+};
+
+function normalizeHeaderKey(header: string): string {
+  return header
+    .replace(/^\uFEFF/, '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function normalizeFieldValue(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const normalized = String(value).trim();
+  return normalized === '' ? undefined : normalized;
+}
+
+function pushIssue(diagnostics: CsvLoadDiagnostics, issue: string): void {
+  if (diagnostics.sampleIssues.length < 10) {
+    diagnostics.sampleIssues.push(issue);
+  }
+}
+
+export function createCsvLoadDiagnostics(): CsvLoadDiagnostics {
+  return {
+    totalRows: 0,
+    acceptedRows: 0,
+    skippedRows: 0,
+    skippedMissingCompanyName: 0,
+    skippedInvalidRows: 0,
+    aliasHits: 0,
+    unknownHeaders: new Set<string>(),
+    sampleIssues: [],
+  };
+}
+
+export function normalizeCsvRowForScheduler(
+  rawRow: Record<string, unknown>,
+  diagnostics?: CsvLoadDiagnostics
+): CSVCompany {
+  const normalized: Partial<CSVCompany> = {};
+
+  for (const [rawHeader, rawValue] of Object.entries(rawRow)) {
+    const normalizedHeader = normalizeHeaderKey(rawHeader);
+    if (!normalizedHeader) {
+      continue;
+    }
+
+    const canonicalField = HEADER_ALIASES[normalizedHeader];
+    if (!canonicalField) {
+      diagnostics?.unknownHeaders.add(rawHeader.trim());
+      continue;
+    }
+
+    if (normalizedHeader !== canonicalField) {
+      diagnostics && (diagnostics.aliasHits += 1);
+    }
+
+    const value = normalizeFieldValue(rawValue);
+    if (!value) {
+      continue;
+    }
+
+    const existing = normalized[canonicalField];
+    if (existing && String(existing).trim() !== '') {
+      continue;
+    }
+
+    normalized[canonicalField] = canonicalField === 'province' ? value.toUpperCase() : value;
+  }
+
+  return normalized as CSVCompany;
 }
 
 const CsvCompanySchema = z.object({
@@ -159,22 +313,64 @@ async function loadCompaniesFromCSV(filePath: string): Promise<CSVCompany[]> {
 
   return new Promise((resolve) => {
     const rows: CSVCompany[] = [];
+    const diagnostics = createCsvLoadDiagnostics();
 
     fs.createReadStream(filePath)
       .pipe(parse({ headers: true, ignoreEmpty: true }))
-      .on('data', (row: CSVCompany) => {
-        const parsed = CsvCompanySchema.safeParse(row);
-        if (!parsed.success) {
-          Logger.warn('Skipping invalid CSV row', { issues: parsed.error.issues });
+      .on('data', (row: Record<string, unknown>) => {
+        diagnostics.totalRows += 1;
+        const normalized = normalizeCsvRowForScheduler(row, diagnostics);
+
+        if (!normalized.company_name || normalized.company_name.trim() === '') {
+          diagnostics.skippedRows += 1;
+          diagnostics.skippedMissingCompanyName += 1;
+          pushIssue(diagnostics, `row ${diagnostics.totalRows}: missing company_name`);
           return;
         }
 
+        const parsed = CsvCompanySchema.safeParse(normalized);
+        if (!parsed.success) {
+          diagnostics.skippedRows += 1;
+          diagnostics.skippedInvalidRows += 1;
+          const issueSummary = parsed.error.issues
+            .slice(0, 2)
+            .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+            .join('; ');
+          pushIssue(diagnostics, `row ${diagnostics.totalRows}: ${issueSummary}`);
+          return;
+        }
+
+        diagnostics.acceptedRows += 1;
         rows.push({
           ...parsed.data,
           company_name: parsed.data.company_name.trim(),
         });
       })
-      .on('end', () => resolve(rows))
+      .on('end', () => {
+        Logger.info('📄 CSV load diagnostics', {
+          total_rows: diagnostics.totalRows,
+          accepted_rows: diagnostics.acceptedRows,
+          skipped_rows: diagnostics.skippedRows,
+          skipped_missing_company_name: diagnostics.skippedMissingCompanyName,
+          skipped_invalid_rows: diagnostics.skippedInvalidRows,
+          alias_hits: diagnostics.aliasHits,
+          unmapped_headers_count: diagnostics.unknownHeaders.size,
+        });
+
+        if (diagnostics.unknownHeaders.size > 0) {
+          Logger.warn('CSV contains unmapped headers (ignored)', {
+            headers: Array.from(diagnostics.unknownHeaders).slice(0, 20),
+          });
+        }
+
+        if (diagnostics.sampleIssues.length > 0) {
+          Logger.warn('Sample of skipped CSV rows', {
+            issues: diagnostics.sampleIssues,
+          });
+        }
+
+        resolve(rows);
+      })
       .on('error', (err) => {
         Logger.error('CSV parsing error', { error: err });
         resolve([]);
