@@ -455,7 +455,7 @@ export function exportEnrichedToCSV(outputPath: string): void {
     const stmt = db.prepare(`
         SELECT
             c.company_name, c.city, c.province, c.address, c.phone, c.category,
-            er.vat, er.revenue, er.employees, er.pec, er.lead_score, er.data_source
+            er.vat, er.revenue, er.employees, er.pec, er.lead_score, er.data_source, er.reason_code
         FROM companies c
         JOIN enrichment_results er ON er.id = (
             SELECT er2.id
