@@ -6,7 +6,8 @@
  * Usage:
  *   npx ts-node src/scraper/generate_campaign_v2.ts \
  *     --query="manifattura" \
- *     --provinces="LO,MI,BS"
+ *     --provinces="LO,MI,BS" \
+ *     --limit=100
  * 
  * The user provides a QUERY (e.g., "manifattura", "moda", "metalmeccanica")
  * and PROVINCE CODES (e.g., "LO", "MI"). The system:
@@ -220,17 +221,24 @@ interface ScrapeTarget {
 }
 
 // ─── CLI PARSING ─────────────────────────────────────────────────────────────
-function parseCLI(): { query: string; provinceCodes: string[]; resume: boolean; checkpointFile: string } {
-    const args = process.argv.slice(2);
+export interface CampaignCliOptions {
+    query: string;
+    provinceCodes: string[];
+    resume: boolean;
+    checkpointFile: string;
+    limit?: number;
+}
+
+export function parseCLIArgs(args: string[]): CampaignCliOptions {
 
     const queryArg = args.find(a => a.startsWith('--query='))?.split('=').slice(1).join('=');
     const provincesArg = args.find(a => a.startsWith('--provinces='))?.split('=').slice(1).join('=');
     const resume = args.includes('--resume');
     const checkpointArg = args.find(a => a.startsWith('--checkpoint-file='))?.split('=').slice(1).join('=');
+    const limitArg = args.find(a => a.startsWith('--limit='))?.split('=').slice(1).join('=');
 
     if (!queryArg || !provincesArg) {
-        console.error('Usage: npx ts-node src/scraper/generate_campaign_v2.ts --query="manifattura" --provinces="LO,MI,BS" [--resume] [--checkpoint-file="output/campaigns/campaign_INTERIM_CHECKPOINT.csv"]');
-        process.exit(1);
+        throw new Error('Missing required --query or --provinces argument');
     }
 
     // Resolve province codes — accept both "MI" and "Milano"
@@ -248,9 +256,28 @@ function parseCLI(): { query: string; provinceCodes: string[]; resume: boolean; 
         return p.toUpperCase();
     });
 
+    let limit: number | undefined;
+    if (limitArg !== undefined) {
+        const parsedLimit = Number.parseInt(limitArg, 10);
+        if (!Number.isFinite(parsedLimit) || parsedLimit < 1) {
+            throw new Error(`Invalid --limit value "${limitArg}" (expected a positive integer)`);
+        }
+        limit = parsedLimit;
+    }
+
     const checkpointFile = checkpointArg?.trim() || path.join(OUTPUT_DIR, 'campaign_INTERIM_CHECKPOINT.csv');
 
-    return { query: queryArg.trim(), provinceCodes, resume, checkpointFile };
+    return { query: queryArg.trim(), provinceCodes, resume, checkpointFile, limit };
+}
+
+function parseCLI(): CampaignCliOptions {
+    try {
+        return parseCLIArgs(process.argv.slice(2));
+    } catch (error) {
+        console.error('Usage: npx ts-node src/scraper/generate_campaign_v2.ts --query="manifattura" --provinces="LO,MI,BS" [--limit=100] [--resume] [--checkpoint-file="output/campaigns/campaign_INTERIM_CHECKPOINT.csv"]');
+        console.error(`Error: ${(error as Error).message}`);
+        process.exit(1);
+    }
 }
 
 /**
@@ -771,13 +798,14 @@ async function scrapeMaps(
 
 // ─── MAIN ────────────────────────────────────────────────────────────────────
 async function main() {
-    const { query, provinceCodes, resume, checkpointFile } = parseCLI();
+    const { query, provinceCodes, resume, checkpointFile, limit: maxCompanies } = parseCLI();
     const interimFile = checkpointFile;
 
     Logger.info(`\n${'═'.repeat(60)}`);
     Logger.info(`🚀 CAMPAIGN GENERATOR V2 — INTELLIGENT MODE`);
     Logger.info(`🔍 Query: "${query}"`);
     Logger.info(`📍 Provinces: [${provinceCodes.map(c => `${c} (${resolveProvinceName(c)})`).join(', ')}]`);
+    if (typeof maxCompanies === 'number') Logger.info(`🎯 Limit Mode: max ${maxCompanies} companies`);
     if (resume) Logger.info(`🔄 Resume Mode: ACTIVE (Using ${checkpointFile} if available)`);
     Logger.info(`${'═'.repeat(60)}\n`);
 
@@ -863,8 +891,17 @@ async function main() {
         Logger.info(`${'═'.repeat(60)}\n`);
         Logger.info(`⚙️ Target concurrency: ${DEFAULT_SCRAPER_TARGET_CONCURRENCY}`);
 
-        const limit = pLimit(DEFAULT_SCRAPER_TARGET_CONCURRENCY);
-        await Promise.all(targets.map((target, idx) => limit(async () => {
+        const targetLimiter = pLimit(DEFAULT_SCRAPER_TARGET_CONCURRENCY);
+        let limitReachedLogged = false;
+        await Promise.all(targets.map((target, idx) => targetLimiter(async () => {
+            if (typeof maxCompanies === 'number' && globalDedup.count >= maxCompanies) {
+                if (!limitReachedLogged) {
+                    limitReachedLogged = true;
+                    Logger.info(`⏭️ Limit reached (${globalDedup.count}/${maxCompanies}). Skipping remaining queued targets.`);
+                }
+                return;
+            }
+
             if (resume && globalDedup.count > 0 && shouldSkipTargetOnResume(target, globalDedup)) {
                 Logger.info(`⏭️ Skipping Target ${idx + 1}/${targets.length}: [${target.category}] ${target.location} (Already in dedup)`);
                 return;
@@ -905,11 +942,17 @@ async function main() {
             normalizedFinalList.push(cleaned);
         }
 
-        const finalList = normalizedFinalList.filter(isRecordEligible);
+        let finalList = normalizedFinalList.filter(isRecordEligible);
         const droppedLowSignal = normalizedFinalList.length - finalList.length;
         const totalDropped = droppedInvalid + droppedLowSignal;
         if (totalDropped > 0) {
             Logger.info(`🧹 Quality Gate: removed ${totalDropped} rows (invalid=${droppedInvalid}, low_signal=${droppedLowSignal})`);
+        }
+
+        if (typeof maxCompanies === 'number' && finalList.length > maxCompanies) {
+            const beforeTrim = finalList.length;
+            finalList = finalList.slice(0, maxCompanies);
+            Logger.info(`✂️ Limit Mode: trimming eligible list from ${beforeTrim} to ${finalList.length}`);
         }
 
         if (finalList.length === 0) {
@@ -1004,7 +1047,9 @@ function delay(ms: number): Promise<void> {
     return new Promise(r => setTimeout(r, ms));
 }
 
-main().catch(e => {
-    console.error('Fatal:', e);
-    process.exit(1);
-});
+if (require.main === module) {
+    main().catch(e => {
+        console.error('Fatal:', e);
+        process.exit(1);
+    });
+}
