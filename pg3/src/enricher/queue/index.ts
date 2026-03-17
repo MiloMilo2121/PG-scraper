@@ -19,6 +19,7 @@ const RETRY_DELAY_MS = config.queue.retryDelayMs;
 const QUEUE_BATCH_SIZE = config.queue.batchSize;
 const REDIS_CONNECT_TIMEOUT_MS = config.queue.redisConnectTimeoutMs;
 const REDIS_CONNECT_RETRIES = config.queue.redisConnectRetries;
+const QUEUE_PREFIX = config.queue.prefix;
 
 // 🔌 Redis Connection (Singleton)
 export const redisConnection = new IORedis(REDIS_URL, {
@@ -92,6 +93,7 @@ export interface JobResult {
 export function createQueue(name: string): Queue<EnrichmentJobData, JobResult> {
     return new Queue(name, {
         connection: redisConnection,
+        prefix: QUEUE_PREFIX,
         defaultJobOptions: {
             attempts: RETRY_ATTEMPTS,
             backoff: {
@@ -117,7 +119,10 @@ export const deadLetterQueue = createQueue(QUEUE_NAMES.DEAD_LETTER);
  * 📊 Queue Events Listener (for monitoring)
  */
 export function createQueueEvents(name: string): QueueEvents {
-    const events = new QueueEvents(name, { connection: redisConnection });
+    const events = new QueueEvents(name, {
+        connection: redisConnection,
+        prefix: QUEUE_PREFIX,
+    });
 
     events.on('completed', ({ jobId, returnvalue }) => {
         Logger.info(`✅ Job ${jobId} completed`, { result: returnvalue });
@@ -181,6 +186,7 @@ export async function moveToDeadLetter(job: Job<EnrichmentJobData>): Promise<voi
 export async function getQueueHealth(): Promise<{
     redis: boolean;
     enrichmentQueue: { waiting: number; active: number; failed: number; completed: number };
+    prefix: string;
     error?: string;
 }> {
     try {
@@ -188,6 +194,7 @@ export async function getQueueHealth(): Promise<{
         const counts = await enrichmentQueue.getJobCounts();
         return {
             redis: true,
+            prefix: QUEUE_PREFIX,
             enrichmentQueue: {
                 waiting: counts.waiting,
                 active: counts.active,
@@ -200,6 +207,7 @@ export async function getQueueHealth(): Promise<{
         Logger.warn('Queue health check failed', { error: err });
         return {
             redis: false,
+            prefix: QUEUE_PREFIX,
             enrichmentQueue: { waiting: 0, active: 0, failed: 0, completed: 0 },
             error: err.message,
         };

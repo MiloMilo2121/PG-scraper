@@ -52,6 +52,8 @@ export E2E_PROGRESS_POLL_SECONDS="${E2E_PROGRESS_POLL_SECONDS:-5}"
 export REQUIRE_ORACLE_STEALTH="${REQUIRE_ORACLE_STEALTH:-true}"
 export E2E_WORKER_READY_TIMEOUT_SECONDS="${E2E_WORKER_READY_TIMEOUT_SECONDS:-30}"
 export E2E_BROWSER_PREFLIGHT="${E2E_BROWSER_PREFLIGHT:-false}"
+export QUEUE_PREFIX="${QUEUE_PREFIX:-e2e_${TEST_ID}}"
+export E2E_REDIS_FLUSH="${E2E_REDIS_FLUSH:-false}"
 
 echo "env.DISABLE_PROXY=${DISABLE_PROXY:-}" >> "$OUT_DIR/run_meta.txt"
 echo "env.DISABLE_STEALTH=${DISABLE_STEALTH:-}" >> "$OUT_DIR/run_meta.txt"
@@ -67,6 +69,8 @@ echo "env.E2E_WAIT_TIMEOUT_MINUTES=${E2E_WAIT_TIMEOUT_MINUTES:-}" >> "$OUT_DIR/r
 echo "env.REQUIRE_ORACLE_STEALTH=${REQUIRE_ORACLE_STEALTH:-}" >> "$OUT_DIR/run_meta.txt"
 echo "env.E2E_WORKER_READY_TIMEOUT_SECONDS=${E2E_WORKER_READY_TIMEOUT_SECONDS:-}" >> "$OUT_DIR/run_meta.txt"
 echo "env.E2E_BROWSER_PREFLIGHT=${E2E_BROWSER_PREFLIGHT:-}" >> "$OUT_DIR/run_meta.txt"
+echo "env.QUEUE_PREFIX=${QUEUE_PREFIX:-}" >> "$OUT_DIR/run_meta.txt"
+echo "env.E2E_REDIS_FLUSH=${E2E_REDIS_FLUSH:-}" >> "$OUT_DIR/run_meta.txt"
 
 typeset -a WORKER_PIDS=()
 typeset -a WORKER_LOGS=()
@@ -304,7 +308,11 @@ if [[ "$REQUIRE_ORACLE_STEALTH" == "true" ]]; then
 fi
 
 require_redis_ready
-flush_redis
+if [[ "$E2E_REDIS_FLUSH" == "true" ]]; then
+  flush_redis
+else
+  echo "redis_flush=skipped (isolated queue prefix ${QUEUE_PREFIX})" >> "$OUT_DIR/run_meta.txt"
+fi
 browser_preflight
 
 # Prefer source runtime by default so we do not execute stale dist artifacts.

@@ -153,6 +153,31 @@ export function initializeDatabase(): void {
         addErIfMissing('updated_at', `ALTER TABLE enrichment_results ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
         addErIfMissing('deleted_at', `ALTER TABLE enrichment_results ADD COLUMN deleted_at DATETIME`);
 
+        db.exec(`
+            WITH ranked AS (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY company_id
+                        ORDER BY datetime(COALESCE(updated_at, enriched_at)) DESC,
+                                 datetime(COALESCE(enriched_at, updated_at)) DESC,
+                                 rowid DESC
+                    ) AS rn
+                FROM enrichment_results
+                WHERE deleted_at IS NULL
+            )
+            UPDATE enrichment_results
+            SET deleted_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
+        `);
+
+        db.exec(`
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_enrichment_results_company_active
+            ON enrichment_results(company_id)
+            WHERE deleted_at IS NULL
+        `);
+
         const jlCols = db.prepare(`PRAGMA table_info(job_log)`).all() as Array<{ name: string }>;
         const jlNames = new Set(jlCols.map((col) => col.name));
         const addJlIfMissing = (name: string, ddl: string) => {
@@ -220,8 +245,6 @@ let getCompanyByIdStmt: any;
 let getCompanyByNameStmt: any;
 let getPendingCompaniesStmt: any;
 let upsertResultStmt: any;
-let getActiveResultIdByCompanyStmt: any;
-let softDeleteOtherActiveResultsStmt: any;
 let getResultByCompanyStmt: any;
 let insertJobLogStmt: any;
 let insertFieldEvidenceStmt: any;
@@ -267,8 +290,7 @@ function initializeStatements(): void {
         INSERT INTO enrichment_results
         (id, company_id, vat, revenue, revenue_year, employees, is_estimated_employees, pec, website_validated, lead_score, data_source, discovery_method, discovery_confidence, reason_code, enriched_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ON CONFLICT(id) DO UPDATE SET
-            company_id = COALESCE(NULLIF(excluded.company_id, ''), enrichment_results.company_id),
+        ON CONFLICT(company_id) WHERE deleted_at IS NULL DO UPDATE SET
             vat = COALESCE(NULLIF(excluded.vat, ''), enrichment_results.vat),
             revenue = COALESCE(NULLIF(excluded.revenue, ''), enrichment_results.revenue),
             revenue_year = COALESCE(NULLIF(excluded.revenue_year, ''), enrichment_results.revenue_year),
@@ -283,20 +305,7 @@ function initializeStatements(): void {
             reason_code = COALESCE(NULLIF(excluded.reason_code, ''), enrichment_results.reason_code),
             deleted_at = NULL,
             updated_at = CURRENT_TIMESTAMP
-    `);
-
-    getActiveResultIdByCompanyStmt = db.prepare(`
-        SELECT id
-        FROM enrichment_results
-        WHERE company_id = ? AND deleted_at IS NULL
-        ORDER BY datetime(COALESCE(updated_at, enriched_at)) DESC, datetime(COALESCE(enriched_at, updated_at)) DESC, rowid DESC
-        LIMIT 1
-    `);
-
-    softDeleteOtherActiveResultsStmt = db.prepare(`
-        UPDATE enrichment_results
-        SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-        WHERE company_id = ? AND id <> ? AND deleted_at IS NULL
+        RETURNING id
     `);
 
     getResultByCompanyStmt = db.prepare(`
@@ -380,15 +389,13 @@ export function getPendingCompanies(limit: number = 100): Company[] {
 
 export function insertEnrichmentResult(result: EnrichmentResult): void {
     ensureReady();
-    const existing = getActiveResultIdByCompanyStmt.get(result.company_id) as { id: string } | undefined;
     const requestedId = typeof result.id === 'string' ? result.id.trim() : '';
-    const targetResultId = existing?.id || requestedId;
-    if (!targetResultId) {
+    if (!requestedId) {
         throw new Error(`insertEnrichmentResult requires a non-empty id for company ${result.company_id}`);
     }
 
-    upsertResultStmt.run(
-        targetResultId,
+    const persisted = upsertResultStmt.get(
+        requestedId,
         result.company_id,
         result.vat,
         result.revenue,
@@ -402,10 +409,8 @@ export function insertEnrichmentResult(result: EnrichmentResult): void {
         result.discovery_method,
         result.discovery_confidence,
         result.reason_code
-    );
-
-    // Keep exactly one active current row per company.
-    softDeleteOtherActiveResultsStmt.run(result.company_id, targetResultId);
+    ) as { id: string } | undefined;
+    const targetResultId = persisted?.id || requestedId;
 
     insertResultVersionStmt.run(
         targetResultId,

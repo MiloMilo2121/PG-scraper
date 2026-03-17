@@ -166,6 +166,7 @@ export async function startWorker(): Promise<void> {
         {
             connection: redisConnection,
             concurrency: config.queue.concurrencyLimit,
+            prefix: config.queue.prefix,
         }
     );
 
@@ -173,6 +174,7 @@ export async function startWorker(): Promise<void> {
         Logger.info('🏭 Worker ready', {
             queue: QUEUE_NAMES.ENRICHMENT,
             concurrency: config.queue.concurrencyLimit,
+            prefix: config.queue.prefix,
         });
     });
 

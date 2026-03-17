@@ -22,7 +22,7 @@ import {
 } from './queue';
 
 const INPUT_FILE = process.argv[3] || 'output/campaigns/BOARD_FINAL_SANITISED.csv';
-const SCHEDULER_LOCK_KEY = process.env.SCHEDULER_LOCK_KEY || `${QUEUE_NAMES.ENRICHMENT}:scheduler:lock`;
+const SCHEDULER_LOCK_KEY = process.env.SCHEDULER_LOCK_KEY || `${config.queue.prefix}:${QUEUE_NAMES.ENRICHMENT}:scheduler:lock`;
 const SCHEDULER_LOCK_TTL_MS = config.queue.schedulerLockTtlMs;
 const RELEASE_LOCK_SCRIPT = `
 if redis.call("get", KEYS[1]) == ARGV[1] then

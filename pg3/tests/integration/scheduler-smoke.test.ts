@@ -2,49 +2,45 @@ import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import IORedis from 'ioredis';
 import { Queue } from 'bullmq';
-import { runScheduler } from '../../src/enricher/scheduler';
 
 const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379/15';
 const queueName = 'enrichment';
+const queuePrefix = `itest_${Date.now()}`;
 let redisAvailable = true;
-
-async function flushRedisDb(): Promise<boolean> {
-  const client = new IORedis(redisUrl, {
-    maxRetriesPerRequest: 1,
-    enableReadyCheck: false,
-    lazyConnect: true,
-    connectTimeout: 1000,
-    retryStrategy: () => null,
-  });
-  client.on('error', () => undefined);
-
-  try {
-    await client.connect();
-    await client.flushdb();
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await client.quit().catch(() => undefined);
-  }
-}
 
 describe('Scheduler smoke', () => {
   beforeAll(async () => {
-    redisAvailable = await flushRedisDb();
+    process.env.QUEUE_PREFIX = queuePrefix;
+    const client = new IORedis(redisUrl, {
+      maxRetriesPerRequest: 1,
+      enableReadyCheck: false,
+      lazyConnect: true,
+      connectTimeout: 1000,
+      retryStrategy: () => null,
+    });
+    client.on('error', () => undefined);
+
+    try {
+      await client.connect();
+      redisAvailable = true;
+    } catch {
+      redisAvailable = false;
+    } finally {
+      await client.quit().catch(() => undefined);
+    }
+
     if (!redisAvailable) {
       throw new Error(`Redis is required for scheduler smoke tests but is unreachable at ${redisUrl}`);
     }
   });
 
   afterAll(async () => {
-    if (redisAvailable) {
-      await flushRedisDb();
-    }
+    delete process.env.QUEUE_PREFIX;
   });
 
   it('loads CSV, deduplicates deterministic ids, enqueues jobs and exits cleanly', async () => {
     const fixturePath = path.resolve(__dirname, '../fixtures/scheduler-input.csv');
+    const { runScheduler } = await import('../../src/enricher/scheduler');
 
     const summary = await runScheduler(fixturePath);
 
@@ -62,7 +58,7 @@ describe('Scheduler smoke', () => {
     });
     redis.on('error', () => undefined);
     await redis.connect();
-    const queue = new Queue(queueName, { connection: redis });
+    const queue = new Queue(queueName, { connection: redis, prefix: queuePrefix });
 
     try {
       const counts = await queue.getJobCounts();

@@ -89,6 +89,7 @@ const EnvSchema = z.object({
   REDIS_CONNECT_TIMEOUT_MS: z.coerce.number().min(500).default(5000),
   REDIS_CONNECT_RETRIES: z.coerce.number().min(0).default(5),
   SCHEDULER_LOCK_TTL_MS: z.coerce.number().min(30000).default(900000), // 15 min
+  QUEUE_PREFIX: z.string().min(1).default('bull'),
 
   // 🏃 RUNNER
   RUNNER_CONCURRENCY_LIMIT: z.coerce.number().min(1).max(200).default(25),
@@ -282,6 +283,7 @@ export const config = {
     redisConnectTimeoutMs: env.REDIS_CONNECT_TIMEOUT_MS,
     redisConnectRetries: env.REDIS_CONNECT_RETRIES,
     schedulerLockTtlMs: env.SCHEDULER_LOCK_TTL_MS,
+    prefix: env.QUEUE_PREFIX,
   },
   runner: {
     concurrencyLimit: env.RUNNER_CONCURRENCY_LIMIT,

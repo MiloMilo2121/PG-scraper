@@ -105,7 +105,7 @@ describe('DB persistence', () => {
     expect(latest?.website_validated).toBe('https://www.beta.it');
   });
 
-  it('reads latest deterministic row for legacy duplicate enrichment records', () => {
+  it('reads the latest active enrichment row and exports it deterministically', () => {
     dbModule.insertCompany({
       id: 'cmp-legacy',
       company_name: 'Gamma',
@@ -116,17 +116,17 @@ describe('DB persistence', () => {
     rawDb
       .prepare(`
         INSERT INTO enrichment_results
-        (id, company_id, revenue, is_estimated_employees, data_source, updated_at, enriched_at)
-        VALUES (?, ?, ?, 0, ?, ?, ?)
+        (id, company_id, revenue, is_estimated_employees, data_source, deleted_at, updated_at, enriched_at)
+        VALUES (?, ?, ?, 0, ?, ?, ?, ?)
       `)
-      .run('legacy-old', 'cmp-legacy', '10', 'LEGACY', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+      .run('legacy-old', 'cmp-legacy', '10', 'LEGACY', '2026-02-02T00:00:00.000Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
     rawDb
       .prepare(`
         INSERT INTO enrichment_results
-        (id, company_id, revenue, is_estimated_employees, data_source, updated_at, enriched_at)
-        VALUES (?, ?, ?, 0, ?, ?, ?)
+        (id, company_id, revenue, is_estimated_employees, data_source, reason_code, updated_at, enriched_at)
+        VALUES (?, ?, ?, 0, ?, ?, ?, ?)
       `)
-      .run('legacy-new', 'cmp-legacy', '20', 'LEGACY', '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z');
+      .run('legacy-new', 'cmp-legacy', '20', 'LEGACY', 'FOUND_COMPLETE', '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z');
 
     const latest = dbModule.getEnrichmentResult('cmp-legacy');
     expect(latest?.id).toBe('legacy-new');
@@ -139,8 +139,34 @@ describe('DB persistence', () => {
     const csvPath = path.join(tempDir, 'enriched.csv');
     dbModule.exportEnrichedToCSV(csvPath);
     const csv = fs.readFileSync(csvPath, 'utf8');
+    const header = csv.split('\n')[0];
     const gammaRows = csv.split('\n').filter((line) => line.includes('"Gamma"'));
+    expect(header).toContain('reason_code');
     expect(gammaRows.length).toBe(1);
     expect(gammaRows[0]).toContain('"20"');
+    expect(gammaRows[0]).toContain('"FOUND_COMPLETE"');
+  });
+
+  it('enforces at most one active enrichment row per company at schema level', () => {
+    dbModule.insertCompany({
+      id: 'cmp-unique-index',
+      company_name: 'Delta',
+      city: 'Como',
+    });
+
+    const rawDb = dbModule.default as any;
+    rawDb.prepare(`
+      INSERT INTO enrichment_results
+      (id, company_id, revenue, is_estimated_employees, data_source)
+      VALUES (?, ?, ?, 0, ?)
+    `).run('delta-active-1', 'cmp-unique-index', '10', 'TEST');
+
+    expect(() => {
+      rawDb.prepare(`
+        INSERT INTO enrichment_results
+        (id, company_id, revenue, is_estimated_employees, data_source)
+        VALUES (?, ?, ?, 0, ?)
+      `).run('delta-active-2', 'cmp-unique-index', '20', 'TEST');
+    }).toThrow();
   });
 });
