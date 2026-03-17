@@ -1,4 +1,4 @@
-import asyncio
+import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from crawl4ai import AsyncWebCrawler
@@ -33,6 +33,13 @@ async def shutdown_event():
     if crawler:
         print("🛑 Shutting down WebCrawler...")
         await crawler.__aexit__(None, None, None)
+
+@app.get("/api/v1/health")
+async def healthcheck():
+    return {
+        "ok": crawler is not None,
+        "crawler_initialized": crawler is not None,
+    }
 
 @app.post("/api/v1/extract", response_model=CrawlResponse)
 async def extract_content(req: CrawlRequest):
@@ -70,5 +77,6 @@ async def extract_content(req: CrawlRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    # The Oracle runs on loopback port 8000
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    host = os.getenv("ORACLE_HOST", "127.0.0.1")
+    port = int(os.getenv("ORACLE_PORT", "8000"))
+    uvicorn.run(app, host=host, port=port)

@@ -21,7 +21,18 @@ export interface OracleCrawlResponse {
  * Used for extreme cases where Cloudflare Turnstile or DataDome blocks standard proxies.
  */
 export class OracleClient {
-    private static baseUrl = 'http://127.0.0.1:8000/api/v1';
+    private static resolveBaseUrl(): string {
+        const explicitBaseUrl = process.env.ORACLE_BASE_URL?.trim() || process.env.ORACLE_API_BASE_URL?.trim();
+        if (explicitBaseUrl) {
+            return explicitBaseUrl.replace(/\/+$/, '');
+        }
+
+        const host = (process.env.ORACLE_HOST || '127.0.0.1').trim();
+        const port = Number(process.env.ORACLE_PORT || '8000');
+        const protocol = (process.env.ORACLE_PROTOCOL || 'http').trim().replace(/:$/, '');
+
+        return `${protocol}://${host}:${port}/api/v1`;
+    }
 
     /**
      * Executes a stealth crawl via the Python Oracle.
@@ -29,10 +40,12 @@ export class OracleClient {
      * @param timeoutMs Timeout in milliseconds (default: 60000)
      */
     static async fetchHtmlStealth(url: string, timeoutMs: number = 60000): Promise<OracleCrawlResponse> {
+        const baseUrl = this.resolveBaseUrl();
+
         try {
             Logger.info(`[OracleClient] Passing ${url} to Python Oracle for stealth extraction...`);
 
-            const response = await axios.post(`${this.baseUrl}/extract`, {
+            const response = await axios.post(`${baseUrl}/extract`, {
                 url: url,
                 bypass_cache: true
             }, {
@@ -52,7 +65,7 @@ export class OracleClient {
             Logger.error(`[OracleClient] Communication with Python Oracle failed: ${error.message}`);
             // Check if server is running
             if (error.code === 'ECONNREFUSED') {
-                Logger.error('[OracleClient] CRITICAL: Python Oracle server is not running on port 8000!');
+                Logger.error(`[OracleClient] CRITICAL: Python Oracle server is not reachable at ${baseUrl}!`);
                 throw new Error('PYTHON_ORACLE_OFFLINE');
             }
             throw error;
