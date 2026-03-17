@@ -59,15 +59,7 @@ const EnvSchema = z.object({
   MAX_RETRIES: z.coerce.number().min(1).default(3),
   PAGE_LOAD_TIMEOUT: z.coerce.number().min(1000).default(60000),
 
-  // 🛡️ PROXY / SCRAPE.DO
-  SCRAPE_DO_TOKEN: z.string().optional(),
-  SCRAPE_DO_API_URL: z.string().default('https://api.scrape.do'),
-  SCRAPE_DO_PROXY_HOST: z.string().default('proxy.scrape.do:8080'),
-  SCRAPE_DO_GEO_CODE: z.string().default('it'),
-  SCRAPE_DO_SUPER: BooleanString.default(false),
-  SCRAPE_DO_RENDER_DEFAULT: BooleanString.default(false),
-  SCRAPE_DO_TIMEOUT_MS: z.coerce.number().default(20000),
-  SCRAPE_DO_ENFORCE: BooleanString.default(false),
+
   BRIGHTDATA_WEB_UNLOCKER_URL: z.string().optional(),
   PROXY_FAILURE_COOLDOWN_MS: z.coerce.number().min(1000).default(300000), // 5 min
 
@@ -170,7 +162,7 @@ function deriveLlmDefaults() {
   }
 
   return {
-    fast: 'gpt-4o-mini',
+    fast: 'gpt-5-mini',
     smart: 'gpt-4o',
   };
 }
@@ -254,6 +246,7 @@ export const config = {
       'glm-4.5-flash': { inputPer1M: 0, outputPer1M: 0 },    // FREE tier
       'glm-4.5': { inputPer1M: 0.60, outputPer1M: 2.20 },
       // OpenAI
+      'gpt-5-mini': { inputPer1M: 0.10, outputPer1M: 0.40 },
       'gpt-4o-mini': { inputPer1M: 0.15, outputPer1M: 0.60 },
       'gpt-4o': { inputPer1M: 2.50, outputPer1M: 10.00 },
       'o3-mini': { inputPer1M: 1.10, outputPer1M: 4.40 },
@@ -312,16 +305,7 @@ export const config = {
   proxy: {
     failureCooldownMs: env.PROXY_FAILURE_COOLDOWN_MS,
   },
-  scrapeDo: {
-    token: env.SCRAPE_DO_TOKEN,
-    apiUrl: env.SCRAPE_DO_API_URL,
-    proxyHost: env.SCRAPE_DO_PROXY_HOST,
-    geoCode: env.SCRAPE_DO_GEO_CODE,
-    super: env.SCRAPE_DO_SUPER,
-    renderDefault: env.SCRAPE_DO_RENDER_DEFAULT,
-    timeoutMs: env.SCRAPE_DO_TIMEOUT_MS,
-    enforce: env.SCRAPE_DO_ENFORCE,
-  },
+
   brightData: {
     webUnlockerUrl: env.BRIGHTDATA_WEB_UNLOCKER_URL,
   },

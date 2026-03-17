@@ -4,9 +4,7 @@ import {
     BraveSearchProvider,
     CrtShProvider,
     DDGSearchProvider,
-    JinaSearchProvider,
     SearXNGProvider,
-    SerperSearchProvider,
 } from '../enricher/core/discovery/search_provider';
 import { MxDiscoveryProvider } from '../enricher/core/discovery/mx_discovery_provider';
 import { PerplexityProvider } from '../enricher/core/discovery/perplexity_provider';
@@ -27,17 +25,11 @@ function parseJsonPayload<T>(raw: string): T {
     return JSON.parse(jsonMatch ? jsonMatch[0] : '[]') as T;
 }
 
-const SCRAPE_DO_CREDIT_COST_EUR = usdToEur(249 / 3_500_000);
-const SCRAPE_DO_HTML_COST_EUR = SCRAPE_DO_CREDIT_COST_EUR;
-const SCRAPE_DO_RENDER_SUPER_COST_EUR = Number((SCRAPE_DO_CREDIT_COST_EUR * 25).toFixed(6));
 const BRIGHTDATA_WEB_UNLOCKER_COST_EUR = usdToEur(1.5 / 1000);
-const SERPER_SEARCH_COST_EUR = usdToEur(1 / 1000);
 
 export const SERP_PROVIDER_ORDER = [
-    'SERPER-1',
     'DNS-MX-MINING-0',
     'CRTSH-API-1',
-    'JINA-1',
     'DDG-LITE-1',
     'BRAVE-HTML-1',
     'BING-HTML-1',
@@ -47,10 +39,8 @@ export const SERP_PROVIDER_ORDER = [
 
 export const HTTP_PROVIDER_ORDER = [
     // Ordered by escalation strategy, not pure vendor unit price:
-    // preserve cheap raw fetch first, then rendered rescue, then premium unlocker.
+    // preserve cheap raw fetch first, then premium unlocker.
     'HTTP-DIRECT-1',
-    'HTTP-SCRAPEDO-2',
-    'HTTP-SCRAPEDO-3',
     'HTTP-BRIGHTDATA-4',
     'ORACLE-CRAWL4AI-5',
 ] as const;
@@ -87,40 +77,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
                 return result as unknown as T;
             }
         }],
-        ['HTTP-SCRAPEDO-2', {
-            costPerRequest: SCRAPE_DO_HTML_COST_EUR,
-            tier: 2,
-            execute: async <T>(payload: any): Promise<T> => {
-                const url = typeof payload === 'string' ? payload : payload.url;
-                const options = typeof payload === 'string' ? {} : (payload.options || {});
-                const { ScraperClient } = require('../enricher/utils/scraper_client');
-                const result = await ScraperClient.fetchHtml(url, {
-                    mode: 'scrape_do',
-                    render: false,
-                    super: false,
-                    ...options
-                });
-                if (result.status === 403 || result.status === 429) throw new Error('BLOCK');
-                return result as unknown as T;
-            }
-        }],
-        ['HTTP-SCRAPEDO-3', {
-            costPerRequest: SCRAPE_DO_RENDER_SUPER_COST_EUR,
-            tier: 3,
-            execute: async <T>(payload: any): Promise<T> => {
-                const url = typeof payload === 'string' ? payload : payload.url;
-                const options = typeof payload === 'string' ? {} : (payload.options || {});
-                const { ScraperClient } = require('../enricher/utils/scraper_client');
-                const result = await ScraperClient.fetchHtml(url, {
-                    mode: 'scrape_do',
-                    render: true,
-                    super: true,
-                    ...options
-                });
-                if (result.status === 403 || result.status === 429) throw new Error('BLOCK');
-                return result as unknown as T;
-            }
-        }],
+
         ['HTTP-BRIGHTDATA-4', {
             costPerRequest: BRIGHTDATA_WEB_UNLOCKER_COST_EUR,
             tier: 4,
@@ -142,15 +99,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
                 return { data: result.html, status: 200 } as unknown as T;
             }
         }],
-        ['SERPER-1', {
-            costPerRequest: SERPER_SEARCH_COST_EUR,
-            tier: 0,
-            execute: async <T>(payload: any): Promise<T> => {
-                const query = typeof payload === 'string' ? payload : payload.query;
-                const provider = new SerperSearchProvider();
-                return (await provider.search(query)) as unknown as T;
-            }
-        }],
+
         ['BRAVE-HTML-1', {
             costPerRequest: 0,
             tier: 1,
@@ -187,16 +136,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
                 return (await provider.search(query)) as unknown as T;
             }
         }],
-        ['JINA-1', {
-            costPerRequest: 0.002,
-            tier: 2,
-            execute: async <T>(payload: any): Promise<T> => {
-                const query = typeof payload === 'string' ? payload : payload.query;
-                const target = payload.url || query;
-                const provider = new JinaSearchProvider();
-                return (await provider.search(target)) as unknown as T;
-            }
-        }],
+
         ['PERPLEXITY-API-4', {
             costPerRequest: 0.010,
             tier: 4,

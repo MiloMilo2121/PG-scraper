@@ -113,7 +113,7 @@ export class LLMService {
         if (config.llm.z_ai.apiKeys.length) return this.getClientForModel('glm-4.7-flash').client;
         if (config.llm.deepseek.apiKeys.length) return this.getClientForModel('deepseek-chat').client;
         if (config.llm.kimi.apiKeys.length) return this.getClientForModel('kimi-k2.5').client;
-        return this.getClientForModel('gpt-4o').client;
+        return this.getClientForModel('gpt-5-mini').client;
     }
 
     // ─────────────────────────────────────────────
@@ -139,10 +139,10 @@ export class LLMService {
     }
 
     /**
-     * Exponential backoff delay: 1s, 2s, 4s for retries within same provider.
+     * Exponential backoff delay with Jitter: 1s, 2s, 4s + random(0-500ms) to prevent thundering herds.
      */
     private static async backoff(attempt: number): Promise<void> {
-        const delayMs = Math.min(1000 * Math.pow(2, attempt), 4000);
+        const delayMs = Math.min(1000 * Math.pow(2, attempt), 8000) + Math.floor(Math.random() * 500);
         Logger.info(`[LLM] ⏳ Backoff ${delayMs}ms before retry...`);
         await new Promise(r => setTimeout(r, delayMs));
     }
@@ -164,6 +164,19 @@ export class LLMService {
         return config.llm.temperature;
     }
 
+    /**
+     * Maps internal identifiers to the actual provider API engine names.
+     */
+    private static getApiEngineName(model: string): string {
+        switch (model) {
+            case 'kimi-k2.5': return 'moonshot-v1-8k';
+            case 'glm-5': return 'glm-4-plus';
+            case 'glm-4.7-flash': return 'glm-4-flash';
+            case 'gpt-5-mini': return 'gpt-5-mini';
+            default: return model;
+        }
+    }
+
     // ─────────────────────────────────────────────
     // COMPLETIONS
     // ─────────────────────────────────────────────
@@ -180,15 +193,15 @@ export class LLMService {
             const currentModel = modelsToTry[mi];
             const isLastModel = mi === modelsToTry.length - 1;
 
-            // Up to 2 attempts per model (original + 1 backoff retry)
-            for (let attempt = 0; attempt < 2; attempt++) {
+            // Up to 3 attempts per model (original + 2 backoff retries)
+            for (let attempt = 0; attempt < 3; attempt++) {
                 let currentApiKey = '';
                 try {
                     const { client, apiKey } = this.getClientForModel(currentModel);
                     currentApiKey = apiKey;
 
                     const response = await this.llmLimit(() => client.chat.completions.create({
-                        model: currentModel,
+                        model: this.getApiEngineName(currentModel),
                         messages: [{ role: 'user', content: prompt }],
                         temperature: this.getTemperature(currentModel),
                         max_tokens: config.llm.maxTokens,
@@ -207,7 +220,7 @@ export class LLMService {
                         this.keyCooldowns.set(currentApiKey, Date.now() + 60000);
                     }
 
-                    if (retryable && attempt === 0) {
+                    if (retryable && attempt < 2) {
                         // Retry same model once with backoff
                         await this.backoff(attempt);
                         continue;
@@ -258,15 +271,15 @@ export class LLMService {
                     },
                 };
 
-            // Up to 2 attempts per model (original + 1 backoff retry)
-            for (let attempt = 0; attempt < 2; attempt++) {
+            // Up to 3 attempts per model (original + 2 backoff retries)
+            for (let attempt = 0; attempt < 3; attempt++) {
                 let currentApiKey = '';
                 try {
                     const { client, apiKey } = this.getClientForModel(currentModel);
                     currentApiKey = apiKey;
 
                     const response = await this.llmLimit(() => client.chat.completions.create({
-                        model: currentModel,
+                        model: this.getApiEngineName(currentModel),
                         messages: [{ role: 'user', content: prompt }],
                         temperature: this.getTemperature(currentModel),
                         max_tokens: config.llm.maxTokens,
@@ -295,7 +308,7 @@ export class LLMService {
                         this.keyCooldowns.set(currentApiKey, Date.now() + 60000);
                     }
 
-                    if (retryable && attempt === 0) {
+                    if (retryable && attempt < 2) {
                         await this.backoff(attempt);
                         continue;
                     }
@@ -355,7 +368,7 @@ export class LLMService {
             currentApiKey = apiKey;
 
             const response = await this.llmLimit(() => client.chat.completions.create({
-                model,
+                model: this.getApiEngineName(model),
                 messages: [
                     { role: 'system', content: prompt },
                     {

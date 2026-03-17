@@ -19,14 +19,35 @@ if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
 }
 
-const db = new Database(SQLITE_PATH);
-db.pragma('journal_mode = WAL');
-db.pragma('synchronous = NORMAL');
-db.pragma('cache_size = 10000');
-db.pragma('temp_store = MEMORY');
-db.pragma('busy_timeout = 30000');
-db.pragma('wal_autocheckpoint = 1000');
-db.pragma('journal_size_limit = 16777216');
+const db = new Database(SQLITE_PATH, { timeout: 60000 });
+
+// Safely execute pragmas that might throw SQLITE_BUSY during concurrent startup
+function safePragma(query: string) {
+    let retries = 5;
+    while (retries > 0) {
+        try {
+            db.pragma(query);
+            return;
+        } catch (err: any) {
+            if (err.message && err.message.includes('database is locked') && retries > 1) {
+                // Sleep for 50-200ms
+                const sleepMs = 50 + Math.random() * 150;
+                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, sleepMs);
+                retries--;
+            } else {
+                throw err;
+            }
+        }
+    }
+}
+
+safePragma('journal_mode = WAL');
+safePragma('synchronous = NORMAL');
+safePragma('cache_size = 10000');
+safePragma('temp_store = MEMORY');
+safePragma('busy_timeout = 60000');
+safePragma('wal_autocheckpoint = 1000');
+safePragma('journal_size_limit = 16777216');
 
 Logger.info(`🗄️ SQLite connected: ${SQLITE_PATH} (WAL mode)`);
 
@@ -394,33 +415,39 @@ export function insertEnrichmentResult(result: EnrichmentResult): void {
         throw new Error(`insertEnrichmentResult requires a non-empty id for company ${result.company_id}`);
     }
 
-    const persisted = upsertResultStmt.get(
-        requestedId,
-        result.company_id,
-        result.vat,
-        result.revenue,
-        result.revenue_year,
-        result.employees,
-        result.is_estimated_employees ? 1 : 0,
-        result.pec,
-        result.website_validated,
-        result.lead_score,
-        result.data_source,
-        result.discovery_method,
-        result.discovery_confidence,
-        result.reason_code
-    ) as { id: string } | undefined;
-    const targetResultId = persisted?.id || requestedId;
+    const tx = db.transaction(() => {
+        const persisted = upsertResultStmt.get(
+            requestedId,
+            result.company_id,
+            result.vat,
+            result.revenue,
+            result.revenue_year,
+            result.employees,
+            result.is_estimated_employees ? 1 : 0,
+            result.pec,
+            result.website_validated,
+            result.lead_score,
+            result.data_source,
+            result.discovery_method,
+            result.discovery_confidence,
+            result.reason_code
+        ) as { id: string } | undefined;
+        const targetResultId = persisted?.id || requestedId;
 
-    insertResultVersionStmt.run(
-        targetResultId,
-        result.company_id,
-        JSON.stringify(result),
-        result.data_source || null,
-        result.reason_code || null
-    );
+        insertResultVersionStmt.run(
+            targetResultId,
+            result.company_id,
+            JSON.stringify(result),
+            result.data_source || null,
+            result.reason_code || null
+        );
 
-    recordFieldEvidence('enrichment', targetResultId, result.company_id, result as unknown as Record<string, unknown>, result.data_source);
+        recordFieldEvidence('enrichment', targetResultId, result.company_id, result as unknown as Record<string, unknown>, result.data_source);
+    });
+    
+    // Use an IMMEDIATE transaction to acquire the write lock immediately,
+    // avoiding deadlocks when multiple workers try to upgrade from read to write lock.
+    tx.immediate();
 }
 
 export function getEnrichmentResult(companyId: string): EnrichmentResult | undefined {

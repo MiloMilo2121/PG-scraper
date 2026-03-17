@@ -10,7 +10,7 @@ const globalDispatcher = new Agent({
   connections: 50,
 });
 
-export type ScraperClientMode = 'auto' | 'direct' | 'scrape_do' | 'brightdata' | 'oracle' | 'jina_reader' | 'jina_search';
+export type ScraperClientMode = 'auto' | 'direct' | 'brightdata' | 'oracle';
 
 export interface ScraperClientOptions {
   mode?: ScraperClientMode;
@@ -24,7 +24,7 @@ export interface ScraperClientOptions {
 }
 
 export interface ScraperClientResponse {
-  via: 'direct' | 'scrape_do' | 'brightdata' | 'oracle' | 'jina_reader' | 'jina_search';
+  via: 'direct' | 'brightdata' | 'oracle';
   status: number;
   finalUrl: string;
   headers: Record<string, string | string[] | undefined>;
@@ -86,17 +86,8 @@ async function withRetry<T>(fn: () => Promise<T>, retries: number): Promise<T> {
 }
 
 export class ScraperClient {
-  public static isScrapeDoEnabled(): boolean {
-    return !!(config.scrapeDo?.token && config.scrapeDo.token.trim().length > 0);
-  }
-
   public static isBrightDataEnabled(): boolean {
     return !!(config.brightData?.webUnlockerUrl && config.brightData.webUnlockerUrl.trim().length > 0);
-  }
-
-  /** @deprecated Jina AI permanently removed — internal DomDistiller fallback is used instead */
-  public static isJinaEnabled(): boolean {
-    return false;
   }
 
   private static defaultHeaders(): Record<string, string> {
@@ -161,45 +152,7 @@ export class ScraperClient {
     };
   }
 
-  private static async scrapeDoGet(targetUrl: string, options: ScraperClientOptions): Promise<ScraperClientResponse> {
-    if (!this.isScrapeDoEnabled()) {
-      throw new Error('SCRAPE_DO_TOKEN missing');
-    }
 
-    const timeoutMs = options.timeoutMs ?? config.scrapeDo.timeoutMs;
-    const geoCode = (options.geoCode || config.scrapeDo.geoCode || 'it').toLowerCase();
-    const render = options.render ?? config.scrapeDo.renderDefault ?? false;
-    const superMode = options.super ?? config.scrapeDo.super ?? false;
-
-    const urlParams = new URLSearchParams({
-      token: config.scrapeDo.token!,
-      url: targetUrl,
-      geoCode
-    });
-
-    if (render) urlParams.append('render', 'true');
-    if (superMode) urlParams.append('super', 'true');
-
-    const scrapeDoUrl = `${config.scrapeDo.apiUrl}?${urlParams.toString()}`;
-
-    const response = await fetch(scrapeDoUrl, {
-      method: 'GET',
-      headers: { ...this.defaultHeaders(), ...(options.headers || {}) },
-      dispatcher: globalDispatcher,
-      redirect: 'follow',
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-
-    const dataObj = await response.text();
-
-    return {
-      via: 'scrape_do',
-      status: response.status,
-      finalUrl: targetUrl,
-      headers: Object.fromEntries(response.headers.entries()),
-      data: dataObj,
-    };
-  }
 
   private static async oracleGet(targetUrl: string, options: ScraperClientOptions): Promise<ScraperClientResponse> {
     const timeoutMs = options.timeoutMs ?? 60000;
@@ -224,16 +177,7 @@ export class ScraperClient {
       },
     ];
 
-    if (this.isScrapeDoEnabled()) {
-      steps.push({
-        label: 'scrape_do_html',
-        run: () => this.scrapeDoGet(targetUrl, { ...options, render: false, super: false }),
-      });
-      steps.push({
-        label: 'scrape_do_rendered',
-        run: () => this.scrapeDoGet(targetUrl, { ...options, render: true, super: true }),
-      });
-    }
+
 
     if (this.isBrightDataEnabled()) {
       steps.push({
@@ -292,9 +236,7 @@ export class ScraperClient {
       return await withRetry(() => this.directGet(targetUrl, options), retries);
     }
 
-    if (mode === 'scrape_do') {
-      return await withRetry(() => this.scrapeDoGet(targetUrl, options), retries);
-    }
+
 
     if (mode === 'brightdata') {
       return await withRetry(() => this.brightDataGet(targetUrl, options), retries);
@@ -312,40 +254,5 @@ export class ScraperClient {
     return res.data;
   }
 
-  // =========================================================================
-  // 🧠 JINA AI INTEGRATION
-  // =========================================================================
 
-  /** @deprecated Jina AI permanently removed */
-  public static async fetchJinaReader(_targetUrl: string, _options: ScraperClientOptions = {}): Promise<ScraperClientResponse> {
-    throw new Error('JINA_REMOVED: Jina AI has been permanently removed from OMEGA. Use DomDistiller fallback.');
-  }
-
-  /** @deprecated Jina AI permanently removed */
-  public static async fetchJinaSearch(_query: string, _options: ScraperClientOptions = {}): Promise<ScraperClientResponse> {
-    throw new Error('JINA_REMOVED: Jina AI has been permanently removed from OMEGA. Use DomDistiller fallback.');
-  }
-
-  public static parseJinaSearchResults(rawData: string): Array<{ title: string; url: string; description: string }> {
-    try {
-      const parsed = JSON.parse(rawData);
-      const results: Array<{ title: string; url: string; description: string }> = [];
-
-      const items = parsed?.data || parsed?.results || (Array.isArray(parsed) ? parsed : []);
-      for (const item of items) {
-        if (item.url && typeof item.url === 'string') {
-          results.push({
-            title: item.title || '',
-            url: item.url,
-            description: item.description || item.content || '',
-          });
-        }
-      }
-      return results;
-    } catch {
-      const urlRegex = /https?:\/\/[^\s)"'<>]+/g;
-      const matches = rawData.match(urlRegex) || [];
-      return matches.map((url) => ({ title: '', url, description: '' }));
-    }
-  }
 }

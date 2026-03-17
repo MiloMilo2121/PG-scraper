@@ -17,7 +17,7 @@ ORACLE_REQUIREMENTS_FILE="${ORACLE_REQUIREMENTS_FILE:-${SCRIPT_DIR}/requirements
 ORACLE_SERVER_FILE="${ORACLE_SERVER_FILE:-${SCRIPT_DIR}/server.py}"
 ORACLE_REQUIREMENTS_STAMP="${ORACLE_REQUIREMENTS_STAMP:-${ORACLE_RUNTIME_ROOT}/requirements.sha256}"
 ORACLE_PYTHON_BIN="${ORACLE_PYTHON_BIN:-python3}"
-ORACLE_START_TIMEOUT_SECONDS="${ORACLE_START_TIMEOUT_SECONDS:-90}"
+ORACLE_START_TIMEOUT_SECONDS="${ORACLE_START_TIMEOUT_SECONDS:-180}"
 ORACLE_START_POLL_SECONDS="${ORACLE_START_POLL_SECONDS:-2}"
 ORACLE_INSTALL_PLAYWRIGHT="${ORACLE_INSTALL_PLAYWRIGHT:-auto}"
 ORACLE_PLAYWRIGHT_BROWSER="${ORACLE_PLAYWRIGHT_BROWSER:-chromium}"
@@ -139,8 +139,8 @@ bootstrap_env() {
   pip_bin="$(venv_pip)"
   python_bin="$(venv_python)"
 
-  "${pip_bin}" install --upgrade pip 'setuptools<81' wheel
-  "${pip_bin}" install -r "${ORACLE_REQUIREMENTS_FILE}"
+  "${pip_bin}" install --upgrade --default-timeout=100 pip 'setuptools<81' wheel
+  "${pip_bin}" install --default-timeout=100 -r "${ORACLE_REQUIREMENTS_FILE}"
 
   case "${ORACLE_INSTALL_PLAYWRIGHT}" in
     true)
@@ -219,7 +219,7 @@ start_server() {
   python_bin="$(venv_python)"
 
   /bin/mkdir -p "$(dirname "${ORACLE_LOG_FILE}")"
-  nohup env PYTHONUNBUFFERED=1 "${python_bin}" "${ORACLE_SERVER_FILE}" >> "${ORACLE_LOG_FILE}" 2>&1 &
+  nohup env PYTHONUNBUFFERED=1 "${python_bin}" "${ORACLE_SERVER_FILE}" >> "${ORACLE_LOG_FILE}" 2>&1 </dev/null &
   echo $! > "${ORACLE_PID_FILE}"
 
   wait_for_health

@@ -97,6 +97,7 @@ export class CostRouter {
         ['kimi-k2.5', new TokenBucketQueue(20, 5)],
         ['glm-4.7-flash', new TokenBucketQueue(60, 15)],  // FREE tier — generous limits
         ['glm-5', new TokenBucketQueue(20, 5)],
+        ['gpt-5-mini', new TokenBucketQueue(20, 5)],
         ['gpt-4o-mini', new TokenBucketQueue(15, 3)],
     ]);
 
@@ -247,9 +248,17 @@ export class CostRouter {
                     this.credits.set(providerId, 0);
                 }
 
-                // If API returns 400/402 (Not enough credits) or 401/403, mark exhausted
-                if (statusCode === 400 || statusCode === 402 || statusCode === 403 || statusCode === 401 || statusCode === 429) {
+                // If API returns 400/402 (Not enough credits) or 401, mark exhausted
+                if (statusCode === 400 || statusCode === 402 || statusCode === 401) {
                     this.credits.set(providerId, 0);
+                }
+                
+                // For 403/429, only exhaust if it's a direct API provider, NOT a proxy-scraping provider where 403 is just a target website block
+                if (statusCode === 403 || statusCode === 429) {
+                    const isDirectApi = providerId.includes('serper') || providerId.includes('jina') || providerId.includes('k2') || providerId.includes('glm') || providerId.includes('gpt') || providerId.includes('deepseek') || providerId.includes('kimi') || messageString.includes('insufficient_quota');
+                    if (isDirectApi) {
+                        this.credits.set(providerId, 0);
+                    }
                 }
 
                 failures.push({ provider: providerId, error: errorMsg || 'Unknown', status: statusCode });

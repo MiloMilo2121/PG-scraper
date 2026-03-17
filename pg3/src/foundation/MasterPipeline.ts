@@ -482,40 +482,47 @@ export class MasterPipeline {
             let pec = null;
             let email = null;
 
-            if (discoveredUrl) {
-                // If we found it, spawn enrichments safely through priority queue
-                const [finRes, dmRes, empRes, fattRes, contactsRes] = await Promise.all([
-                    this.bilancioHunter.hunt(companyId, input).catch(() => null),
-                    this.linkedinSniper.snipe(companyId, input).catch(() => null),
-                    this.postProcessor.estimateEmployees(companyId, input, discoveredUrl).catch(() => null),
-                    FatturatoItaliaHarvester.harvest(input as any).catch(() => null),
-                    this.pecHunter.hunt(companyId, input, discoveredUrl).catch(() => null)
-                ]);
+            // ALWAYS run non-URL-dependent enrichments (FatturatoItalia, BilancioHunter uses Company Name / PIVA)
+            // Run URL-dependent enrichments only if discoveredUrl exists
+            const [finRes, dmRes, empRes, fattRes, contactsRes] = await Promise.all([
+                this.bilancioHunter.hunt(companyId, input).catch(() => null),
+                discoveredUrl ? this.linkedinSniper.snipe(companyId, input).catch(() => null) : null,
+                discoveredUrl ? this.postProcessor.estimateEmployees(companyId, input, discoveredUrl).catch(() => null) : null,
+                FatturatoItaliaHarvester.harvest(input as any).catch(() => null),
+                discoveredUrl ? this.pecHunter.hunt(companyId, input, discoveredUrl).catch(() => null) : null
+            ]);
 
-                // Merge financial sources (FatturatoItalia takes precedence for Revenue/Employees if found)
-                financial = { ...finRes };
-                if (fattRes) {
-                    if (fattRes.revenue) {
-                        financial.fatturato_current = parseFloat(fattRes.revenue.replace(/[^0-9]/g, ''));
-                        financial.year = parseInt(fattRes.revenueYear || '2023', 10);
-                        financial.source_url = fattRes.url;
-                    }
-                    if (fattRes.employees && (!employees || employees === 'N/A')) {
-                        employees = fattRes.employees;
-                    }
+            // Merge financial sources (FatturatoItalia takes precedence for Revenue/Employees if found)
+            financial = { ...finRes };
+            if (fattRes) {
+                if (fattRes.revenue) {
+                    financial.fatturato_current = parseFloat(fattRes.revenue.replace(/[^0-9]/g, ''));
+                    financial.year = parseInt(fattRes.revenueYear || '2023', 10);
+                    financial.source_url = fattRes.url;
                 }
-
-                decisionMaker = dmRes;
-                pec = contactsRes?.pec || null;
-                email = contactsRes?.email || null;
+                if (fattRes.employees && (!employees || employees === 'N/A')) {
+                    employees = fattRes.employees;
+                }
+            }
+            // If FatturatoItalia found something, we can consider VAT found even if website wasn't
+            if (fattRes?.vat && !piva) {
+                piva = fattRes.vat;
             }
 
+            decisionMaker = dmRes;
+            pec = contactsRes?.pec || null;
+            email = contactsRes?.email || null;
+
             const status = discoveredUrl ? 'FOUND_COMPLETE' : 'NOT_FOUND';
+            
+            // Fix: prioritize SERP exhaustion over premature lane reason codes if we actually attempted SERP
+            const didAttemptSerp = layersAttempted.includes('STAGE_4_SERP_COMPANY') || layersAttempted.includes('STAGE_5_SERP_REGISTRY') || layersAttempted.includes('STAGE_6_LLM_ORACLE');
+            
             const reasonCode = discoveredUrl
                 ? 'FOUND_COMPLETE'
-                : phoneEntityReasonCode
-                    || inputWebsiteReasonCode
-                    || (isBleeding ? 'DISCOVERY_EXHAUSTED_BLEEDING_MODE' : 'DISCOVERY_EXHAUSTED');
+                : didAttemptSerp 
+                    ? (isBleeding ? 'DISCOVERY_EXHAUSTED_BLEEDING_MODE' : 'DISCOVERY_EXHAUSTED')
+                    : (phoneEntityReasonCode || inputWebsiteReasonCode || (isBleeding ? 'DISCOVERY_EXHAUSTED_BLEEDING_MODE' : 'DISCOVERY_EXHAUSTED'));
 
             return this.buildResult(input, status, discoveredUrl, discoveryLayer, financial, decisionMaker, employees, pec, email, layersAttempted, start, reasonCode);
         }, 1); // Priority 1 (Core Pipeline)
