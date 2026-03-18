@@ -51,15 +51,15 @@ function jobToPipelineInput(job: EnrichmentJobData): Record<string, string> {
 
 function mapJobResult(job: EnrichmentJobData, pipelineResult: any): JobResult {
     const websiteUrl = pipelineResult.website?.url;
+    const vat = pipelineResult.vat || job.vat_code;
     const revenue = pipelineResult.financial?.fatturato_current || pipelineResult.financial?.revenue;
-    const revenueYear = pipelineResult.financial?.year;
     const employees = pipelineResult.employees || pipelineResult.financial?.employees;
     const reasonCode = pipelineResult.reason_code || pipelineResult.status;
 
     return {
         success: pipelineResult.status === 'FOUND_COMPLETE',
         company_id: job.company_id,
-        vat: job.vat_code,
+        vat,
         revenue,
         employees: employees ? String(employees) : undefined,
         website_found: websiteUrl ? 'true' : 'false',
@@ -87,13 +87,18 @@ function persistSuccess(job: EnrichmentJobData, pipelineResult: any, durationMs:
         insertEnrichmentResult({
             id: deterministicResultId(job.company_id),
             company_id: job.company_id,
-            vat: job.vat_code,
+            vat: result.vat,
             revenue: result.revenue,
             revenue_year: pipelineResult.financial?.year || undefined,
             employees: result.employees,
-            is_estimated_employees: false,
+            is_estimated_employees: Boolean(pipelineResult.is_estimated_employees),
             pec: pipelineResult.pec,
+            email: pipelineResult.email,
             website_validated: pipelineResult.website.url,
+            decision_maker_name: pipelineResult.decision_maker?.name,
+            decision_maker_role: pipelineResult.decision_maker?.role,
+            decision_maker_linkedin_url: pipelineResult.decision_maker?.linkedin_url,
+            decision_maker_confidence: pipelineResult.decision_maker?.confidence,
             lead_score: leadScore,
             data_source: 'omega_worker',
             discovery_method: pipelineResult.website.discovery_layer,
@@ -166,6 +171,9 @@ export async function startWorker(): Promise<void> {
         {
             connection: redisConnection,
             concurrency: config.queue.concurrencyLimit,
+            lockDuration: config.queue.lockDurationMs,
+            stalledInterval: config.queue.stalledIntervalMs,
+            maxStalledCount: config.queue.maxStalledCount,
             prefix: config.queue.prefix,
         }
     );
@@ -174,6 +182,9 @@ export async function startWorker(): Promise<void> {
         Logger.info('🏭 Worker ready', {
             queue: QUEUE_NAMES.ENRICHMENT,
             concurrency: config.queue.concurrencyLimit,
+            lockDurationMs: config.queue.lockDurationMs,
+            stalledIntervalMs: config.queue.stalledIntervalMs,
+            maxStalledCount: config.queue.maxStalledCount,
             prefix: config.queue.prefix,
         });
     });

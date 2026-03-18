@@ -1,7 +1,12 @@
 import { SerpDeduplicator } from './SerpDeduplicator';
 import { NormalizedInput } from './InputNormalizer';
 import { QuerySanitizer } from './QuerySanitizer';
-import { SerperSearchProvider } from '../enricher/core/discovery/search_provider';
+import {
+    DDGSearchProvider,
+    JinaSearchProvider,
+    SearchProvider,
+    SerperSearchProvider,
+} from '../enricher/core/discovery/search_provider';
 
 export interface FinancialData {
     fatturato_current?: number;
@@ -29,9 +34,24 @@ export class BilancioHunter {
         }
 
         let results: Array<{ url: string; title: string; snippet?: string }> = [];
-        try {
-            results = await new SerperSearchProvider().search(query);
-        } catch {
+        const providers: SearchProvider[] = [
+            new SerperSearchProvider(),
+            new JinaSearchProvider(),
+            new DDGSearchProvider(),
+        ];
+
+        for (const provider of providers) {
+            try {
+                results = await provider.search(query);
+                if (results.length > 0) {
+                    break;
+                }
+            } catch {
+                // Try the next provider. Bilancio enrichment is opportunistic.
+            }
+        }
+
+        if (results.length === 0) {
             return null;
         }
 

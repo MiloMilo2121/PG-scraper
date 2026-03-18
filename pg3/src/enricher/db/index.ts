@@ -89,7 +89,12 @@ export function initializeDatabase(): void {
             employees TEXT,
             is_estimated_employees INTEGER DEFAULT 0,
             pec TEXT,
+            email TEXT,
             website_validated TEXT,
+            decision_maker_name TEXT,
+            decision_maker_role TEXT,
+            decision_maker_linkedin_url TEXT,
+            decision_maker_confidence REAL,
             lead_score INTEGER,
             data_source TEXT,
             discovery_method TEXT,
@@ -171,6 +176,11 @@ export function initializeDatabase(): void {
         addErIfMissing('discovery_method', `ALTER TABLE enrichment_results ADD COLUMN discovery_method TEXT`);
         addErIfMissing('discovery_confidence', `ALTER TABLE enrichment_results ADD COLUMN discovery_confidence REAL`);
         addErIfMissing('reason_code', `ALTER TABLE enrichment_results ADD COLUMN reason_code TEXT`);
+        addErIfMissing('email', `ALTER TABLE enrichment_results ADD COLUMN email TEXT`);
+        addErIfMissing('decision_maker_name', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_name TEXT`);
+        addErIfMissing('decision_maker_role', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_role TEXT`);
+        addErIfMissing('decision_maker_linkedin_url', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_linkedin_url TEXT`);
+        addErIfMissing('decision_maker_confidence', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_confidence REAL`);
         addErIfMissing('updated_at', `ALTER TABLE enrichment_results ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
         addErIfMissing('deleted_at', `ALTER TABLE enrichment_results ADD COLUMN deleted_at DATETIME`);
 
@@ -242,7 +252,12 @@ export interface EnrichmentResult {
     employees?: string;
     is_estimated_employees: boolean;
     pec?: string;
+    email?: string;
     website_validated?: string;
+    decision_maker_name?: string;
+    decision_maker_role?: string;
+    decision_maker_linkedin_url?: string;
+    decision_maker_confidence?: number;
     lead_score?: number;
     data_source?: string;
     discovery_method?: string;
@@ -309,16 +324,24 @@ function initializeStatements(): void {
 
     upsertResultStmt = db.prepare(`
         INSERT INTO enrichment_results
-        (id, company_id, vat, revenue, revenue_year, employees, is_estimated_employees, pec, website_validated, lead_score, data_source, discovery_method, discovery_confidence, reason_code, enriched_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        (id, company_id, vat, revenue, revenue_year, employees, is_estimated_employees, pec, email, website_validated, decision_maker_name, decision_maker_role, decision_maker_linkedin_url, decision_maker_confidence, lead_score, data_source, discovery_method, discovery_confidence, reason_code, enriched_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(company_id) WHERE deleted_at IS NULL DO UPDATE SET
             vat = COALESCE(NULLIF(excluded.vat, ''), enrichment_results.vat),
             revenue = COALESCE(NULLIF(excluded.revenue, ''), enrichment_results.revenue),
             revenue_year = COALESCE(NULLIF(excluded.revenue_year, ''), enrichment_results.revenue_year),
             employees = COALESCE(NULLIF(excluded.employees, ''), enrichment_results.employees),
-            is_estimated_employees = COALESCE(excluded.is_estimated_employees, enrichment_results.is_estimated_employees),
+            is_estimated_employees = CASE
+                WHEN NULLIF(excluded.employees, '') IS NOT NULL THEN excluded.is_estimated_employees
+                ELSE enrichment_results.is_estimated_employees
+            END,
             pec = COALESCE(NULLIF(excluded.pec, ''), enrichment_results.pec),
+            email = COALESCE(NULLIF(excluded.email, ''), enrichment_results.email),
             website_validated = COALESCE(NULLIF(excluded.website_validated, ''), enrichment_results.website_validated),
+            decision_maker_name = COALESCE(NULLIF(excluded.decision_maker_name, ''), enrichment_results.decision_maker_name),
+            decision_maker_role = COALESCE(NULLIF(excluded.decision_maker_role, ''), enrichment_results.decision_maker_role),
+            decision_maker_linkedin_url = COALESCE(NULLIF(excluded.decision_maker_linkedin_url, ''), enrichment_results.decision_maker_linkedin_url),
+            decision_maker_confidence = COALESCE(excluded.decision_maker_confidence, enrichment_results.decision_maker_confidence),
             lead_score = COALESCE(excluded.lead_score, enrichment_results.lead_score),
             data_source = COALESCE(NULLIF(excluded.data_source, ''), enrichment_results.data_source),
             discovery_method = COALESCE(NULLIF(excluded.discovery_method, ''), enrichment_results.discovery_method),
@@ -425,7 +448,12 @@ export function insertEnrichmentResult(result: EnrichmentResult): void {
             result.employees,
             result.is_estimated_employees ? 1 : 0,
             result.pec,
+            result.email,
             result.website_validated,
+            result.decision_maker_name,
+            result.decision_maker_role,
+            result.decision_maker_linkedin_url,
+            result.decision_maker_confidence,
             result.lead_score,
             result.data_source,
             result.discovery_method,
@@ -452,7 +480,15 @@ export function insertEnrichmentResult(result: EnrichmentResult): void {
 
 export function getEnrichmentResult(companyId: string): EnrichmentResult | undefined {
     ensureReady();
-    return getResultByCompanyStmt.get(companyId) as EnrichmentResult | undefined;
+    const row = getResultByCompanyStmt.get(companyId) as (EnrichmentResult & { is_estimated_employees?: number | boolean }) | undefined;
+    if (!row) {
+        return undefined;
+    }
+
+    return {
+        ...row,
+        is_estimated_employees: Boolean(row.is_estimated_employees),
+    };
 }
 
 export function logJobResult(
@@ -487,7 +523,11 @@ export function exportEnrichedToCSV(outputPath: string): void {
     const stmt = db.prepare(`
         SELECT
             c.company_name, c.city, c.province, c.address, c.phone, c.category,
-            er.vat, er.revenue, er.employees, er.pec, er.lead_score, er.data_source, er.reason_code
+            c.email AS input_email,
+            er.vat, er.revenue, er.employees, er.is_estimated_employees, er.pec, er.email,
+            er.website_validated,
+            er.decision_maker_name, er.decision_maker_role, er.decision_maker_linkedin_url, er.decision_maker_confidence,
+            er.lead_score, er.data_source, er.reason_code
         FROM companies c
         JOIN enrichment_results er ON er.id = (
             SELECT er2.id

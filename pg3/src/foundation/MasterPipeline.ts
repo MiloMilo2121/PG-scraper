@@ -77,7 +77,22 @@ export class MasterPipeline {
             // STAGE 0: Normalize Input
             const input = this.normalizer.normalize(rawInput);
             if (input.quality_score < 0.3) {
-                return this.buildResult(input, 'NOT_FOUND', null, '', null, null, null, null, null, layersAttempted, start, 'INPUT_QUALITY_TOO_LOW');
+                return this.buildResult(
+                    input,
+                    'NOT_FOUND',
+                    null,
+                    '',
+                    null,
+                    null,
+                    null,
+                    false,
+                    null,
+                    null,
+                    null,
+                    layersAttempted,
+                    start,
+                    'INPUT_QUALITY_TOO_LOW'
+                );
             }
 
             // STAGE 1: ShadowRegistry Local Lookup
@@ -479,6 +494,7 @@ export class MasterPipeline {
             let financial = null;
             let decisionMaker = null;
             let employees = null;
+            let isEstimatedEmployees = false;
             let pec = null;
             let email = null;
 
@@ -502,6 +518,7 @@ export class MasterPipeline {
                 }
                 if (fattRes.employees && (!employees || employees === 'N/A')) {
                     employees = fattRes.employees;
+                    isEstimatedEmployees = false;
                 }
             }
             // If FatturatoItalia found something, we can consider VAT found even if website wasn't
@@ -510,21 +527,42 @@ export class MasterPipeline {
             }
 
             decisionMaker = dmRes;
+            if (empRes && !employees) {
+                employees = empRes;
+                isEstimatedEmployees = true;
+            }
             pec = contactsRes?.pec || null;
             email = contactsRes?.email || null;
 
             const status = discoveredUrl ? 'FOUND_COMPLETE' : 'NOT_FOUND';
             
-            // Fix: prioritize SERP exhaustion over premature lane reason codes if we actually attempted SERP
             const didAttemptSerp = layersAttempted.includes('STAGE_4_SERP_COMPANY') || layersAttempted.includes('STAGE_5_SERP_REGISTRY') || layersAttempted.includes('STAGE_6_LLM_ORACLE');
-            
+            const laneReasonCode = phoneEntityReasonCode || inputWebsiteReasonCode;
+
             const reasonCode = discoveredUrl
                 ? 'FOUND_COMPLETE'
-                : didAttemptSerp 
-                    ? (isBleeding ? 'DISCOVERY_EXHAUSTED_BLEEDING_MODE' : 'DISCOVERY_EXHAUSTED')
-                    : (phoneEntityReasonCode || inputWebsiteReasonCode || (isBleeding ? 'DISCOVERY_EXHAUSTED_BLEEDING_MODE' : 'DISCOVERY_EXHAUSTED'));
+                : laneReasonCode
+                    ? laneReasonCode
+                    : didAttemptSerp
+                        ? (isBleeding ? 'DISCOVERY_EXHAUSTED_BLEEDING_MODE' : 'DISCOVERY_EXHAUSTED')
+                        : (isBleeding ? 'DISCOVERY_EXHAUSTED_BLEEDING_MODE' : 'DISCOVERY_EXHAUSTED');
 
-            return this.buildResult(input, status, discoveredUrl, discoveryLayer, financial, decisionMaker, employees, pec, email, layersAttempted, start, reasonCode);
+            return this.buildResult(
+                input,
+                status,
+                discoveredUrl,
+                discoveryLayer,
+                financial,
+                decisionMaker,
+                employees,
+                isEstimatedEmployees,
+                piva,
+                pec,
+                email,
+                layersAttempted,
+                start,
+                reasonCode
+            );
         }, 1); // Priority 1 (Core Pipeline)
     }
 
@@ -536,6 +574,8 @@ export class MasterPipeline {
         fin: any,
         dm: any,
         employees: any,
+        isEstimatedEmployees: boolean,
+        vat: string | null | undefined,
         pec: any,
         email: any,
         layers: string[],
@@ -558,9 +598,11 @@ export class MasterPipeline {
                 confidence,
                 discovery_layer: discoveryLayer || layers[layers.length - 1]
             } : undefined,
+            vat: vat || undefined,
             pec: pec || undefined,
             email: email || undefined,
             employees: employees || undefined,
+            is_estimated_employees: employees ? isEstimatedEmployees : undefined,
             financial: fin || undefined,
             decision_maker: dm || undefined,
             meta: {

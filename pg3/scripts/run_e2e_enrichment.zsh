@@ -459,13 +459,18 @@ SELECT
   c.website AS original_website,
   c.vat_code AS input_vat_code,
   c.pg_url,
-  c.email,
+  c.email AS input_email,
   er.website_validated,
   er.vat,
   er.revenue,
   er.employees,
   er.is_estimated_employees,
   er.pec,
+  er.email,
+  er.decision_maker_name,
+  er.decision_maker_role,
+  er.decision_maker_linkedin_url,
+  er.decision_maker_confidence,
   er.data_source AS enrichment_source,
   er.reason_code AS enrichment_reason_code,
   er.enriched_at,
@@ -514,9 +519,11 @@ if rows:
 website_validated_count = sum(1 for r in rows if (r.get("website_validated") or "").strip())
 vat_found_count = sum(1 for r in rows if (r.get("vat") or "").strip())
 pec_found_count = sum(1 for r in rows if (r.get("pec") or "").strip())
+email_found_count = sum(1 for r in rows if (r.get("email") or "").strip())
 revenue_found_count = sum(1 for r in rows if (r.get("revenue") or "").strip())
 employees_found_count = sum(1 for r in rows if (r.get("employees") or "").strip())
 estimated_employees_count = sum(1 for r in rows if str(r.get("is_estimated_employees") or "0") in ("1", "true", "True"))
+decision_maker_found_count = sum(1 for r in rows if (r.get("decision_maker_name") or "").strip())
 
 job_status_counts = Counter((r.get("job_status") or "UNKNOWN") for r in rows)
 final_reason_code_counts = Counter((r.get("final_reason_code") or "UNKNOWN") for r in rows)
@@ -528,9 +535,11 @@ summary = {
     "website_validated_count": website_validated_count,
     "vat_found_count": vat_found_count,
     "pec_found_count": pec_found_count,
+    "email_found_count": email_found_count,
     "revenue_found_count": revenue_found_count,
     "employees_found_count": employees_found_count,
     "estimated_employees_count": estimated_employees_count,
+    "decision_maker_found_count": decision_maker_found_count,
 }
 
 summary_path = os.path.join(out_dir, "summary.json")

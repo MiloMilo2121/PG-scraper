@@ -5,6 +5,17 @@ import { ModelRouter, TaskDifficulty } from '../enricher/core/ai/model_router';
 
 export class EnrichmentPostProcessor {
     private browserPool: BrowserPool;
+    private static readonly candidatePaths = ['', '/chi-siamo', '/azienda', '/about', '/about-us', '/company', '/profilo-aziendale'];
+    private static readonly employeeCountRegexes = [
+        /\b(\d{1,4})\s+(?:dipendenti|collaboratori|persone in organico|addetti)\b/i,
+        /\bteam\s+di\s+(\d{1,4})\b/i,
+        /\borganico\s+(?:di|composto da)\s+(\d{1,4})\b/i,
+    ];
+    private static readonly employeeRangeRegexes: Array<{ pattern: RegExp; value: string }> = [
+        { pattern: /\b(?:microimpresa|piccolo team|team snello|bottega artigiana)\b/i, value: '1-10' },
+        { pattern: /\b(?:decine di dipendenti|oltre 10 dipendenti|azienda strutturata)\b/i, value: '10-50' },
+        { pattern: /\b(?:oltre 50 dipendenti|piu[ùu] di 50 dipendenti|gruppo industriale)\b/i, value: '50+' },
+    ];
 
     constructor(browserPool: BrowserPool) {
         this.browserPool = browserPool;
@@ -18,26 +29,16 @@ export class EnrichmentPostProcessor {
         try {
             console.log(`[EnrichmentPostProcessor] 🧠 Estimating employees for ${input.company_name} from ${discoveredUrl}`);
 
-            // 1. Fetch Homepage or "Chi Siamo" via Browser Pool
-            // To be fast, we just grab HomePage as Italian sites often put "Chi siamo" in the same SPA or homepage text.
-            const nav = await this.browserPool.navigateSafe(discoveredUrl);
-
-            if (nav.status !== 'OK' || !nav.html) {
+            const text = await this.loadCandidateText(discoveredUrl);
+            if (!text) {
                 console.warn(`[EnrichmentPostProcessor] Failed to load ${discoveredUrl}`);
                 return null;
             }
 
-            // Clean noise (similar to old IdentityResolver distillContent but using regex for speed without cheerios)
-            let text = nav.html
-                .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-                .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-                .replace(/<[^>]+>/g, ' ')
-                .replace(/\s+/g, ' ')
-                .trim();
-
-            if (text.length < 300) {
-                console.warn(`[EnrichmentPostProcessor] Text too short (<300 chars).`);
-                return null;
+            const heuristicEstimate = EnrichmentPostProcessor.estimateFromText(text);
+            if (heuristicEstimate) {
+                console.log(`[EnrichmentPostProcessor] ✅ Heuristic Estimated Employees: ${heuristicEstimate}`);
+                return heuristicEstimate;
             }
 
             // Ask AI using FREE LLM ModelRouter
@@ -66,5 +67,80 @@ export class EnrichmentPostProcessor {
             console.warn(`[EnrichmentPostProcessor] AI Employee Estimation failed for ${input.company_name}: ${e.message}`);
             return null;
         }
+    }
+
+    private async loadCandidateText(discoveredUrl: string): Promise<string | null> {
+        const chunks: string[] = [];
+        const seen = new Set<string>();
+
+        for (const path of EnrichmentPostProcessor.candidatePaths) {
+            const url = this.resolveUrl(discoveredUrl, path);
+            if (!url || seen.has(url)) {
+                continue;
+            }
+            seen.add(url);
+
+            const nav = await this.browserPool.navigateSafe(url);
+            if (nav.status !== 'OK' || !nav.html) {
+                continue;
+            }
+
+            const cleaned = EnrichmentPostProcessor.cleanHtml(nav.html);
+            if (cleaned.length >= 40) {
+                chunks.push(cleaned);
+            }
+            if (chunks.join(' ').length >= 2000) {
+                break;
+            }
+        }
+
+        const combined = chunks.join('\n');
+        return combined.length >= 40 ? combined : null;
+    }
+
+    private resolveUrl(baseUrl: string, path: string): string | null {
+        try {
+            return path ? new URL(path, baseUrl).toString() : baseUrl;
+        } catch {
+            return path ? null : baseUrl;
+        }
+    }
+
+    private static cleanHtml(html: string): string {
+        return html
+            .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
+            .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    private static estimateFromText(text: string): string | null {
+        for (const { pattern, value } of EnrichmentPostProcessor.employeeRangeRegexes) {
+            if (pattern.test(text)) {
+                return value;
+            }
+        }
+
+        for (const pattern of EnrichmentPostProcessor.employeeCountRegexes) {
+            const match = text.match(pattern);
+            if (!match) {
+                continue;
+            }
+
+            const count = Number.parseInt(match[1], 10);
+            if (!Number.isFinite(count) || count <= 0) {
+                continue;
+            }
+            if (count <= 10) {
+                return '1-10';
+            }
+            if (count <= 50) {
+                return '10-50';
+            }
+            return '50+';
+        }
+
+        return null;
     }
 }

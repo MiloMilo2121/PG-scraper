@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { Logger } from '../../utils/logger';
 import { BingSerpAnalyzer, SerpResult } from './serp_analyzer';
 import { DuckDuckGoSerpAnalyzer } from './ddg_analyzer';
@@ -7,6 +8,100 @@ import { ScraperClient } from '../../utils/scraper_client';
 
 export interface SearchProvider {
     search(query: string): Promise<SerpResult[]>;
+}
+
+interface SerperOrganicResult {
+    title?: string;
+    link?: string;
+    snippet?: string;
+}
+
+interface JinaSearchItem {
+    title?: string;
+    url?: string;
+    content?: string;
+}
+
+interface JinaSearchResponse {
+    data?: JinaSearchItem[];
+}
+
+/**
+ * Compatibility shim for callers that still expect Google SERP access via Serper.
+ * Recent provider cleanup removed this class, but multiple enrichment paths still import it.
+ */
+export class SerperSearchProvider implements SearchProvider {
+    async search(query: string): Promise<SerpResult[]> {
+        const apiKey = process.env.SERPER_API_KEY?.trim();
+        if (!apiKey) {
+            Logger.warn('[SerperProvider] SERPER_API_KEY not set. Cannot search.');
+            return [];
+        }
+
+        Logger.info(`[SerperProvider] Searching: "${query}"`);
+
+        const response = await fetch('https://google.serper.dev/search', {
+            method: 'POST',
+            headers: {
+                'X-API-KEY': apiKey,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                q: query,
+                gl: 'it',
+                hl: 'it',
+            }),
+        });
+
+        if (!response.ok) {
+            if (response.status === 403) Logger.error('[SerperProvider] Invalid API Key');
+            if (response.status === 429) Logger.warn('[SerperProvider] Rate Limit Exceeded');
+            if (response.status === 400) Logger.warn('[SerperProvider] Out of Credits or bad request');
+            throw new Error(`Serper API error: ${response.status} ${response.statusText}`);
+        }
+
+        const data = (await response.json()) as { organic?: SerperOrganicResult[] };
+        return (data.organic || [])
+            .filter((result) => typeof result.link === 'string' && result.link.trim() !== '')
+            .map((result) => ({
+                title: result.title || '',
+                url: result.link!,
+                snippet: result.snippet || '',
+                source: 'serper_google',
+            } as SerpResult));
+    }
+}
+
+/**
+ * Compatibility shim for enrichment paths that use Jina search/read as a cheap fallback.
+ */
+export class JinaSearchProvider implements SearchProvider {
+    @Retry({ attempts: 3, delay: 2000, backoff: 'fixed' })
+    async search(query: string): Promise<SerpResult[]> {
+        const apiKey = process.env.JINA_API_KEY?.trim();
+        if (!apiKey) {
+            Logger.warn('[JinaProvider] JINA_API_KEY not set.');
+            return [];
+        }
+
+        Logger.info(`[JinaProvider] Searching: "${query}"`);
+        const response = await axios.get<JinaSearchResponse>(`https://s.jina.ai/${encodeURIComponent(query)}`, {
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                Accept: 'application/json',
+            },
+            timeout: 15000,
+        });
+
+        return (response.data.data || [])
+            .filter((result) => typeof result.url === 'string' && result.url.trim() !== '')
+            .map((result) => ({
+                title: result.title || '',
+                url: result.url!,
+                snippet: result.content || '',
+                source: 'jina_ai',
+            } as SerpResult));
+    }
 }
 
 export class DDGSearchProvider implements SearchProvider {

@@ -49,6 +49,11 @@ describe('DB persistence', () => {
       company_id: 'cmp-1',
       vat: '01114601006',
       pec: 'pec@acme.pec.it',
+      email: 'ceo@acme.it',
+      decision_maker_name: 'Mario Rossi',
+      decision_maker_role: 'CEO',
+      decision_maker_linkedin_url: 'https://linkedin.com/in/mario-rossi',
+      decision_maker_confidence: 0.91,
       is_estimated_employees: false,
       data_source: 'WEBSITE',
       reason_code: 'MATCHED_SITE',
@@ -57,9 +62,13 @@ describe('DB persistence', () => {
     const rawDb = dbModule.default as any;
     const versions = rawDb.prepare('SELECT COUNT(*) as count FROM enrichment_result_versions WHERE result_id = ?').get('res-1');
     const evidence = rawDb.prepare('SELECT COUNT(*) as count FROM field_evidence WHERE entity_id = ?').get('res-1');
+    const persisted = dbModule.getEnrichmentResult('cmp-1');
 
     expect(versions.count).toBe(1);
     expect(evidence.count).toBeGreaterThan(0);
+    expect(persisted?.email).toBe('ceo@acme.it');
+    expect(persisted?.decision_maker_name).toBe('Mario Rossi');
+    expect(persisted?.decision_maker_linkedin_url).toBe('https://linkedin.com/in/mario-rossi');
   });
 
   it('keeps a single active enrichment row per company across reruns', () => {
@@ -142,9 +151,60 @@ describe('DB persistence', () => {
     const header = csv.split('\n')[0];
     const gammaRows = csv.split('\n').filter((line) => line.includes('"Gamma"'));
     expect(header).toContain('reason_code');
+    expect(header).toContain('decision_maker_name');
     expect(gammaRows.length).toBe(1);
     expect(gammaRows[0]).toContain('"20"');
     expect(gammaRows[0]).toContain('"FOUND_COMPLETE"');
+  });
+
+  it('merges runtime-discovered fields without dropping non-empty values', () => {
+    dbModule.insertCompany({
+      id: 'cmp-runtime',
+      company_name: 'Epsilon',
+      city: 'Verona',
+      email: 'info@epsilon.it',
+    });
+
+    dbModule.insertEnrichmentResult({
+      id: 'res-runtime-1',
+      company_id: 'cmp-runtime',
+      vat: '12345678901',
+      email: 'sales@epsilon.it',
+      decision_maker_name: 'Giulia Bianchi',
+      decision_maker_role: 'Founder',
+      decision_maker_linkedin_url: 'https://linkedin.com/in/giulia-bianchi',
+      decision_maker_confidence: 0.88,
+      employees: '10-50',
+      is_estimated_employees: true,
+      website_validated: 'https://epsilon.it',
+      data_source: 'omega_worker',
+      reason_code: 'FOUND_COMPLETE',
+    });
+
+    dbModule.insertEnrichmentResult({
+      id: 'res-runtime-2',
+      company_id: 'cmp-runtime',
+      vat: '',
+      email: '',
+      decision_maker_name: '',
+      decision_maker_role: '',
+      decision_maker_linkedin_url: '',
+      employees: '',
+      is_estimated_employees: false,
+      website_validated: 'https://www.epsilon.it',
+      data_source: 'omega_worker',
+      reason_code: 'FOUND_COMPLETE',
+    });
+
+    const persisted = dbModule.getEnrichmentResult('cmp-runtime');
+    expect(persisted?.vat).toBe('12345678901');
+    expect(persisted?.email).toBe('sales@epsilon.it');
+    expect(persisted?.decision_maker_name).toBe('Giulia Bianchi');
+    expect(persisted?.decision_maker_role).toBe('Founder');
+    expect(persisted?.decision_maker_linkedin_url).toBe('https://linkedin.com/in/giulia-bianchi');
+    expect(persisted?.employees).toBe('10-50');
+    expect(persisted?.is_estimated_employees).toBe(true);
+    expect(persisted?.website_validated).toBe('https://www.epsilon.it');
   });
 
   it('enforces at most one active enrichment row per company at schema level', () => {
