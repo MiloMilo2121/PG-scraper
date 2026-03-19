@@ -26,6 +26,30 @@ interface JinaSearchResponse {
     data?: JinaSearchItem[];
 }
 
+interface BraveApiWebResult {
+    title?: string;
+    url?: string;
+    description?: string;
+    extra_snippets?: string[];
+}
+
+interface BraveApiResponse {
+    web?: {
+        results?: BraveApiWebResult[];
+    };
+}
+
+interface TavilySearchItem {
+    title?: string;
+    url?: string;
+    content?: string;
+    raw_content?: string | null;
+}
+
+interface TavilySearchResponse {
+    results?: TavilySearchItem[];
+}
+
 /**
  * Compatibility shim for callers that still expect Google SERP access via Serper.
  * Recent provider cleanup removed this class, but multiple enrichment paths still import it.
@@ -100,6 +124,90 @@ export class JinaSearchProvider implements SearchProvider {
                 url: result.url!,
                 snippet: result.content || '',
                 source: 'jina_ai',
+            } as SerpResult));
+    }
+}
+
+export class BraveApiSearchProvider implements SearchProvider {
+    @Retry({ attempts: 3, delay: 2000, backoff: 'fixed' })
+    async search(query: string): Promise<SerpResult[]> {
+        const apiKey = process.env.BRAVE_SEARCH_API_KEY?.trim();
+        if (!apiKey) {
+            Logger.warn('[BraveApiProvider] BRAVE_SEARCH_API_KEY not set.');
+            return [];
+        }
+
+        Logger.info(`[BraveApiProvider] Searching: "${query}"`);
+
+        const url = new URL('https://api.search.brave.com/res/v1/web/search');
+        url.searchParams.set('q', query);
+        url.searchParams.set('country', 'IT');
+        url.searchParams.set('search_lang', 'it');
+        url.searchParams.set('ui_lang', 'it-IT');
+        url.searchParams.set('count', '10');
+        url.searchParams.set('extra_snippets', 'true');
+
+        const response = await fetch(url.toString(), {
+            headers: {
+                'Accept': 'application/json',
+                'X-Subscription-Token': apiKey,
+            },
+        });
+
+        if (!response.ok) {
+            throw new Error(`Brave API error: ${response.status} ${response.statusText}`);
+        }
+
+        const data = (await response.json()) as BraveApiResponse;
+        return (data.web?.results || [])
+            .filter((result) => typeof result.url === 'string' && result.url.trim() !== '')
+            .map((result) => ({
+                title: result.title || '',
+                url: result.url!,
+                snippet: [result.description, ...(result.extra_snippets || [])].filter(Boolean).join(' | '),
+                source: 'brave_api',
+            } as SerpResult));
+    }
+}
+
+export class TavilySearchProvider implements SearchProvider {
+    @Retry({ attempts: 3, delay: 2000, backoff: 'fixed' })
+    async search(query: string): Promise<SerpResult[]> {
+        const apiKey = process.env.TAVILY_API_KEY?.trim();
+        if (!apiKey) {
+            Logger.warn('[TavilyProvider] TAVILY_API_KEY not set.');
+            return [];
+        }
+
+        Logger.info(`[TavilyProvider] Searching: "${query}"`);
+
+        const response = await fetch('https://api.tavily.com/search', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                query,
+                search_depth: 'basic',
+                max_results: 10,
+                include_answer: false,
+                include_raw_content: false,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Tavily API error: ${response.status} ${response.statusText}`);
+        }
+
+        const data = (await response.json()) as TavilySearchResponse;
+        return (data.results || [])
+            .filter((result) => typeof result.url === 'string' && result.url.trim() !== '')
+            .map((result) => ({
+                title: result.title || '',
+                url: result.url!,
+                snippet: result.content || result.raw_content || '',
+                source: 'tavily_search',
             } as SerpResult));
     }
 }

@@ -65,7 +65,17 @@ async function startupGate(): Promise<{ mode: 'FULL' | 'FREE_ONLY' | 'ABORT', av
     let paidOk = false;
     let freeOk = false;
 
-    const keys = ['SERPER_API_KEY', 'JINA_API_KEY', 'OPENAI_API_KEY', 'PERPLEXITY_API_KEY', 'DEEPSEEK_API_KEY', 'KIMI_API_KEY', 'Z_AI_API_KEY'];
+    const keys = [
+        'SERPER_API_KEY',
+        'BRAVE_SEARCH_API_KEY',
+        'TAVILY_API_KEY',
+        'JINA_API_KEY',
+        'OPENAI_API_KEY',
+        'PERPLEXITY_API_KEY',
+        'DEEPSEEK_API_KEY',
+        'KIMI_API_KEY',
+        'Z_AI_API_KEY',
+    ];
     for (const k of keys) {
         const val = process.env[k];
         if (val && val.trim() !== '' && !val.includes('your-') && !val.includes('xxx')) {
@@ -85,7 +95,7 @@ async function startupGate(): Promise<{ mode: 'FULL' | 'FREE_ONLY' | 'ABORT', av
     if (!paidOk) {
         console.log('🟡 FREE-ONLY MODE: Tutti i provider a pagamento sono invalidi o non configurati.');
         console.log('   Il batch girerà SOLO con risorse gratuite e Jina senza key.');
-        return { mode: 'FREE_ONLY', available: ['DNS-MX-MINING', 'CRTSH', 'DDG', 'BRAVE', 'BING', 'JINA'] };
+        return { mode: 'FREE_ONLY', available: ['DNS-MX-MINING', 'CRTSH', 'DDG', 'BRAVE-HTML', 'BING', 'JINA'] };
     }
 
     console.log(`🟢 FULL MODE: Provider operativi rilevati: ${available.join(', ')}`);

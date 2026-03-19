@@ -108,6 +108,68 @@ const providers: ProviderTest[] = [
         }
     },
 
+    {
+        name: 'Brave Search API',
+        tier: 2,
+        envKey: 'BRAVE_SEARCH_API_KEY',
+        test: async () => {
+            const key = process.env.BRAVE_SEARCH_API_KEY;
+            if (!key || !key.trim() || key.includes('your-') || key.includes('xxx')) {
+                return { ok: false, detail: 'Key mancante o placeholder' };
+            }
+            try {
+                const res = await fetch('https://api.search.brave.com/res/v1/web/search?q=test+italia&count=3&country=IT&search_lang=it', {
+                    signal: AbortSignal.timeout(15000),
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-Subscription-Token': key.trim(),
+                    },
+                });
+                if (res.status === 401) return { ok: false, detail: 'HTTP 401: Key invalida' };
+                if (res.status === 429) return { ok: true, detail: 'HTTP 429: Key valida ma rate-limited' };
+                const data = await res.json();
+                return { ok: res.ok, detail: `HTTP ${res.status}, ${data.web?.results?.length || 0} results` };
+            } catch (e: any) {
+                return { ok: false, detail: `Error: ${e.message}` };
+            }
+        }
+    },
+
+    {
+        name: 'Tavily Search',
+        tier: 2,
+        envKey: 'TAVILY_API_KEY',
+        test: async () => {
+            const key = process.env.TAVILY_API_KEY;
+            if (!key || !key.trim() || key.includes('your-') || key.includes('xxx')) {
+                return { ok: false, detail: 'Key mancante o placeholder' };
+            }
+            try {
+                const res = await fetch('https://api.tavily.com/search', {
+                    method: 'POST',
+                    signal: AbortSignal.timeout(15000),
+                    headers: {
+                        'Authorization': `Bearer ${key.trim()}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        query: 'test italia',
+                        search_depth: 'basic',
+                        max_results: 3,
+                        include_answer: false,
+                        include_raw_content: false,
+                    }),
+                });
+                if (res.status === 401) return { ok: false, detail: 'HTTP 401: Key invalida' };
+                if (res.status === 429) return { ok: true, detail: 'HTTP 429: Key valida ma rate-limited' };
+                const data = await res.json();
+                return { ok: res.ok, detail: `HTTP ${res.status}, ${data.results?.length || 0} results` };
+            } catch (e: any) {
+                return { ok: false, detail: `Error: ${e.message}` };
+            }
+        }
+    },
+
     // ─── TIER 2: CHEAP API ───
     {
         name: 'Serper.dev',
@@ -282,7 +344,7 @@ function validateEnvKeys() {
     console.log('═══════════════════════════════════════════════════════\n');
 
     const keysToCheck = [
-        'SERPER_API_KEY', 'JINA_API_KEY', 'DEEPSEEK_API_KEY', 'KIMI_API_KEY',
+        'SERPER_API_KEY', 'BRAVE_SEARCH_API_KEY', 'TAVILY_API_KEY', 'JINA_API_KEY', 'DEEPSEEK_API_KEY', 'KIMI_API_KEY',
         'OPENAI_API_KEY', 'PERPLEXITY_API_KEY', 'SCRAPE_DO_TOKEN',
     ];
 

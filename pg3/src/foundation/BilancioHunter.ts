@@ -2,10 +2,12 @@ import { SerpDeduplicator } from './SerpDeduplicator';
 import { NormalizedInput } from './InputNormalizer';
 import { QuerySanitizer } from './QuerySanitizer';
 import {
+    BraveApiSearchProvider,
     DDGSearchProvider,
     JinaSearchProvider,
     SearchProvider,
     SerperSearchProvider,
+    TavilySearchProvider,
 } from '../enricher/core/discovery/search_provider';
 
 export interface FinancialData {
@@ -36,6 +38,8 @@ export class BilancioHunter {
         let results: Array<{ url: string; title: string; snippet?: string }> = [];
         const providers: SearchProvider[] = [
             new SerperSearchProvider(),
+            new BraveApiSearchProvider(),
+            new TavilySearchProvider(),
             new JinaSearchProvider(),
             new DDGSearchProvider(),
         ];

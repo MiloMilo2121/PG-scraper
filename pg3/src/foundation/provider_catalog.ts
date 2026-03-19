@@ -1,10 +1,13 @@
 import { OpenAI } from 'openai';
 import {
+    BraveApiSearchProvider,
     BingSearchProvider,
     BraveSearchProvider,
     CrtShProvider,
     DDGSearchProvider,
+    SerperSearchProvider,
     SearXNGProvider,
+    TavilySearchProvider,
 } from '../enricher/core/discovery/search_provider';
 import { MxDiscoveryProvider } from '../enricher/core/discovery/mx_discovery_provider';
 import { PerplexityProvider } from '../enricher/core/discovery/perplexity_provider';
@@ -28,6 +31,9 @@ function parseJsonPayload<T>(raw: string): T {
 const BRIGHTDATA_WEB_UNLOCKER_COST_EUR = usdToEur(1.5 / 1000);
 
 export const SERP_PROVIDER_ORDER = [
+    'SERPER-API-1',
+    'BRAVE-API-1',
+    'TAVILY-API-2',
     'DNS-MX-MINING-0',
     'CRTSH-API-1',
     'DDG-LITE-1',
@@ -62,6 +68,33 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
                 const provider = new CrtShProvider();
+                return (await provider.search(query)) as unknown as T;
+            }
+        }],
+        ['SERPER-API-1', {
+            costPerRequest: 0.001,
+            tier: 1,
+            execute: async <T>(payload: any): Promise<T> => {
+                const query = typeof payload === 'string' ? payload : payload.query;
+                const provider = new SerperSearchProvider();
+                return (await provider.search(query)) as unknown as T;
+            }
+        }],
+        ['BRAVE-API-1', {
+            costPerRequest: 0.001,
+            tier: 1,
+            execute: async <T>(payload: any): Promise<T> => {
+                const query = typeof payload === 'string' ? payload : payload.query;
+                const provider = new BraveApiSearchProvider();
+                return (await provider.search(query)) as unknown as T;
+            }
+        }],
+        ['TAVILY-API-2', {
+            costPerRequest: 0.001,
+            tier: 2,
+            execute: async <T>(payload: any): Promise<T> => {
+                const query = typeof payload === 'string' ? payload : payload.query;
+                const provider = new TavilySearchProvider();
                 return (await provider.search(query)) as unknown as T;
             }
         }],

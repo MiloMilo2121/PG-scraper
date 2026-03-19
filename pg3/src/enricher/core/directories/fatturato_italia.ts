@@ -283,7 +283,7 @@ export class FatturatoItaliaHarvester {
 
   /**
    * Strategy 2: Search via DDG for the company on fatturatoitalia.it.
-   * Prefer Jina when configured, then fall back to DDG.
+   * Prefer official APIs first, then fall back to HTML search.
    */
   private static async searchForCompany(companyName: string, vat?: string): Promise<FatturatoItaliaResult | null> {
     const query = vat
@@ -292,12 +292,29 @@ export class FatturatoItaliaHarvester {
 
     Logger.info(`[FatturatoItalia] 🔍 Searching: ${query}`);
 
-    try {
-      const { SerperSearchProvider } = await import('../discovery/search_provider');
-      const serper = new SerperSearchProvider();
-      const results = await serper.search(query);
+    const {
+      BraveApiSearchProvider,
+      DDGSearchProvider,
+      JinaSearchProvider,
+      SerperSearchProvider,
+      TavilySearchProvider,
+    } = await import('../discovery/search_provider');
 
-      if (results && results.length > 0) {
+    const providers = [
+      { name: 'Serper', provider: new SerperSearchProvider() },
+      { name: 'Brave API', provider: new BraveApiSearchProvider() },
+      { name: 'Tavily', provider: new TavilySearchProvider() },
+      { name: 'Jina', provider: new JinaSearchProvider() },
+      { name: 'DDG', provider: new DDGSearchProvider() },
+    ];
+
+    for (const { name, provider } of providers) {
+      try {
+        const results = await provider.search(query);
+        if (!results || results.length === 0) {
+          continue;
+        }
+
         const fiResult = results.find((r: { url: string }) =>
           r.url.includes('fatturatoitalia.it/') &&
           !r.url.endsWith('fatturatoitalia.it/') &&
@@ -306,56 +323,12 @@ export class FatturatoItaliaHarvester {
         );
 
         if (fiResult) {
-          Logger.info(`[FatturatoItalia] 🔗 Serper search found: ${fiResult.url}`);
+          Logger.info(`[FatturatoItalia] 🔗 ${name} search found: ${fiResult.url}`);
           return await this.fetchAndParse(fiResult.url);
         }
+      } catch (e) {
+        Logger.warn(`[FatturatoItalia] ${name} search failed`, { error: e as Error });
       }
-    } catch (e) {
-      Logger.warn(`[FatturatoItalia] Serper search failed, trying Jina fallback`, { error: e as Error });
-    }
-
-    try {
-      const { JinaSearchProvider } = await import('../discovery/search_provider');
-      const jina = new JinaSearchProvider();
-      const results = await jina.search(query);
-
-      if (results && results.length > 0) {
-        const fiResult = results.find((r: { url: string }) =>
-          r.url.includes('fatturatoitalia.it/') &&
-          !r.url.endsWith('fatturatoitalia.it/') &&
-          !r.url.includes('/comune/') &&
-          !r.url.includes('/come-funziona'),
-        );
-
-        if (fiResult) {
-          Logger.info(`[FatturatoItalia] 🔗 Jina search found: ${fiResult.url}`);
-          return await this.fetchAndParse(fiResult.url);
-        }
-      }
-    } catch (e) {
-      Logger.warn(`[FatturatoItalia] Jina search unavailable; trying DDG fallback`, { error: e as Error });
-    }
-
-    try {
-      const { DDGSearchProvider } = await import('../discovery/search_provider');
-      const ddg = new DDGSearchProvider();
-      const results = await ddg.search(query);
-
-      if (results && results.length > 0) {
-        const fiResult = results.find((r: { url: string }) =>
-          r.url.includes('fatturatoitalia.it/') &&
-          !r.url.endsWith('fatturatoitalia.it/') &&
-          !r.url.includes('/comune/') &&
-          !r.url.includes('/come-funziona'),
-        );
-
-        if (fiResult) {
-          Logger.info(`[FatturatoItalia] 🔗 DDG search found: ${fiResult.url}`);
-          return await this.fetchAndParse(fiResult.url);
-        }
-      }
-    } catch (e) {
-      Logger.warn(`[FatturatoItalia] DDG fallback failed`, { error: e as Error });
     }
 
     Logger.info(`[FatturatoItalia] ❌ No search results for "${companyName}"`);

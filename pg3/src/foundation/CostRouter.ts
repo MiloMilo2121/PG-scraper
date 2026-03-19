@@ -255,7 +255,19 @@ export class CostRouter {
                 
                 // For 403/429, only exhaust if it's a direct API provider, NOT a proxy-scraping provider where 403 is just a target website block
                 if (statusCode === 403 || statusCode === 429) {
-                    const isDirectApi = providerId.includes('serper') || providerId.includes('jina') || providerId.includes('k2') || providerId.includes('glm') || providerId.includes('gpt') || providerId.includes('deepseek') || providerId.includes('kimi') || messageString.includes('insufficient_quota');
+                    const providerIdLower = providerId.toLowerCase();
+                    const isDirectApi = providerIdLower.includes('serper')
+                        || providerIdLower.includes('jina')
+                        || providerIdLower.includes('tavily')
+                        || providerIdLower.includes('brave-api')
+                        || providerIdLower.includes('exa')
+                        || providerIdLower.includes('k2')
+                        || providerIdLower.includes('glm')
+                        || providerIdLower.includes('gpt')
+                        || providerIdLower.includes('deepseek')
+                        || providerIdLower.includes('kimi')
+                        || providerIdLower.includes('perplexity')
+                        || messageString.includes('insufficient_quota');
                     if (isDirectApi) {
                         this.credits.set(providerId, 0);
                     }
