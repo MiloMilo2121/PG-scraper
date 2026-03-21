@@ -14,7 +14,10 @@ export class RdapValidator {
         let confidenceBoost = 0;
 
         try {
-            const cleanDomain = domain.replace(/^www\./i, '').toLowerCase();
+            const cleanDomain = this.normalizeDomainInput(domain);
+            if (!cleanDomain) {
+                return 0;
+            }
             const tld = cleanDomain.split('.').pop();
 
             // Determina l'endpoint migliore. rdap.nic.it per i .it è molto veloce.
@@ -43,7 +46,8 @@ export class RdapValidator {
             const rdapStringPayload = JSON.stringify(data).toLowerCase();
 
             // Check 1: P.IVA / VAT ID Match (Golden Signal)
-            const piva = (company as any).piva?.replace(/[^0-9]/g, '');
+            const piva = ((company as any).piva || (company as any).vat_code || (company as any).vat || '')
+                .replace(/[^0-9]/g, '');
             if (piva && piva.length >= 11 && rdapStringPayload.includes(piva)) {
                 Logger.info(`[RDAPValidator] 🎯 BINGO! Found exact P.IVA ${piva} in WHOIS/RDAP for ${cleanDomain}`);
                 return 0.9;
@@ -86,6 +90,27 @@ export class RdapValidator {
         }
 
         return confidenceBoost;
+    }
+
+    private static normalizeDomainInput(domain: string): string | undefined {
+        const trimmed = (domain || '').trim().toLowerCase();
+        if (!trimmed) {
+            return undefined;
+        }
+
+        try {
+            const withProtocol = /^[a-z]+:\/\//i.test(trimmed) ? trimmed : `https://${trimmed.replace(/^\/+/, '')}`;
+            const hostname = new URL(withProtocol).hostname.replace(/^www\./i, '').toLowerCase();
+            return hostname || undefined;
+        } catch {
+            const fallback = trimmed
+                .replace(/^www\./i, '')
+                .replace(/^https?:\/\//i, '')
+                .split('/')[0]
+                .replace(/:\d+$/, '')
+                .trim();
+            return fallback.includes('.') ? fallback : undefined;
+        }
     }
 
     private static tokenizeCompanyName(name: string): string[] {

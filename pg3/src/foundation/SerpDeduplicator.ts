@@ -4,12 +4,13 @@ import { EnrichmentBuffer } from './EnrichmentBuffer';
 import { NormalizedInput } from './InputNormalizer';
 import { RateLimitError } from 'openai'; // or our own
 import { PagineGialleHarvester } from '../enricher/core/directories/paginegialle';
+import { ContentFilter } from '../enricher/core/discovery/content_filter';
 
 export interface CleanSearchResult {
     title: string;
     snippet: string;
     url: string;
-    source: 'jina' | 'ddg' | 'bing' | 'brave' | 'serper_google' | 'crtsh' | 'searxng' | 'dns_mx' | 'free_aggr';
+    source: string;
     normalized_url: string;
     domain: string;
 }
@@ -59,6 +60,109 @@ export class SerpDeduplicator {
         }
     }
 
+    private tokenizeCompanyNames(input: NormalizedInput): string[] {
+        const variants = input.company_name_variants?.length > 0
+            ? input.company_name_variants
+            : [input.company_name];
+
+        return Array.from(new Set(
+            variants
+                .flatMap((variant) => variant
+                    .toLowerCase()
+                    .replace(/s\.?r\.?l\.?|s\.?n\.?c\.?|s\.?p\.?a\.?|s\.?a\.?s\.?|s\.?r\.?l\.?s\.?|unipersonale|in liquidazione|di |\&|snc|srl|sas|spa/gi, ' ')
+                    .replace(/[^a-z0-9\s]/g, ' ')
+                    .split(/\s+/)
+                )
+                .filter((token) => token.length >= 3)
+        ));
+    }
+
+    private extractInlineDomains(text: string): string[] {
+        const domainRegex = /(?:https?:\/\/)?(?:www\.)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)/gi;
+        const domains = new Set<string>();
+        const rawText = text || '';
+
+        for (const match of rawText.matchAll(domainRegex)) {
+            const domain = (match[1] || '')
+                .replace(/^www\./i, '')
+                .replace(/[),.;:]+$/g, '')
+                .toLowerCase();
+
+            if (!domain.includes('.')) {
+                continue;
+            }
+
+            if (ContentFilter.isDirectoryOrSocial(domain)) {
+                continue;
+            }
+
+            domains.add(`https://www.${domain}`);
+        }
+
+        return Array.from(domains);
+    }
+
+    private scoreCompanyCandidate(
+        result: Pick<CleanSearchResult, 'title' | 'snippet' | 'url' | 'domain'>,
+        input: NormalizedInput,
+        piva?: string,
+    ): number {
+        const haystack = `${result.title || ''} ${result.snippet || ''}`.toLowerCase();
+        const companyTokens = this.tokenizeCompanyNames(input);
+        const locationSignals = [input.city, input.provincia]
+            .filter(Boolean)
+            .map((value) => (value || '').toLowerCase());
+        const compactVariants = Array.from(new Set(
+            (input.company_name_variants?.length ? input.company_name_variants : [input.company_name])
+                .map((variant) => variant.toLowerCase().replace(/[^a-z0-9]/g, ''))
+                .filter((variant) => variant.length >= 4)
+        ));
+
+        let score = 0;
+
+        const matchedTokens = companyTokens.filter((token) => haystack.includes(token));
+        if (companyTokens.length > 0) {
+            score += (matchedTokens.length / companyTokens.length) * 0.35;
+        }
+
+        if (locationSignals.some((signal) => signal && haystack.includes(signal))) {
+            score += 0.10;
+        }
+
+        if (/(contatti|chi siamo|azienda|about|privacy|partita iva|p\.?\s*iva|sito ufficiale)/i.test(haystack)) {
+            score += 0.12;
+        }
+
+        if (piva) {
+            const cleanPiva = piva.replace(/[^0-9]/g, '');
+            if (cleanPiva.length === 11 && haystack.replace(/[^0-9]/g, '').includes(cleanPiva)) {
+                score += 0.35;
+            }
+        }
+
+        const domain = result.domain.toLowerCase();
+        const domainSlug = domain.split('.')[0];
+        if (compactVariants.some((variant) => domainSlug === variant)) {
+            score += 0.45;
+        } else if (compactVariants.some((variant) => domainSlug.includes(variant) || variant.includes(domainSlug))) {
+            score += 0.28;
+        } else if (compactVariants.some((variant) => variant.length >= 6 && domainSlug.startsWith(variant.substring(0, 6)))) {
+            score += 0.15;
+        }
+
+        if (domain.endsWith('.it')) {
+            score += 0.05;
+        } else if (domain.endsWith('.com') || domain.endsWith('.eu')) {
+            score += 0.03;
+        }
+
+        if (ContentFilter.isDirectoryLikeTitle(result.title || '')) {
+            score -= 0.20;
+        }
+
+        return score;
+    }
+
     public async search(companyId: string, input: NormalizedInput, target: 'company' | 'linkedin' | 'registry' | 'bilancio', options?: { maxTier?: number, piva?: string }): Promise<SearchOutput> {
         const variants = this.querySanitizer.buildQueryVariants(input, target, options?.piva);
 
@@ -79,8 +183,27 @@ export class SerpDeduplicator {
 
                 if (routeResult.data && routeResult.data.length > 0) {
                     rawResults.push(...routeResult.data);
-                    // We stop trying more variants at the first decent hit to save €€ / rate limits
-                    if (routeResult.data.length >= 3) {
+                    const strongSignals = target === 'company'
+                        ? routeResult.data.filter((result) => {
+                            if (!result?.url) {
+                                return false;
+                            }
+                            const { domain } = this.normalizeUrl(result.url);
+                            return this.scoreCompanyCandidate({
+                                title: result.title || '',
+                                snippet: result.snippet || '',
+                                url: result.url,
+                                domain,
+                            }, input, options?.piva) >= 0.60;
+                        }).length
+                        : routeResult.data.length;
+
+                    if (
+                        (target !== 'company' && routeResult.data.length >= 3)
+                        || rawResults.length >= 12
+                        || (target === 'company' && strongSignals >= 2)
+                        || (target === 'company' && strongSignals >= 1 && rawResults.length >= 6)
+                    ) {
                         break;
                     }
                 }
@@ -98,6 +221,26 @@ export class SerpDeduplicator {
             if (!raw.url) continue;
 
             let { normalized, domain } = this.normalizeUrl(raw.url);
+            const inlineDomainCandidates = target === 'company'
+                ? this.extractInlineDomains(`${raw.title || ''} ${raw.snippet || ''}`)
+                : [];
+
+            for (const inlineCandidate of inlineDomainCandidates) {
+                const inlineParsed = this.normalizeUrl(inlineCandidate);
+                if (uniqueDomains.has(inlineParsed.domain) || NOISE_DOMAINS.has(inlineParsed.domain)) {
+                    continue;
+                }
+
+                cleanResults.push({
+                    title: raw.title || '',
+                    snippet: raw.snippet || '',
+                    url: inlineCandidate,
+                    source: 'inline_domain',
+                    normalized_url: inlineParsed.normalized,
+                    domain: inlineParsed.domain,
+                });
+                uniqueDomains.add(inlineParsed.domain);
+            }
 
             if (uniqueDomains.has(domain)) continue;
 
@@ -162,8 +305,14 @@ export class SerpDeduplicator {
             await this.buffer.saveRunnerUps(companyId, linkedinBuffer);
         }
 
+        const rankedResults = target === 'company'
+            ? [...cleanResults].sort((left, right) =>
+                this.scoreCompanyCandidate(right, input, options?.piva) - this.scoreCompanyCandidate(left, input, options?.piva)
+            )
+            : cleanResults;
+
         return {
-            results: cleanResults.slice(0, 10),
+            results: rankedResults.slice(0, 10),
             linkedin_buffered: linkedinBuffer.length,
             queries_tried: queriesTried,
             providers_used: Array.from(providersUsed)

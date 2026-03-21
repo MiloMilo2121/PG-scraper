@@ -99,6 +99,7 @@ export class InputWebsiteCandidate {
     private static buildCandidates(normalizedUrl: string): string[] {
         const parsed = new URL(normalizedUrl);
         const hostWithoutWww = parsed.hostname.replace(/^www\./, '');
+        const registrableHost = this.toRegistrableHost(hostWithoutWww);
         const path = parsed.pathname || '';
         const hasMeaningfulPath = path !== '' && path !== '/';
         const seen = new Set<string>();
@@ -138,6 +139,40 @@ export class InputWebsiteCandidate {
             }
         }
 
+        if (registrableHost && registrableHost !== hostWithoutWww) {
+            pushCandidate(parsed.protocol, registrableHost, false);
+            if (parsed.protocol === 'http:') {
+                pushCandidate('https:', registrableHost, false);
+            }
+
+            const registrableWithWww = `www.${registrableHost}`;
+            pushCandidate(parsed.protocol, registrableWithWww, false);
+            if (parsed.protocol === 'http:') {
+                pushCandidate('https:', registrableWithWww, false);
+            }
+        }
+
         return candidates;
+    }
+
+    private static toRegistrableHost(hostname: string): string | undefined {
+        const labels = hostname
+            .split('.')
+            .map((label) => label.trim().toLowerCase())
+            .filter(Boolean);
+
+        if (labels.length < 3) {
+            return hostname;
+        }
+
+        const commonCountrySecondLevelDomains = new Set(['ac', 'co', 'com', 'edu', 'gov', 'net', 'org']);
+        const lastLabel = labels[labels.length - 1];
+        const penultimateLabel = labels[labels.length - 2];
+
+        if (lastLabel.length === 2 && commonCountrySecondLevelDomains.has(penultimateLabel) && labels.length >= 3) {
+            return labels.slice(-3).join('.');
+        }
+
+        return labels.slice(-2).join('.');
     }
 }

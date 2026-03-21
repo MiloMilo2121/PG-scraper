@@ -33,6 +33,25 @@ export class QuerySanitizer {
         return words.every(w => this.stopWords.has(w));
     }
 
+    private pushUniqueVariant(variants: string[], seen: Set<string>, query: string | null | undefined) {
+        if (!query) {
+            return;
+        }
+
+        const trimmed = query.trim();
+        if (!trimmed) {
+            return;
+        }
+
+        const normalized = trimmed.replace(/\s+/g, ' ');
+        if (seen.has(normalized)) {
+            return;
+        }
+
+        seen.add(normalized);
+        variants.push(normalized.length > 200 ? normalized.substring(0, 200).trim() : normalized);
+    }
+
     public buildCompanyQuery(input: NormalizedInput, options: {
         target: 'serp' | 'linkedin' | 'registry' | 'bilancio';
         includeCity?: boolean;
@@ -80,10 +99,20 @@ export class QuerySanitizer {
 
     public buildQueryVariants(input: NormalizedInput, target: 'company' | 'linkedin' | 'registry' | 'bilancio', piva?: string): string[] {
         const variants: string[] = [];
+        const seen = new Set<string>();
 
         const cleanName = this.sanitizeForQuery(input.company_name);
         if (!cleanName || this.isOnlyStopWords(cleanName)) return variants;
         const cleanCity = this.sanitizeForQuery(input.city || '');
+        const cleanProvince = this.sanitizeForQuery(input.provincia || '');
+        const cleanAddress = this.sanitizeForQuery(input.address || '').split(',')[0]?.trim() || '';
+        const cleanPhone = (input.phone || '').replace(/\D/g, '');
+        const locationHints = [cleanCity, cleanProvince].filter(Boolean);
+        const sanitizedVariants = Array.from(new Set(
+            (input.company_name_variants || [input.company_name])
+                .map((variant) => this.sanitizeForQuery(variant))
+                .filter((variant) => variant && !this.isOnlyStopWords(variant))
+        ));
 
         if (target === 'company') {
             const exclusions = this.exclusionDorks;
@@ -92,28 +121,49 @@ export class QuerySanitizer {
             if (piva) {
                 const cleanPiva = piva.replace(/[^0-9]/g, '');
                 if (cleanPiva.length === 11) {
-                    variants.push(`"${cleanPiva}" ${exclusions}`);
+                    this.pushUniqueVariant(variants, seen, `"${cleanPiva}" ${exclusions}`);
                 }
             }
 
-            // Variant 1: Exact name + city + Exclusions (High Precision Sniper)
-            if (cleanCity) {
-                variants.push(`"${cleanName}" "${cleanCity}" ${exclusions}`);
-            } else {
-                variants.push(`"${cleanName}" ${exclusions}`);
+            const primaryName = sanitizedVariants[0] || cleanName;
+            if (input.email_domain) {
+                const emailDomain = input.email_domain.replace(/^www\./i, '').trim().toLowerCase();
+                if (emailDomain) {
+                    this.pushUniqueVariant(
+                        variants,
+                        seen,
+                        `site:${emailDomain} "${primaryName}" ${locationHints.join(' ')}`
+                    );
+                }
             }
 
-            // Variant 2: Contact Vector / Intitle Match
-            if (cleanCity) {
-                variants.push(`intitle:"${cleanName}" "contatti" "${cleanCity}" ${exclusions}`);
-                // Privacy / Note Legali Vector
-                variants.push(`"${cleanName}" "${cleanCity}" ("privacy policy" OR "note legali") ${exclusions}`);
-            } else {
-                variants.push(`intitle:"${cleanName}" "contatti" ${exclusions}`);
+            for (const candidateName of sanitizedVariants.slice(0, 3)) {
+                const exactLocationQuery = locationHints.length > 0
+                    ? `"${candidateName}" ${locationHints.map((hint) => `"${hint}"`).join(' ')} ${exclusions}`
+                    : `"${candidateName}" ${exclusions}`;
+                this.pushUniqueVariant(variants, seen, exactLocationQuery);
+
+                const contactVector = locationHints.length > 0
+                    ? `intitle:"${candidateName}" ("contatti" OR "chi siamo" OR "azienda") ${locationHints.map((hint) => `"${hint}"`).join(' ')} ${exclusions}`
+                    : `intitle:"${candidateName}" ("contatti" OR "chi siamo" OR "azienda") ${exclusions}`;
+                this.pushUniqueVariant(variants, seen, contactVector);
+
+                const legalVector = locationHints.length > 0
+                    ? `"${candidateName}" ${locationHints.map((hint) => `"${hint}"`).join(' ')} ("privacy policy" OR "note legali" OR "partita iva") ${exclusions}`
+                    : `"${candidateName}" ("privacy policy" OR "note legali" OR "partita iva") ${exclusions}`;
+                this.pushUniqueVariant(variants, seen, legalVector);
             }
 
-            // Variant 3: Standard Fallback
-            variants.push(`"${cleanName}" ${cleanCity || ''} sito ufficiale`);
+            if (cleanPhone.length >= 8) {
+                this.pushUniqueVariant(variants, seen, `"${primaryName}" "${cleanPhone}" ${exclusions}`);
+            }
+
+            if (cleanAddress.length >= 6) {
+                this.pushUniqueVariant(variants, seen, `"${primaryName}" "${cleanAddress}" ${locationHints.join(' ')} ${exclusions}`);
+            }
+
+            this.pushUniqueVariant(variants, seen, `"${primaryName}" ${locationHints.join(' ')} sito ufficiale`);
+            this.pushUniqueVariant(variants, seen, `"${primaryName}" ${locationHints.join(' ')} ("contatti" OR "chi siamo")`);
         } else if (target === 'linkedin') {
             const v1 = this.buildCompanyQuery(input, { target: 'linkedin', includeDomain: 'site:linkedin.com/in' });
             if (v1) variants.push(v1);
@@ -125,6 +175,6 @@ export class QuerySanitizer {
             if (v1) variants.push(v1);
         }
 
-        return variants.slice(0, 3);
+        return variants.slice(0, target === 'company' ? 12 : 3);
     }
 }

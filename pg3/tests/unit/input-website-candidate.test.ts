@@ -16,4 +16,14 @@ describe('InputWebsiteCandidate', () => {
     expect(assessment.candidates).toContain('https://acme.it/contatti');
     expect(assessment.candidates).toContain('https://www.acme.it');
   });
+
+  it('falls back from service subdomains to the registrable company domain', () => {
+    const assessment = InputWebsiteCandidate.assess('https://mail.acme.it/login');
+
+    expect(assessment.classification).toBe('VALID');
+    expect(assessment.candidates).toContain('https://mail.acme.it/login');
+    expect(assessment.candidates).toContain('https://mail.acme.it');
+    expect(assessment.candidates).toContain('https://acme.it');
+    expect(assessment.candidates).toContain('https://www.acme.it');
+  });
 });

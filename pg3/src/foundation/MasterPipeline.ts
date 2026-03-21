@@ -117,6 +117,7 @@ export class MasterPipeline {
 
             // THE BEST LOSER TRACKER
             let bestLoser: { url: string; layer: string; score: number } | null = null;
+            const checkedCandidateUrls = new Set<string>();
 
             // In a perfect system, if Registry returns URL, we take it. 
             // Since ShadowRegistry only returns PIVA right now, we use that for later verification.
@@ -261,6 +262,47 @@ export class MasterPipeline {
                 }
             };
 
+            const checkCandidateVariants = async (
+                rawCandidate: string | undefined,
+                layerName: string,
+                options: { timeoutMs?: number; maxCandidates?: number } = {}
+            ): Promise<CheckUrlOutcome & { reasonCode?: string }> => {
+                const assessedCandidate = InputWebsiteCandidate.assess(rawCandidate);
+                if (assessedCandidate.classification !== 'VALID') {
+                    return {
+                        matched: false,
+                        timedOut: false,
+                        reasonCode: assessedCandidate.reasonCode,
+                    };
+                }
+
+                let sawTimeout = false;
+                let attempted = false;
+                const candidateUrls = assessedCandidate.candidates.slice(0, options.maxCandidates ?? 6);
+
+                for (const candidateUrl of candidateUrls) {
+                    if (checkedCandidateUrls.has(candidateUrl)) {
+                        continue;
+                    }
+
+                    checkedCandidateUrls.add(candidateUrl);
+                    attempted = true;
+
+                    const outcome = await checkUrlWithTimeout(candidateUrl, layerName, { timeoutMs: options.timeoutMs });
+                    if (outcome.matched) {
+                        return outcome;
+                    }
+
+                    sawTimeout = sawTimeout || outcome.timedOut;
+                }
+
+                return {
+                    matched: false,
+                    timedOut: attempted ? sawTimeout : false,
+                    reasonCode: attempted ? undefined : 'CANDIDATE_ALREADY_CHECKED',
+                };
+            };
+
             // STAGE 1.5: Input Website Candidate
             if (!discoveredUrl && input.website) {
                 layersAttempted.push('STAGE_1_5_INPUT_WEBSITE');
@@ -269,17 +311,9 @@ export class MasterPipeline {
                 if (assessedWebsite.classification !== 'VALID') {
                     inputWebsiteReasonCode = assessedWebsite.reasonCode;
                 } else {
-                    let sawTimeout = false;
-                    for (const candidateUrl of assessedWebsite.candidates) {
-                        const outcome = await checkUrlWithTimeout(candidateUrl, 'INPUT_WEBSITE', { timeoutMs: 15000 });
-                        if (outcome.matched) {
-                            break;
-                        }
-                        sawTimeout = sawTimeout || outcome.timedOut;
-                    }
-
+                    const outcome = await checkCandidateVariants(input.website, 'INPUT_WEBSITE', { timeoutMs: 15000 });
                     if (!discoveredUrl) {
-                        inputWebsiteReasonCode = sawTimeout
+                        inputWebsiteReasonCode = outcome.timedOut
                             ? 'INPUT_WEBSITE_TIMEOUT'
                             : 'INPUT_WEBSITE_NOT_VERIFIED';
                     }
@@ -310,17 +344,9 @@ export class MasterPipeline {
                             MasterPipeline.toPhoneEntityReasonCode(assessedWebsite.reasonCode) ||
                             'PHONE_ENTITY_OFFICIAL_WEBSITE_REJECTED';
                     } else {
-                        let sawTimeout = false;
-                        for (const candidateUrl of assessedWebsite.candidates) {
-                            const outcome = await checkUrlWithTimeout(candidateUrl, 'PG_PHONE', { timeoutMs: 15000 });
-                            if (outcome.matched) {
-                                break;
-                            }
-                            sawTimeout = sawTimeout || outcome.timedOut;
-                        }
-
+                        const outcome = await checkCandidateVariants(harvest.officialWebsite, 'PG_PHONE', { timeoutMs: 15000 });
                         if (!discoveredUrl) {
-                            phoneEntityReasonCode = sawTimeout
+                            phoneEntityReasonCode = outcome.timedOut
                                 ? 'PHONE_ENTITY_TIMEOUT'
                                 : 'PHONE_ENTITY_NOT_VERIFIED';
                         }
@@ -334,8 +360,10 @@ export class MasterPipeline {
             if (!discoveredUrl) {
                 layersAttempted.push('STAGE_2_EMAIL_DOMAIN');
                 if (input.email_domain) {
-                    const candidateUrl = `https://www.${input.email_domain}`;
-                    await checkUrlWithTimeout(candidateUrl, 'EMAIL_DOMAIN');
+                    await checkCandidateVariants(input.email_domain, 'EMAIL_DOMAIN', {
+                        timeoutMs: 12000,
+                        maxCandidates: 6,
+                    });
                 }
             }
 
@@ -377,17 +405,23 @@ export class MasterPipeline {
                         const snippetDigits = (cand.snippet + ' ' + cand.title).replace(/[^0-9]/g, ' ');
                         if (snippetDigits.includes(cleanPiva)) {
                             console.log(`[MasterPipeline] 🎯 P.IVA found in SERP snippet for ${cand.url} — fast-tracking verification`);
-                            const outcome = await checkUrlWithTimeout(cand.url, 'SERP_PIVA_SNIPPET');
+                            const outcome = await checkCandidateVariants(cand.url, 'SERP_PIVA_SNIPPET', {
+                                timeoutMs: 12000,
+                                maxCandidates: 5,
+                            });
                             if (outcome.matched) break;
                         }
                     }
                 }
 
-                // Only check top 3 candidates to avoid timeout cascade
+                // Check a slightly wider top set now that results are ranked and deduped more aggressively.
                 if (!discoveredUrl) {
-                    const topCandidates = serpRes.results.slice(0, 3);
+                    const topCandidates = serpRes.results.slice(0, 5);
                     for (const cand of topCandidates) {
-                        const outcome = await checkUrlWithTimeout(cand.url, 'SERP_COMPANY');
+                        const outcome = await checkCandidateVariants(cand.url, 'SERP_COMPANY', {
+                            timeoutMs: 12000,
+                            maxCandidates: 5,
+                        });
                         if (outcome.matched) break;
                     }
                 }
@@ -395,12 +429,24 @@ export class MasterPipeline {
                 // STAGE 4B: RDAP WHOIS VERIFICATION ON UNVERIFIED TOP CANDIDATES
                 if (!discoveredUrl && serpRes.results.length > 0) {
                     layersAttempted.push('STAGE_4B_RDAP_VALIDATION');
-                    for (const cand of serpRes.results.slice(0, 2)) {
-                        const rdapScore = await RdapValidator.checkDomainOwnership(cand.url, input as any);
-                        if (rdapScore >= 0.8) {
-                            discoveredUrl = cand.url;
-                            discoveryLayer = 'SERP_RDAP_BINGO';
-                            console.log(`[MasterPipeline] 🎯 RDAP WHOIS BINGO! Found exact identity in domain registry for: ${discoveredUrl}`);
+                    const rdapCompany = { ...input, piva: piva || input.vat_code } as any;
+                    for (const cand of serpRes.results.slice(0, 3)) {
+                        const assessedCandidate = InputWebsiteCandidate.assess(cand.url);
+                        const rdapTargets = assessedCandidate.classification === 'VALID'
+                            ? assessedCandidate.candidates.slice(0, 3)
+                            : [cand.url];
+
+                        for (const rdapTarget of rdapTargets) {
+                            const rdapScore = await RdapValidator.checkDomainOwnership(rdapTarget, rdapCompany);
+                            if (rdapScore >= 0.8) {
+                                discoveredUrl = rdapTarget;
+                                discoveryLayer = 'SERP_RDAP_BINGO';
+                                console.log(`[MasterPipeline] 🎯 RDAP WHOIS BINGO! Found exact identity in domain registry for: ${discoveredUrl}`);
+                                break;
+                            }
+                        }
+
+                        if (discoveredUrl) {
                             break;
                         }
                     }
@@ -411,25 +457,21 @@ export class MasterPipeline {
                     layersAttempted.push('STAGE_5_SERP_REGISTRY');
                     const regSerpRes = await this.dedup.search(companyId, input, 'registry', { maxTier: 2 });
                     if (regSerpRes.results.length > 0) {
-                        // Extract website URLs from registry page snippets
-                        // Registry pages (registroimprese.it, informazione-aziende.it) often contain
-                        // the company's official website in their listings
                         for (const regResult of regSerpRes.results.slice(0, 3)) {
-                            // Try to extract a website URL from the snippet
-                            const urlMatch = regResult.snippet.match(/(?:sito|web|website|www)[:\s]*(?:https?:\/\/)?([a-z0-9][-a-z0-9]*(?:\.[a-z0-9][-a-z0-9]*)+)/i);
-                            if (urlMatch) {
-                                const extractedDomain = urlMatch[1].replace(/^www\./i, '');
-                                const candidateUrl = `https://www.${extractedDomain}`;
-                                const outcome = await checkUrlWithTimeout(candidateUrl, 'REGISTRY_EXTRACT', { timeoutMs: 12000 });
+                            const extractedCandidates = MasterPipeline.extractWebsiteCandidatesFromText(
+                                `${regResult.title || ''} ${regResult.snippet || ''}`
+                            );
+
+                            for (const extractedCandidate of extractedCandidates) {
+                                const outcome = await checkCandidateVariants(extractedCandidate, 'REGISTRY_EXTRACT', {
+                                    timeoutMs: 12000,
+                                    maxCandidates: 5,
+                                });
                                 if (outcome.matched) break;
                             }
-                            // Also check if the registry page itself can be fetched for website info
-                            // by looking at the title for domain clues
-                            const titleDomainMatch = regResult.title.match(/([a-z0-9][-a-z0-9]+\.(?:it|com|eu|net|org))/i);
-                            if (titleDomainMatch && !regResult.domain.includes(titleDomainMatch[1])) {
-                                const candidateUrl = `https://www.${titleDomainMatch[1]}`;
-                                const outcome = await checkUrlWithTimeout(candidateUrl, 'REGISTRY_TITLE', { timeoutMs: 12000 });
-                                if (outcome.matched) break;
+
+                            if (discoveredUrl) {
+                                break;
                             }
                         }
                     }
@@ -441,7 +483,10 @@ export class MasterPipeline {
                 const loser = bestLoser as { url: string; layer: string; score: number };
 
                 // 🌐 Try RDAP validation before fully accepting a weak loser
-                const rdapScore = await RdapValidator.checkDomainOwnership(loser.url, input as any);
+                const rdapScore = await RdapValidator.checkDomainOwnership(loser.url, {
+                    ...input,
+                    piva: piva || input.vat_code,
+                } as any);
                 if (rdapScore >= 0.8) {
                     discoveredUrl = loser.url;
                     discoveryLayer = loser.layer + '_RDAP_BINGO';
@@ -482,14 +527,17 @@ export class MasterPipeline {
                             console.log(`[LLM_ORACLE] Provider ${llmResult.provider} returned ${llmResult.data.length} candidates for "${input.company_name}"`);
                             for (const llmCand of llmResult.data) {
                                 if (llmCand.url) {
-                                    // Try the Gate verification on LLM-suggested URLs
-                                    const found = await checkUrl(llmCand.url, 'LLM_ORACLE');
-                                    if (found) break;
+                                    const found = await checkCandidateVariants(llmCand.url, 'LLM_ORACLE', {
+                                        timeoutMs: 12000,
+                                        maxCandidates: 5,
+                                    });
+                                    if (found.matched) break;
                                     // If Gate fails but we trust the LLM (Tier 3+), accept with lower confidence
                                     if (!discoveredUrl && llmResult.tier >= 3) {
-                                        discoveredUrl = llmCand.url;
+                                        const assessedCandidate = InputWebsiteCandidate.assess(llmCand.url);
+                                        discoveredUrl = assessedCandidate.normalizedUrl || llmCand.url;
                                         discoveryLayer = 'LLM_ORACLE_SEMANTIC';
-                                        console.log(`[LLM_ORACLE] Semantic accept: ${llmCand.url} for "${input.company_name}" (provider: ${llmResult.provider})`);
+                                        console.log(`[LLM_ORACLE] Semantic accept: ${discoveredUrl} for "${input.company_name}" (provider: ${llmResult.provider})`);
                                         break;
                                     }
                                 }
@@ -643,5 +691,46 @@ export class MasterPipeline {
         }
 
         return `PHONE_ENTITY_${reasonCode}`;
+    }
+
+    private static extractWebsiteCandidatesFromText(text: string): string[] {
+        const candidates: string[] = [];
+        const seen = new Set<string>();
+        const rawText = text || '';
+
+        const pushCandidate = (value?: string) => {
+            if (!value) {
+                return;
+            }
+
+            const cleanedValue = value
+                .trim()
+                .replace(/^www\./i, '')
+                .replace(/[),;:]+$/g, '');
+
+            const assessedCandidate = InputWebsiteCandidate.assess(cleanedValue);
+            if (assessedCandidate.classification !== 'VALID' || !assessedCandidate.normalizedUrl) {
+                return;
+            }
+
+            if (seen.has(assessedCandidate.normalizedUrl)) {
+                return;
+            }
+
+            seen.add(assessedCandidate.normalizedUrl);
+            candidates.push(assessedCandidate.normalizedUrl);
+        };
+
+        const emailRegex = /\b[a-z0-9._%+-]+@([a-z0-9.-]+\.[a-z]{2,})\b/gi;
+        for (const match of rawText.matchAll(emailRegex)) {
+            pushCandidate(match[1]);
+        }
+
+        const domainRegex = /(?:https?:\/\/)?(?:www\.)?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)/gi;
+        for (const match of rawText.matchAll(domainRegex)) {
+            pushCandidate(match[1]);
+        }
+
+        return candidates;
     }
 }
