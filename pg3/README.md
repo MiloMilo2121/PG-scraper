@@ -4,6 +4,8 @@
 
 PG3 is the active production runtime for campaign scraping support plus enrichment/discovery.
 
+The queue layer is `BullMQ` backed by `Redis`; there is no RabbitMQ runtime in this repo.
+
 The actual runtime surface in use is:
 
 - `src/index.ts`
@@ -17,7 +19,7 @@ The actual runtime surface in use is:
 ## Prerequisites
 
 - Node.js 20+
-- Redis (local or remote)
+- Redis (local or remote, as the `BullMQ` backend)
 - `OPENAI_API_KEY` configured
 
 ## Setup
@@ -52,7 +54,7 @@ The actual runtime surface in use is:
   - `npm run typecheck`
 - Unit tests:
   - `npm run test:unit`
-- Redis smoke integration:
+- BullMQ/Redis smoke integration:
   - `npm run test:smoke`
 - Full test gate:
   - `npm test`
@@ -64,7 +66,7 @@ The actual runtime surface in use is:
 Automated tests are split into:
 
 - `tests/unit`: deterministic pure-module checks
-- `tests/integration`: Redis/scheduler smoke checks without browser/network crawling
+- `tests/integration`: BullMQ/Redis scheduler smoke checks without browser/network crawling
 
 Manual audits and operational scripts live under `scripts/` and are not part of CI quality gates.
 
