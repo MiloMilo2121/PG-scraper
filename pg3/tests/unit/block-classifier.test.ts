@@ -45,9 +45,10 @@ describe('BlockClassifier', () => {
     it('detects Cloudflare challenge signals in 200 response body', () => {
         const captchaBody = `
             <html>
+                <head><title>Cloudflare Security Check</title></head>
                 <div class="cf-challenge">
                     <h2>Traffico insolito rilevato</h2>
-                    <div id="turnstile-container"></div>
+                    <div>Cloudflare challenge in progress</div>
                 </div>
             </html>
         `;
@@ -58,7 +59,7 @@ describe('BlockClassifier', () => {
     });
 
     it('detects challenge page signals', () => {
-        const challengeBody = '<html><body>Checking your browser before accessing...</body></html>';
+        const challengeBody = '<html><body>' + 'Verifying your browser before accessing... '.repeat(8) + '</body></html>';
         const sig = BlockClassifier.classify(200, challengeBody, 'https://target.it', 'direct');
         expect(sig.type).toBe(BlockType.CHALLENGE_PAGE);
     });
@@ -66,6 +67,7 @@ describe('BlockClassifier', () => {
     it('detects Cloudflare Turnstile specifically', () => {
         const body = `
             <html>
+                <div>Cloudflare Turnstile verification</div>
                 <div class="cf-turnstile" data-sitekey="abc"></div>
                 <input name="cf-turnstile-response" />
             </html>
