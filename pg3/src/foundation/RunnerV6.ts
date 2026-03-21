@@ -2,25 +2,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 require('dotenv').config();
 import { parse } from 'csv-parse/sync';
-import { MasterPipeline } from './MasterPipeline';
-import { InputNormalizer } from './InputNormalizer';
-import { ShadowRegistry } from './ShadowRegistry';
-import { PreVerifyGate } from './PreVerifyGate';
-import { SerpDeduplicator } from './SerpDeduplicator';
-import { LLMOracleGuard } from './LLMOracleGuard';
-import { StopTheBleedingController } from './StopTheBleedingController';
-import { BackpressureValve } from './BackpressureValve';
-import { BilancioHunter } from './BilancioHunter';
-import { LinkedInSniper } from './LinkedInSniper';
 import { BrowserPool } from './BrowserPool';
 import { MemoryFirstCache } from './MemoryFirstCache';
-import { CostLedger } from './CostLedger';
-import { CostRouter } from './CostRouter';
-import { EnrichmentBuffer } from './EnrichmentBuffer';
-import { QuerySanitizer } from './QuerySanitizer';
-import { EnrichmentPostProcessor } from './EnrichmentPostProcessor';
-import { PecHunter } from './PecHunter';
-import { buildProviderMap } from './provider_catalog';
+import { createOmegaRuntime } from './runtime_factory';
 
 // Prevent Puppeteer Stealth plugin "Target closed" async crashes from killing the runner
 process.on('unhandledRejection', (reason, promise) => {
@@ -109,35 +93,12 @@ async function run() {
         process.exit(1);
     }
 
-    const gateCheck = await startupGate();
+    await startupGate();
 
-    // Dependencies
-    const ledger = new CostLedger();
-    const cache = new MemoryFirstCache({ l1MaxMemoryMB: 50 });
-    const valve = new BackpressureValve({ ledger });
-    const pool = new BrowserPool({ ledger });
-    const registry = new ShadowRegistry('omega_shadow.sqlite'); // Dummy path
-
-    const router = new CostRouter(cache, ledger, buildProviderMap());
-
-    const gate = new PreVerifyGate(cache, ledger);
-    const buffer = new EnrichmentBuffer(cache);
-    const dedup = new SerpDeduplicator(router, new QuerySanitizer(), buffer);
-    const oracleGuard = new LLMOracleGuard(cache, valve);
-    const bleedingCtrl = new StopTheBleedingController(ledger, valve, pool);
+    const runtime = await createOmegaRuntime();
+    const { ledger, cache, valve, pool, registry, pipeline } = runtime;
 
     await healthCheck(cache, registry, pool);
-
-    const pipeline = new MasterPipeline({
-        normalizer: new InputNormalizer(),
-        registry, gate, dedup, oracleGuard, bleedingCtrl, valve,
-        bilancioHunter: new BilancioHunter(router),
-        linkedinSniper: new LinkedInSniper(router),
-        browserPool: pool,
-        costRouter: router,
-        postProcessor: new EnrichmentPostProcessor(pool),
-        pecHunter: new PecHunter(pool)
-    });
 
     const fileContent = fs.readFileSync(csvPath, 'utf8');
     const records = parse(fileContent, {
@@ -242,10 +203,7 @@ async function run() {
     console.log(`   💰 Cost/Company: €${totalProcessed > 0 ? (ledgerSummary.total_cost_eur / totalProcessed).toFixed(4) : 0.0000}`);
 
     // Cleanup
-    valve.cleanup();
-    ledger.cleanup();
-    router.cleanup();
-    await pool.destroyAll();
+    await runtime.cleanup();
     process.exit(0);
 }
 

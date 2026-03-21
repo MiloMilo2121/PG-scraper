@@ -51,12 +51,12 @@ afterEach(() => {
 });
 
 describe('config defaults', () => {
-  it('falls back to OpenAI-safe model defaults when only OPENAI_API_KEY is configured', async () => {
+  it('falls back to the current OpenAI model defaults when only OPENAI_API_KEY is configured', async () => {
     const config = await loadConfig({
       OPENAI_API_KEY: 'test-openai-key',
     });
 
-    expect(config.llm.fastModel).toBe('gpt-4o-mini');
+    expect(config.llm.fastModel).toBe('gpt-5-mini');
     expect(config.llm.smartModel).toBe('gpt-4o');
     expect(config.llm.model).toBe('gpt-4o');
   });

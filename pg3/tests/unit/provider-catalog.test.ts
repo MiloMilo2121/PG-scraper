@@ -47,21 +47,17 @@ describe('provider catalog', () => {
 
     expect([...HTTP_PROVIDER_ORDER]).toEqual([
       'HTTP-DIRECT-1',
-      'HTTP-SCRAPEDO-2',
-      'HTTP-SCRAPEDO-3',
       'HTTP-BRIGHTDATA-4',
       'ORACLE-CRAWL4AI-5',
     ]);
 
     const direct = providers.get('HTTP-DIRECT-1');
-    const scrapeDoHtml = providers.get('HTTP-SCRAPEDO-2');
-    const scrapeDoRender = providers.get('HTTP-SCRAPEDO-3');
     const brightData = providers.get('HTTP-BRIGHTDATA-4');
+    const oracle = providers.get('ORACLE-CRAWL4AI-5');
 
     expect(direct?.costPerRequest).toBe(0);
-    expect(scrapeDoHtml?.costPerRequest).toBeLessThan(scrapeDoRender?.costPerRequest || 0);
-    expect(scrapeDoRender?.costPerRequest).toBeLessThan(0.01);
     expect(brightData?.costPerRequest).toBeLessThan(0.01);
+    expect(oracle).toBeDefined();
   }, 120000);
 
   it('threads configurable local Oracle cost into the provider map', async () => {

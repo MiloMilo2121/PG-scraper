@@ -2,14 +2,17 @@
 
 ## Overview
 
-PG3 is the production enrichment runtime for discovery + financial enrichment.
+PG3 is the active production runtime for campaign scraping support plus enrichment/discovery.
 
-The supported runtime surface is:
+The actual runtime surface in use is:
 
 - `src/index.ts`
 - `src/enricher/**`
+- `src/foundation/**`
+- `src/server.ts`
+- `src/scraper/**` when server mode launches campaign collection
 
-Legacy modules and ad-hoc tests were removed from the active build/test path.
+`pg1` is the legacy resolver pipeline and is no longer the canonical runtime surface.
 
 ## Prerequisites
 
@@ -41,6 +44,7 @@ Legacy modules and ad-hoc tests were removed from the active build/test path.
 
 - `worker`
 - `scheduler <csv-path>`
+- `server`
 
 ## Quality Gates
 
