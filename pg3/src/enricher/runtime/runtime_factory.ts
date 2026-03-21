@@ -18,7 +18,7 @@ import { BrowserPool } from '../../shared-runtime/browser/BrowserPool';
 import { MemoryFirstCache } from '../../shared-runtime/cache/MemoryFirstCache';
 import { CostLedger } from '../../shared-runtime/budget/CostLedger';
 import { CostRouter } from '../../shared-runtime/routing/CostRouter';
-import { buildProviderMap } from '../../shared-runtime/routing/provider_catalog';
+import { buildProviderMap } from './provider_catalog';
 import { config } from '../config';
 
 export interface OmegaRuntime {
