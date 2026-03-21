@@ -4,6 +4,9 @@ import { describe, expect, it } from 'vitest';
 
 const SHARED_PROVIDER_CATALOG_PATH = path.resolve(__dirname, '../../src/shared-runtime/routing/provider_catalog.ts');
 const RUNTIME_PROVIDER_CATALOG_PATH = path.resolve(__dirname, '../../src/enricher/runtime/provider_catalog.ts');
+const SERP_REGISTRY_PATH = path.resolve(__dirname, '../../src/enricher/runtime/providers/serp_provider_registry.ts');
+const HTTP_REGISTRY_PATH = path.resolve(__dirname, '../../src/enricher/runtime/providers/http_provider_registry.ts');
+const LLM_REGISTRY_PATH = path.resolve(__dirname, '../../src/enricher/runtime/providers/llm_provider_registry.ts');
 
 describe('provider catalog boundary', () => {
   it('stays neutral and does not expose concrete provider assembly', () => {
@@ -20,10 +23,12 @@ describe('provider catalog boundary', () => {
     const source = fs.readFileSync(RUNTIME_PROVIDER_CATALOG_PATH, 'utf8');
 
     expect(source).toContain('export function buildProviderMap');
-    expect(source).toContain("from '../../shared-runtime/routing/provider_adapter'");
-    expect(source).not.toContain("from '../../shared-runtime/routing/provider_catalog'");
-    expect(source).toContain("import('../core/discovery/");
-    expect(source).toContain("import('../utils/");
+    expect(source).toContain("from './providers/serp_provider_registry'");
+    expect(source).toContain("from './providers/http_provider_registry'");
+    expect(source).toContain("from './providers/llm_provider_registry'");
+    expect(source).not.toContain("../core/discovery/");
+    expect(source).not.toContain("../utils/");
+    expect(source).not.toContain("from 'openai'");
   });
 
   it('exports the neutral routing orders only', async () => {
@@ -32,5 +37,19 @@ describe('provider catalog boundary', () => {
     expect(module.SERP_PROVIDER_ORDER).toBeDefined();
     expect(module.HTTP_PROVIDER_ORDER).toBeDefined();
     expect(module.buildProviderMap).toBeUndefined();
+  });
+
+  it('splits provider families into dedicated registries', () => {
+    const serpRegistry = fs.readFileSync(SERP_REGISTRY_PATH, 'utf8');
+    const httpRegistry = fs.readFileSync(HTTP_REGISTRY_PATH, 'utf8');
+    const llmRegistry = fs.readFileSync(LLM_REGISTRY_PATH, 'utf8');
+
+    expect(serpRegistry).toContain('buildSerpProviderEntries');
+    expect(serpRegistry).toContain("family: 'SERP'");
+    expect(httpRegistry).toContain('buildHttpProviderEntries');
+    expect(httpRegistry).toContain("family: 'PROXY_FETCH'");
+    expect(llmRegistry).toContain('buildLlmProviderEntries');
+    expect(llmRegistry).toContain("family: 'LLM'");
+    expect(llmRegistry).toContain("from 'openai'");
   });
 });

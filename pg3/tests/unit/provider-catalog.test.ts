@@ -47,6 +47,22 @@ afterEach(() => {
 });
 
 describe('provider catalog', () => {
+  it('builds provider entries through dedicated family registries', async () => {
+    const {
+      buildSerpProviderEntries,
+    } = await import('../../src/enricher/runtime/providers/serp_provider_registry');
+    const {
+      buildHttpProviderEntries,
+    } = await import('../../src/enricher/runtime/providers/http_provider_registry');
+    const {
+      buildLlmProviderEntries,
+    } = await import('../../src/enricher/runtime/providers/llm_provider_registry');
+
+    expect(buildSerpProviderEntries().every(([, adapter]) => adapter.family === 'SERP')).toBe(true);
+    expect(buildHttpProviderEntries().every(([, adapter]) => adapter.family === 'PROXY_FETCH')).toBe(true);
+    expect(buildLlmProviderEntries().every(([, adapter]) => adapter.family === 'LLM')).toBe(true);
+  }, 120000);
+
   it('keeps the HTTP fallback ladder aligned with the shared escalation order', async () => {
     const { buildProviderMap, HTTP_PROVIDER_ORDER } = await loadCatalog({});
     const providers = buildProviderMap();

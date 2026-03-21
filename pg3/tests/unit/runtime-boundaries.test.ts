@@ -38,6 +38,7 @@ describe('runtime boundaries', () => {
     const schedulerTs = readSource('enricher/scheduler.ts');
     const runnerV6Ts = readSource('foundation/RunnerV6.ts');
     const runtimeFactoryTs = readSource('enricher/runtime/runtime_factory.ts');
+    const runtimeCompositionTs = readSource('enricher/runtime/runtime_composition.ts');
     const legacyRuntimeShimTs = readSource('foundation/runtime_factory.ts');
 
     expect(indexTs).toContain("worker");
@@ -49,9 +50,11 @@ describe('runtime boundaries', () => {
     expect(runnerV6Ts).toContain('../enricher/runtime/runtime_factory');
     expect(workerTs).toContain('createOmegaRuntime');
     expect(runnerV6Ts).toContain('createOmegaRuntime');
-    expect(runtimeFactoryTs).toContain('export async function createOmegaRuntime');
-    expect(runtimeFactoryTs).toContain("from './provider_catalog'");
-    expect(runtimeFactoryTs).not.toContain("shared-runtime/routing/provider_catalog");
+    expect(runtimeFactoryTs).toContain("from './runtime_composition'");
+    expect(runtimeFactoryTs).toContain('export { createOmegaRuntime }');
+    expect(runtimeCompositionTs).toContain('export async function createOmegaRuntime');
+    expect(runtimeCompositionTs).toContain("from './provider_catalog'");
+    expect(runtimeCompositionTs).toContain("from '../../shared-runtime/routing/provider_catalog'");
     expect(legacyRuntimeShimTs).toContain("../enricher/runtime/runtime_factory");
     expect(schedulerTs).not.toContain('runtime_factory');
   });

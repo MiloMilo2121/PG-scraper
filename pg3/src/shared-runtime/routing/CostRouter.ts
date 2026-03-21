@@ -1,7 +1,6 @@
 import { MemoryFirstCache } from '../cache/MemoryFirstCache';
 import { CostLedger } from '../budget/CostLedger';
-import { HTTP_PROVIDER_ORDER, SERP_PROVIDER_ORDER } from './provider_catalog';
-import { ProviderAdapter, ProviderTaskFamily } from './provider_adapter';
+import { ProviderAdapter, ProviderOrderByFamily, ProviderTaskFamily } from './provider_adapter';
 
 export type TaskType = 'SERP' | 'LLM_CLASSIFY' | 'LLM_VISION' | 'PROXY_FETCH' | 'LLM_PARSE';
 
@@ -99,6 +98,7 @@ export class CostRouter {
     private cache: MemoryFirstCache;
     private ledger: CostLedger;
     private providers: Map<string, ProviderAdapter>;
+    private providerOrderByFamily: ProviderOrderByFamily;
 
     private llmBuckets: Map<string, TokenBucketQueue> = new Map([
         ['deepseek-chat', new TokenBucketQueue(40, 10)],
@@ -115,11 +115,13 @@ export class CostRouter {
     constructor(
         cache: MemoryFirstCache,
         ledger: CostLedger,
-        providers: Map<string, ProviderAdapter>
+        providers: Map<string, ProviderAdapter>,
+        providerOrderByFamily: ProviderOrderByFamily = {},
     ) {
         this.cache = cache;
         this.ledger = ledger;
         this.providers = providers;
+        this.providerOrderByFamily = providerOrderByFamily;
     }
 
     public getBudgetStatus(provider: string): ProviderBudget {
@@ -186,13 +188,9 @@ export class CostRouter {
         }
 
         const requestedFamily = TASK_FAMILY_BY_TASK_TYPE[taskType] ?? null;
-        const serpProviders: string[] = [...SERP_PROVIDER_ORDER];
-        const httpProviders: string[] = [...HTTP_PROVIDER_ORDER];
-        const providerOrder = requestedFamily === 'SERP'
-            ? serpProviders
-            : requestedFamily === 'PROXY_FETCH'
-                ? httpProviders
-                : [];
+        const providerOrder = requestedFamily
+            ? [...(this.providerOrderByFamily[requestedFamily] ?? [])]
+            : [];
         const orderMap = new Map(providerOrder.map((providerId, index) => [providerId, index]));
 
         const sortedProviders = Array.from(this.providers.entries())
