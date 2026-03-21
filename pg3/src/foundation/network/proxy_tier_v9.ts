@@ -1,6 +1,1 @@
-export enum ProxyTier {
-    DATACENTER = 'DATACENTER',
-    RESIDENTIAL = 'RESIDENTIAL',
-    MOBILE = 'MOBILE',
-    DIRECT = 'DIRECT',
-}
+export * from '../../shared-runtime/network/proxy_tier_v9';

@@ -1,4 +1,4 @@
-import { Logger } from './enricher/utils/logger';
+import { Logger } from './shared-runtime/logging/Logger';
 
 const VALID_COMMANDS = new Set(['worker', 'scheduler', 'server']);
 

@@ -181,7 +181,7 @@ ensure_local_redis_container() {
     --restart unless-stopped \
     -p "${redis_port}:6379" \
     redis:7-alpine \
-    redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru >/dev/null
+    redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction >/dev/null
 }
 
 require_redis_ready() {

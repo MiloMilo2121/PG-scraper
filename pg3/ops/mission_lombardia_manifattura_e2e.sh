@@ -196,7 +196,7 @@ ensure_redis() {
     --restart unless-stopped \
     -p 6379:6379 \
     redis:7-alpine \
-    redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru >/dev/null
+    redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction >/dev/null
 }
 
 find_latest_combined_csv() {

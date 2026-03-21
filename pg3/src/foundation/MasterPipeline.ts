@@ -16,6 +16,8 @@ import { FatturatoItaliaHarvester } from '../enricher/core/directories/fatturato
 import { PagineGialleHarvester } from '../enricher/core/directories/paginegialle';
 import { HyperGuesserVX } from '../enricher/core/discovery/hyperguesser_vx/hyper_guesser_vx';
 import { RdapValidator } from '../enricher/core/discovery/rdap_validator';
+import { PostDiscoveryEnrichmentStage } from '../enricher/runtime/stages/post_discovery_enrichment_stage';
+import { RuntimeStageOutcome, RuntimeStageStatus } from '../enricher/runtime/stages/stage_types';
 import crypto from 'crypto';
 
 export class MasterPipeline {
@@ -32,6 +34,7 @@ export class MasterPipeline {
     private costRouter: CostRouter;
     private postProcessor: EnrichmentPostProcessor;
     private pecHunter: PecHunter;
+    private postDiscoveryEnrichment: PostDiscoveryEnrichmentStage;
 
     constructor(deps: {
         normalizer: InputNormalizer,
@@ -61,6 +64,12 @@ export class MasterPipeline {
         this.costRouter = deps.costRouter;
         this.postProcessor = deps.postProcessor;
         this.pecHunter = deps.pecHunter;
+        this.postDiscoveryEnrichment = new PostDiscoveryEnrichmentStage({
+            bilancioHunter: deps.bilancioHunter,
+            linkedinSniper: deps.linkedinSniper,
+            postProcessor: deps.postProcessor,
+            pecHunter: deps.pecHunter,
+        });
     }
 
     public async processCompany(rawInput: Record<string, string>, companyIdx: number): Promise<any> {
@@ -77,6 +86,7 @@ export class MasterPipeline {
             // STAGE 0: Normalize Input
             const input = this.normalizer.normalize(rawInput);
             if (input.quality_score < 0.3) {
+                const stageOutcomes = this.buildAbortedStageOutcomes('INPUT_QUALITY_TOO_LOW');
                 return this.buildResult(
                     input,
                     'NOT_FOUND',
@@ -89,6 +99,7 @@ export class MasterPipeline {
                     null,
                     null,
                     null,
+                    stageOutcomes,
                     layersAttempted,
                     start,
                     'INPUT_QUALITY_TOO_LOW'
@@ -490,52 +501,19 @@ export class MasterPipeline {
                 }
             }
 
-            // ENRICHMENT PHASE (Parallel via Valve)
-            let financial = null;
-            let decisionMaker = null;
-            let employees = null;
-            let isEstimatedEmployees = false;
-            let pec = null;
-            let email = null;
+            const enrichment = await this.postDiscoveryEnrichment.run(companyId, input, discoveredUrl);
+            const financial = enrichment.financial;
+            const decisionMaker = enrichment.decisionMaker;
+            const employees = enrichment.employees;
+            const isEstimatedEmployees = enrichment.isEstimatedEmployees;
+            const pec = enrichment.pec;
+            const email = enrichment.email;
 
-            // ALWAYS run non-URL-dependent enrichments (FatturatoItalia, BilancioHunter uses Company Name / PIVA)
-            // Run URL-dependent enrichments only if discoveredUrl exists
-            const [finRes, dmRes, empRes, fattRes, contactsRes] = await Promise.all([
-                this.bilancioHunter.hunt(companyId, input).catch(() => null),
-                discoveredUrl ? this.linkedinSniper.snipe(companyId, input).catch(() => null) : null,
-                discoveredUrl ? this.postProcessor.estimateEmployees(companyId, input, discoveredUrl).catch(() => null) : null,
-                FatturatoItaliaHarvester.harvest(input as any).catch(() => null),
-                discoveredUrl ? this.pecHunter.hunt(companyId, input, discoveredUrl).catch(() => null) : null
-            ]);
-
-            // Merge financial sources (FatturatoItalia takes precedence for Revenue/Employees if found)
-            financial = { ...finRes };
-            if (fattRes) {
-                if (fattRes.revenue) {
-                    financial.fatturato_current = parseFloat(fattRes.revenue.replace(/[^0-9]/g, ''));
-                    financial.year = parseInt(fattRes.revenueYear || '2023', 10);
-                    financial.source_url = fattRes.url;
-                }
-                if (fattRes.employees && (!employees || employees === 'N/A')) {
-                    employees = fattRes.employees;
-                    isEstimatedEmployees = false;
-                }
+            if (enrichment.vat && !piva) {
+                piva = enrichment.vat;
             }
-            // If FatturatoItalia found something, we can consider VAT found even if website wasn't
-            if (fattRes?.vat && !piva) {
-                piva = fattRes.vat;
-            }
-
-            decisionMaker = dmRes;
-            if (empRes && !employees) {
-                employees = empRes;
-                isEstimatedEmployees = true;
-            }
-            pec = contactsRes?.pec || null;
-            email = contactsRes?.email || null;
 
             const status = discoveredUrl ? 'FOUND_COMPLETE' : 'NOT_FOUND';
-            
             const didAttemptSerp = layersAttempted.includes('STAGE_4_SERP_COMPANY') || layersAttempted.includes('STAGE_5_SERP_REGISTRY') || layersAttempted.includes('STAGE_6_LLM_ORACLE');
             const laneReasonCode = phoneEntityReasonCode || inputWebsiteReasonCode;
 
@@ -546,6 +524,10 @@ export class MasterPipeline {
                     : didAttemptSerp
                         ? (isBleeding ? 'DISCOVERY_EXHAUSTED_BLEEDING_MODE' : 'DISCOVERY_EXHAUSTED')
                         : (isBleeding ? 'DISCOVERY_EXHAUSTED_BLEEDING_MODE' : 'DISCOVERY_EXHAUSTED');
+            const stageOutcomes = {
+                website_discovery: this.buildWebsiteDiscoveryOutcome(discoveredUrl, discoveryLayer, reasonCode),
+                ...enrichment.stageOutcomes,
+            };
 
             return this.buildResult(
                 input,
@@ -559,6 +541,7 @@ export class MasterPipeline {
                 piva,
                 pec,
                 email,
+                stageOutcomes,
                 layersAttempted,
                 start,
                 reasonCode
@@ -578,6 +561,7 @@ export class MasterPipeline {
         vat: string | null | undefined,
         pec: any,
         email: any,
+        stageOutcomes: Record<string, RuntimeStageOutcome>,
         layers: string[],
         start: number,
         reasonCode: string
@@ -608,10 +592,44 @@ export class MasterPipeline {
             meta: {
                 duration_ms: Date.now() - start,
                 layers_attempted: layers,
+                stage_outcomes: stageOutcomes,
                 timestamp: new Date().toISOString()
             },
             reason_code: reasonCode,
             status
+        };
+    }
+
+    private buildWebsiteDiscoveryOutcome(
+        discoveredUrl: string | null,
+        discoveryLayer: string,
+        reasonCode: string,
+        status: RuntimeStageStatus = discoveredUrl ? 'success' : 'not_found'
+    ): RuntimeStageOutcome {
+        return {
+            stage: 'website_discovery',
+            status,
+            duration_ms: 0,
+            detail: discoveredUrl ? discoveryLayer : reasonCode,
+        };
+    }
+
+    private buildAbortedStageOutcomes(reasonCode: string): Record<string, RuntimeStageOutcome> {
+        return {
+            website_discovery: this.buildWebsiteDiscoveryOutcome(null, '', reasonCode, 'skipped'),
+            financial: this.buildSkippedStageOutcome('financial', reasonCode),
+            decision_maker: this.buildSkippedStageOutcome('decision_maker', reasonCode),
+            employee_estimation: this.buildSkippedStageOutcome('employee_estimation', reasonCode),
+            contacts: this.buildSkippedStageOutcome('contacts', reasonCode),
+        };
+    }
+
+    private buildSkippedStageOutcome(stage: string, detail: string): RuntimeStageOutcome {
+        return {
+            stage,
+            status: 'skipped',
+            duration_ms: 0,
+            detail,
         };
     }
 

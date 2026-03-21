@@ -1,5 +1,1 @@
-export interface ProviderAdapter {
-    execute<T>(payload: any, options?: any): Promise<T>;
-    costPerRequest: number;
-    tier: number;
-}
+export * from '../shared-runtime/routing/provider_adapter';

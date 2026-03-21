@@ -11,7 +11,7 @@
 
 import { Logger } from '../../utils/logger';
 import { config } from '../../config';
-import { ProxyTier } from '../../../foundation/network/proxy_tier_v9';
+import { ProxyTier } from '../../../shared-runtime/network/proxy_tier_v9';
 
 export { ProxyTier };
 

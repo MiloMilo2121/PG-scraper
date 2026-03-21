@@ -9,7 +9,7 @@ import {
     closeQueueResources,
 } from './queue';
 import { initializeDatabase, insertEnrichmentResult, logJobResult } from './db';
-import { createOmegaRuntime, OmegaRuntime } from '../foundation/runtime_factory';
+import { createOmegaRuntime, OmegaRuntime } from './runtime/runtime_factory';
 import { LeadScorer } from './utils/lead_scorer';
 import { Logger } from './utils/logger';
 import { MetricsServer } from './observability/metrics_server';

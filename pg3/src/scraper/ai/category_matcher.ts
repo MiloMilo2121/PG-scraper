@@ -1,5 +1,5 @@
 import { Logger } from '../utils/logger';
-import { LLMService } from '../../enricher/core/ai/llm_service';
+import { LLMService } from '../../shared-runtime/ai/LLMService';
 import { ALL_PG_CATEGORIES, PG_CATEGORIES } from '../data/pg_categories';
 import * as fs from 'fs';
 import * as path from 'path';

@@ -36,7 +36,7 @@ import { CompanyInput } from './types';
 import { MapsGridProvider } from './providers/maps_grid_provider';
 import { MunicipalitySplitter } from './ai/municipality_splitter';
 import { CategoryMatcher } from './ai/category_matcher';
-import { CaptchaSolver } from '../enricher/core/security/captcha_solver';
+import { CaptchaSolver } from '../shared-runtime/security/CaptchaSolver';
 import { PROVINCE_CODES, PROVINCE_NAME_TO_CODE } from './data/pg_categories';
 import { Logger } from './utils/logger';
 import { CookieConsent } from './core/browser/cookie_consent';

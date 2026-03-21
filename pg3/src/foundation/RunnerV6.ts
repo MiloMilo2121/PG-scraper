@@ -2,9 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 require('dotenv').config();
 import { parse } from 'csv-parse/sync';
-import { BrowserPool } from './BrowserPool';
-import { MemoryFirstCache } from './MemoryFirstCache';
-import { createOmegaRuntime } from './runtime_factory';
+import { ShadowRegistry } from './ShadowRegistry';
+import { BrowserPool } from '../shared-runtime/browser/BrowserPool';
+import { MemoryFirstCache } from '../shared-runtime/cache/MemoryFirstCache';
+import { createOmegaRuntime } from '../enricher/runtime/runtime_factory';
 
 // Prevent Puppeteer Stealth plugin "Target closed" async crashes from killing the runner
 process.on('unhandledRejection', (reason, promise) => {
@@ -96,7 +97,7 @@ async function run() {
     await startupGate();
 
     const runtime = await createOmegaRuntime();
-    const { ledger, cache, valve, pool, registry, pipeline } = runtime;
+    const { ledger, cache, valve, pool, registry, bleedingCtrl, pipeline } = runtime;
 
     await healthCheck(cache, registry, pool);
 
@@ -145,8 +146,8 @@ async function run() {
                 done++;
                 if (done % 10 === 0) {
                     const metrics = valve.getMetrics();
-                    const poolMetrics = pool.getPoolStatus();
-                    console.log(`📊 Progress: ${done}/${records.length} (${((done / records.length) * 100).toFixed(1)}%) | 🚦 Concurrency: ${metrics.current_concurrency}/${metrics.max_concurrency} (Q: ${metrics.queue_depth}) | ❌ Errors: ${(metrics.error_rate_5m * 100).toFixed(1)}% | 🩸 Bleeding: ${bleedingCtrl.isBleedingModeActive}`);
+                    const poolStatus = pool.getPoolStatus();
+                    console.log(`📊 Progress: ${done}/${records.length} (${((done / records.length) * 100).toFixed(1)}%) | 🚦 Concurrency: ${metrics.current_concurrency}/${metrics.max_concurrency} (Q: ${metrics.queue_depth}) | 🌐 Pool: ${poolStatus.busy}/${poolStatus.total} busy | ❌ Errors: ${(metrics.error_rate_5m * 100).toFixed(1)}% | 🩸 Bleeding: ${bleedingCtrl.isBleedingModeActive}`);
                 }
                 return res;
             } catch (err: any) {

@@ -3,6 +3,14 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["src/index.ts", "src/enricher/**/*.ts"],
-  "exclude": ["node_modules", "dist", "tests", "scripts"]
+  "include": ["src/**/*.ts"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tests",
+    "scripts",
+    "src/scripts",
+    "src/enricher/tests",
+    "src/foundation/__tests__"
+  ]
 }

@@ -2,7 +2,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
-import { Logger } from './enricher/utils/logger';
+import { Logger } from './shared-runtime/logging/Logger';
 
 const app = express();
 const PORT = process.env.PORT || 3000;

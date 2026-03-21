@@ -5,7 +5,7 @@
  * Workflow:
  * 1. PG1 finishes scraping a city → raw_targets.csv
  * 2. This script moves the CSV to PG3/input/
- * 3. Triggers BullMQ job to start enrichment
+ * 3. Triggers the canonical PG3 scheduler entrypoint
  * 
  * Usage:
  * npx ts-node handover.ts --source /path/to/raw_targets.csv
@@ -13,31 +13,10 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { Queue } from 'bullmq';
-import IORedis from 'ioredis';
+import { spawn } from 'child_process';
 
 // Configuration
-const PG3_INPUT_DIR = path.resolve(process.cwd(), process.env.PG3_INPUT_DIR || '../pg3/input');
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-const QUEUE_NAME = 'enrichment';
-
-// Redis connection
-const redisConnection = new IORedis(REDIS_URL, {
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false,
-});
-
-// Enrichment queue
-const enrichmentQueue = new Queue(QUEUE_NAME, {
-    connection: redisConnection,
-    defaultJobOptions: {
-        attempts: 3,
-        backoff: {
-            type: 'exponential',
-            delay: 1000,
-        }
-    }
-});
+const DEFAULT_PG3_ROOT = path.resolve(process.cwd(), '../pg3');
 
 export interface HandoverConfig {
     sourcePath: string;
@@ -54,10 +33,87 @@ function sanitizeCitySegment(cityName: string): string {
 }
 
 export async function closeHandoverResources(): Promise<void> {
-    await Promise.allSettled([
-        enrichmentQueue.close(),
-        redisConnection.quit()
-    ]);
+    return;
+}
+
+function resolvePg3Root(): string {
+    const explicit = process.env.PG3_ROOT ? path.resolve(process.cwd(), process.env.PG3_ROOT) : null;
+    const candidates = [explicit, DEFAULT_PG3_ROOT].filter(Boolean) as string[];
+
+    for (const candidate of candidates) {
+        if (fs.existsSync(path.join(candidate, 'package.json'))) {
+            return candidate;
+        }
+    }
+
+    throw new Error(`PG3 root not found. Checked: ${candidates.join(', ')}`);
+}
+
+function resolvePg3InputDir(pg3Root: string): string {
+    const configured = process.env.PG3_INPUT_DIR
+        ? path.resolve(pg3Root, process.env.PG3_INPUT_DIR)
+        : path.join(pg3Root, 'input');
+    return configured;
+}
+
+function resolveSchedulerLaunch(pg3Root: string): { command: string; args: string[]; cwd: string } {
+    const builtEntry = path.join(pg3Root, 'dist', 'src', 'index.js');
+    if (fs.existsSync(builtEntry)) {
+        return {
+            command: process.execPath,
+            args: [builtEntry, 'scheduler'],
+            cwd: pg3Root,
+        };
+    }
+
+    const sourceEntry = path.join(pg3Root, 'src', 'index.ts');
+    if (fs.existsSync(sourceEntry)) {
+        return {
+            command: process.execPath,
+            args: ['-r', 'ts-node/register', sourceEntry, 'scheduler'],
+            cwd: pg3Root,
+        };
+    }
+
+    throw new Error('PG3 scheduler entrypoint not found in build or source tree');
+}
+
+async function triggerPg3Scheduler(csvPath: string): Promise<void> {
+    const pg3Root = resolvePg3Root();
+    const launch = resolveSchedulerLaunch(pg3Root);
+
+    await new Promise<void>((resolve, reject) => {
+        const child = spawn(launch.command, [...launch.args, csvPath], {
+            cwd: launch.cwd,
+            env: { ...process.env },
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+
+        let stderr = '';
+
+        child.stdout?.on('data', (chunk) => {
+            process.stdout.write(chunk);
+        });
+
+        child.stderr?.on('data', (chunk) => {
+            const text = chunk.toString();
+            stderr += text;
+            process.stderr.write(text);
+        });
+
+        child.on('error', (error) => {
+            reject(error);
+        });
+
+        child.on('close', (code) => {
+            if (code === 0) {
+                resolve();
+                return;
+            }
+
+            reject(new Error(`PG3 scheduler exited with code ${code}${stderr ? `: ${stderr.trim()}` : ''}`));
+        });
+    });
 }
 
 /**
@@ -65,6 +121,8 @@ export async function closeHandoverResources(): Promise<void> {
  */
 export async function executeHandover(config: HandoverConfig): Promise<void> {
     const { sourcePath, cityName, priority = 1 } = config;
+    const pg3Root = resolvePg3Root();
+    const pg3InputDir = resolvePg3InputDir(pg3Root);
 
     console.log(`🔗 Handover Protocol: Starting transfer for ${cityName}`);
 
@@ -74,15 +132,15 @@ export async function executeHandover(config: HandoverConfig): Promise<void> {
     }
 
     // Ensure PG3 input directory exists
-    if (!fs.existsSync(PG3_INPUT_DIR)) {
-        fs.mkdirSync(PG3_INPUT_DIR, { recursive: true });
+    if (!fs.existsSync(pg3InputDir)) {
+        fs.mkdirSync(pg3InputDir, { recursive: true });
     }
 
     // Generate timestamped filename
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const safeCityName = sanitizeCitySegment(cityName);
     const destFilename = `${safeCityName}_${timestamp}.csv`;
-    const destPath = path.join(PG3_INPUT_DIR, destFilename);
+    const destPath = path.join(pg3InputDir, destFilename);
 
     // Copy file to PG3 input
     fs.copyFileSync(sourcePath, destPath);
@@ -95,20 +153,9 @@ export async function executeHandover(config: HandoverConfig): Promise<void> {
 
     console.log(`📊 Found ${companyCount} companies to enrich`);
 
-    // Trigger BullMQ job
-    const job = await enrichmentQueue.add('handover-enrichment', {
-        csvPath: destPath,
-        cityName,
-        companyCount,
-        priority,
-        timestamp: Date.now(),
-    }, {
-        priority,
-        jobId: `handover-${cityName}-${timestamp}`,
-    });
-
-    console.log(`🚀 BullMQ Job created: ${job.id}`);
-    console.log(`🔗 Handover complete! PG3 will process ${companyCount} companies.`);
+    console.log(`🚀 Triggering PG3 scheduler for ${companyCount} companies (priority hint ${priority} is ignored; PG3 owns queue policy).`);
+    await triggerPg3Scheduler(destPath);
+    console.log(`🔗 Handover complete! PG3 scheduler accepted ${companyCount} companies.`);
 
     // Optional: Archive source file
     const archiveDir = path.join(path.dirname(sourcePath), 'archive');

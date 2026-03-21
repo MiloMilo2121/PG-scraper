@@ -11,6 +11,7 @@ const queuePrefix = `itest_${Date.now()}`;
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pg3-scheduler-smoke-'));
 const sqlitePath = path.join(tempDir, 'scheduler-smoke.sqlite');
 let redisAvailable = true;
+let originalRedisPolicy: string | null = null;
 
 describe('Scheduler smoke', () => {
   beforeAll(async () => {
@@ -28,6 +29,11 @@ describe('Scheduler smoke', () => {
     try {
       await client.connect();
       redisAvailable = true;
+      const configGet = await client.config('GET', 'maxmemory-policy');
+      originalRedisPolicy = Array.isArray(configGet) ? String(configGet[1] || '') : null;
+      if (originalRedisPolicy && originalRedisPolicy !== 'noeviction') {
+        await client.config('SET', 'maxmemory-policy', 'noeviction');
+      }
     } catch {
       redisAvailable = false;
     } finally {
@@ -40,6 +46,23 @@ describe('Scheduler smoke', () => {
   });
 
   afterAll(async () => {
+    if (redisAvailable && originalRedisPolicy && originalRedisPolicy !== 'noeviction') {
+      const client = new IORedis(redisUrl, {
+        maxRetriesPerRequest: 1,
+        enableReadyCheck: false,
+        lazyConnect: true,
+        connectTimeout: 1000,
+        retryStrategy: () => null,
+      });
+      client.on('error', () => undefined);
+      try {
+        await client.connect();
+        await client.config('SET', 'maxmemory-policy', originalRedisPolicy);
+      } finally {
+        await client.quit().catch(() => undefined);
+      }
+    }
+
     delete process.env.QUEUE_PREFIX;
     delete process.env.SQLITE_PATH;
     fs.rmSync(tempDir, { recursive: true, force: true });

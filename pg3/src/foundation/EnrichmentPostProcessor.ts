@@ -1,6 +1,6 @@
 import { NormalizedInput } from './InputNormalizer';
 import { BrowserPool } from './BrowserPool';
-import { LLMService } from '../enricher/core/ai/llm_service';
+import { LLMService } from '../shared-runtime/ai/LLMService';
 import { ModelRouter, TaskDifficulty } from '../enricher/core/ai/model_router';
 
 export class EnrichmentPostProcessor {

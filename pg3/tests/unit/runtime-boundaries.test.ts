@@ -3,9 +3,14 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 const SRC_ROOT = path.resolve(__dirname, '../../src');
+const REPO_ROOT = path.resolve(__dirname, '../..');
 
 function readSource(relativePath: string): string {
   return fs.readFileSync(path.join(SRC_ROOT, relativePath), 'utf8');
+}
+
+function readRepoFile(relativePath: string): string {
+  return fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf8');
 }
 
 describe('runtime boundaries', () => {
@@ -16,7 +21,7 @@ describe('runtime boundaries', () => {
       'enricher/worker.ts',
       'enricher/scheduler.ts',
       'enricher/queue/index.ts',
-      'foundation/runtime_factory.ts',
+      'enricher/runtime/runtime_factory.ts',
     ];
 
     const combined = activeRuntimeFiles.map(readSource).join('\n');
@@ -32,14 +37,49 @@ describe('runtime boundaries', () => {
     const workerTs = readSource('enricher/worker.ts');
     const schedulerTs = readSource('enricher/scheduler.ts');
     const runnerV6Ts = readSource('foundation/RunnerV6.ts');
+    const runtimeFactoryTs = readSource('enricher/runtime/runtime_factory.ts');
+    const legacyRuntimeShimTs = readSource('foundation/runtime_factory.ts');
 
     expect(indexTs).toContain("worker");
     expect(indexTs).toContain("scheduler");
     expect(indexTs).toContain("server");
     expect(serverTs).toContain("resolveRunnerLaunch");
     expect(serverTs).toContain("runner.ts");
+    expect(workerTs).toContain('./runtime/runtime_factory');
+    expect(runnerV6Ts).toContain('../enricher/runtime/runtime_factory');
     expect(workerTs).toContain('createOmegaRuntime');
     expect(runnerV6Ts).toContain('createOmegaRuntime');
+    expect(runtimeFactoryTs).toContain('export async function createOmegaRuntime');
+    expect(legacyRuntimeShimTs).toContain("../enricher/runtime/runtime_factory");
     expect(schedulerTs).not.toContain('runtime_factory');
+  });
+
+  it('keeps Redis bootstrap scripts on noeviction', () => {
+    const files = [
+      'docker-compose.yml',
+      'scripts/run_e2e_enrichment.zsh',
+      'ops/mission_lombardia_manifattura_e2e.sh',
+    ];
+
+    const combined = files.map(readRepoFile).join('\n');
+
+    expect(combined).toContain('maxmemory-policy noeviction');
+    expect(combined).not.toContain('allkeys-lru');
+  });
+
+  it('keeps scraper-facing modules behind shared-runtime wrappers', () => {
+    const categoryMatcherTs = readSource('scraper/ai/category_matcher.ts');
+    const municipalitySplitterTs = readSource('scraper/ai/municipality_splitter.ts');
+    const generateCampaignTs = readSource('scraper/generate_campaign_v2.ts');
+    const proxyManagerTs = readSource('scraper/core/browser/proxy_manager_v9.ts');
+
+    expect(categoryMatcherTs).toContain('shared-runtime/ai/LLMService');
+    expect(categoryMatcherTs).not.toContain('enricher/core/ai/llm_service');
+    expect(municipalitySplitterTs).toContain('shared-runtime/ai/LLMService');
+    expect(municipalitySplitterTs).not.toContain('enricher/core/ai/llm_service');
+    expect(generateCampaignTs).toContain('shared-runtime/security/CaptchaSolver');
+    expect(generateCampaignTs).not.toContain('enricher/core/security/captcha_solver');
+    expect(proxyManagerTs).toContain('shared-runtime/network/proxy_tier_v9');
+    expect(proxyManagerTs).not.toContain('foundation/network/proxy_tier_v9');
   });
 });

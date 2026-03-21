@@ -1,5 +1,5 @@
 import { Logger } from '../utils/logger';
-import { LLMService } from '../../enricher/core/ai/llm_service';
+import { LLMService } from '../../shared-runtime/ai/LLMService';
 import { config } from '../config';
 import { PROVINCE_CODES } from '../data/pg_categories';
 
