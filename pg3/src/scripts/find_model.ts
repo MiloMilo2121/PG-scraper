@@ -1,7 +1,5 @@
-
-import { LLMService } from '../enricher/core/ai/llm_service';
+import { LLMService } from '../shared-runtime/ai/LLMService';
 import * as dotenv from 'dotenv';
-import { config } from '../enricher/config';
 
 dotenv.config();
 

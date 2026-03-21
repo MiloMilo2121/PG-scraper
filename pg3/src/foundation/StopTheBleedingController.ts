@@ -1,7 +1,7 @@
 import { CostLedger } from './CostLedger';
 import { BackpressureValve } from './BackpressureValve';
 import { BrowserPool } from './BrowserPool';
-import { config } from '../enricher/config';
+import { config } from '../shared-runtime/config/runtime_config';
 
 export class StopTheBleedingController {
     private ledger: CostLedger;

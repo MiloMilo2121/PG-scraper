@@ -82,4 +82,17 @@ describe('runtime boundaries', () => {
     expect(proxyManagerTs).toContain('shared-runtime/network/proxy_tier_v9');
     expect(proxyManagerTs).not.toContain('foundation/network/proxy_tier_v9');
   });
+
+  it('keeps shared AI and config ownership out of enricher internals', () => {
+    const llmServiceTs = readSource('shared-runtime/ai/LLMService.ts');
+    const runtimeConfigTs = readSource('shared-runtime/config/runtime_config.ts');
+    const stopTheBleedingTs = readSource('foundation/StopTheBleedingController.ts');
+
+    expect(llmServiceTs).toContain("from '../config/runtime_config'");
+    expect(llmServiceTs).toContain("from '../logging/Logger'");
+    expect(llmServiceTs).not.toContain('enricher/config');
+    expect(runtimeConfigTs).not.toContain('enricher/config');
+    expect(stopTheBleedingTs).toContain("from '../shared-runtime/config/runtime_config'");
+    expect(stopTheBleedingTs).not.toContain('enricher/config');
+  });
 });

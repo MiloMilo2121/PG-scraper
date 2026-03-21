@@ -1,5 +1,4 @@
-
-import { config } from '../enricher/config';
+import { config } from '../shared-runtime/config/runtime_config';
 
 console.log('--- LLM Config Debug ---');
 console.log('Z_AI_API_KEY present:', !!config.llm.z_ai.apiKey);

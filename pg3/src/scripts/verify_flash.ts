@@ -1,8 +1,6 @@
-
-import { LLMService } from '../enricher/core/ai/llm_service';
-import { Logger } from '../enricher/utils/logger';
+import { LLMService } from '../shared-runtime/ai/LLMService';
 import * as dotenv from 'dotenv';
-import { config } from '../enricher/config';
+import { config } from '../shared-runtime/config/runtime_config';
 
 dotenv.config();
 
