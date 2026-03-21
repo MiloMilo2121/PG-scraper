@@ -1,17 +1,4 @@
 import { OpenAI } from 'openai';
-import {
-    BraveApiSearchProvider,
-    BingSearchProvider,
-    BraveSearchProvider,
-    CrtShProvider,
-    DDGSearchProvider,
-    SerperSearchProvider,
-    SearXNGProvider,
-    TavilySearchProvider,
-} from '../../enricher/core/discovery/search_provider';
-import { MxDiscoveryProvider } from '../../enricher/core/discovery/mx_discovery_provider';
-import { PerplexityProvider } from '../../enricher/core/discovery/perplexity_provider';
-import { config } from '../../enricher/config';
 import { ProviderAdapter } from './provider_adapter';
 
 // Guardrail accounting uses vendor list prices converted with a fixed EUR estimate.
@@ -20,6 +7,44 @@ const USD_TO_EUR_ESTIMATE = 0.86;
 
 function usdToEur(usd: number): number {
     return Number((usd * USD_TO_EUR_ESTIMATE).toFixed(6));
+}
+
+function readLocalOracleFetchCostEur(): number {
+    const raw = process.env.LOCAL_ORACLE_FETCH_COST_EUR?.trim();
+    if (!raw) {
+        return 0;
+    }
+
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+type SearchProviderCtor = new () => { search(query: string): Promise<unknown> };
+
+async function runSearchProvider<T>(loader: () => Promise<Record<string, SearchProviderCtor>>, exportName: string, query: string): Promise<T> {
+    const module = await loader();
+    const ProviderClass = module[exportName];
+    if (!ProviderClass) {
+        throw new Error(`Missing provider export: ${exportName}`);
+    }
+
+    const provider = new ProviderClass();
+    return (await provider.search(query)) as T;
+}
+
+async function runScraperFetch<T>(mode: 'direct' | 'brightdata', url: string, options: any): Promise<T> {
+    const { ScraperClient } = await import('../../enricher/utils/scraper_client');
+    const result = await ScraperClient.fetchHtml(url, { mode, ...options });
+    if (mode === 'direct' && (result.status === 403 || result.status === 429)) {
+        throw new Error('BLOCK');
+    }
+    return result as unknown as T;
+}
+
+async function runOracleFetch<T>(url: string): Promise<T> {
+    const { OracleClient } = await import('../../enricher/utils/oracle_client');
+    const result = await OracleClient.fetchHtmlStealth(url);
+    return { data: result.html, status: 200 } as unknown as T;
 }
 
 function parseJsonPayload<T>(raw: string): T {
@@ -58,8 +83,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             tier: 0,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const provider = new MxDiscoveryProvider();
-                return (await provider.search(query)) as unknown as T;
+                return runSearchProvider<T>(() => import('../../enricher/core/discovery/mx_discovery_provider'), 'MxDiscoveryProvider', query);
             }
         }],
         ['CRTSH-API-1', {
@@ -67,8 +91,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             tier: 0,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const provider = new CrtShProvider();
-                return (await provider.search(query)) as unknown as T;
+                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'CrtShProvider', query);
             }
         }],
         ['SERPER-API-1', {
@@ -76,8 +99,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const provider = new SerperSearchProvider();
-                return (await provider.search(query)) as unknown as T;
+                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'SerperSearchProvider', query);
             }
         }],
         ['BRAVE-API-1', {
@@ -85,8 +107,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const provider = new BraveApiSearchProvider();
-                return (await provider.search(query)) as unknown as T;
+                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'BraveApiSearchProvider', query);
             }
         }],
         ['TAVILY-API-2', {
@@ -94,8 +115,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             tier: 2,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const provider = new TavilySearchProvider();
-                return (await provider.search(query)) as unknown as T;
+                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'TavilySearchProvider', query);
             }
         }],
         ['HTTP-DIRECT-1', {
@@ -104,10 +124,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             execute: async <T>(payload: any): Promise<T> => {
                 const url = typeof payload === 'string' ? payload : payload.url;
                 const options = typeof payload === 'string' ? {} : (payload.options || {});
-                const { ScraperClient } = require('../../enricher/utils/scraper_client');
-                const result = await ScraperClient.fetchHtml(url, { mode: 'direct', ...options });
-                if (result.status === 403 || result.status === 429) throw new Error('BLOCK');
-                return result as unknown as T;
+                return runScraperFetch<T>('direct', url, options);
             }
         }],
 
@@ -117,19 +134,15 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             execute: async <T>(payload: any): Promise<T> => {
                 const url = typeof payload === 'string' ? payload : payload.url;
                 const options = typeof payload === 'string' ? {} : (payload.options || {});
-                const { ScraperClient } = require('../../enricher/utils/scraper_client');
-                const result = await ScraperClient.fetchHtml(url, { mode: 'brightdata', ...options });
-                return result as unknown as T;
+                return runScraperFetch<T>('brightdata', url, options);
             }
         }],
         ['ORACLE-CRAWL4AI-5', {
-            costPerRequest: config.costing.localOracleFetchCostEur,
+            costPerRequest: readLocalOracleFetchCostEur(),
             tier: 5,
             execute: async <T>(payload: any): Promise<T> => {
                 const url = typeof payload === 'string' ? payload : payload.url;
-                const { OracleClient } = require('../../enricher/utils/oracle_client');
-                const result = await OracleClient.fetchHtmlStealth(url);
-                return { data: result.html, status: 200 } as unknown as T;
+                return runOracleFetch<T>(url);
             }
         }],
 
@@ -138,8 +151,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const provider = new BraveSearchProvider();
-                return (await provider.search(query)) as unknown as T;
+                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'BraveSearchProvider', query);
             }
         }],
         ['BING-HTML-1', {
@@ -147,8 +159,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const provider = new BingSearchProvider();
-                return (await provider.search(query)) as unknown as T;
+                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'BingSearchProvider', query);
             }
         }],
         ['DDG-LITE-1', {
@@ -156,8 +167,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const provider = new DDGSearchProvider();
-                return (await provider.search(query)) as unknown as T;
+                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'DDGSearchProvider', query);
             }
         }],
         ['SEARXNG-NET-1', {
@@ -165,8 +175,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             tier: 9,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const provider = new SearXNGProvider();
-                return (await provider.search(query)) as unknown as T;
+                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'SearXNGProvider', query);
             }
         }],
 
@@ -175,8 +184,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             tier: 4,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const provider = new PerplexityProvider();
-                return (await provider.search(query)) as unknown as T;
+                return runSearchProvider<T>(() => import('../../enricher/core/discovery/perplexity_provider'), 'PerplexityProvider', query);
             }
         }],
         ['OPENAI-1', {
