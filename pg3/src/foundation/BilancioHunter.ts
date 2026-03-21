@@ -1,14 +1,7 @@
-import { SerpDeduplicator } from './SerpDeduplicator';
 import { NormalizedInput } from './InputNormalizer';
 import { QuerySanitizer } from './QuerySanitizer';
-import {
-    BraveApiSearchProvider,
-    DDGSearchProvider,
-    JinaSearchProvider,
-    SearchProvider,
-    SerperSearchProvider,
-    TavilySearchProvider,
-} from '../enricher/core/discovery/search_provider';
+import { CostRouter } from './CostRouter';
+import { pickFinancialSearchResult } from './search_result_selectors';
 
 export interface FinancialData {
     fatturato_current?: number;
@@ -19,11 +12,11 @@ export interface FinancialData {
 }
 
 export class BilancioHunter {
-    private dedup: SerpDeduplicator;
+    private router: CostRouter;
     private sanitizer = new QuerySanitizer();
 
-    constructor(dedup: SerpDeduplicator) {
-        this.dedup = dedup;
+    constructor(router: CostRouter) {
+        this.router = router;
     }
 
     public async hunt(companyId: string, input: NormalizedInput): Promise<FinancialData | null> {
@@ -35,36 +28,25 @@ export class BilancioHunter {
             return null;
         }
 
-        let results: Array<{ url: string; title: string; snippet?: string }> = [];
-        const providers: SearchProvider[] = [
-            new SerperSearchProvider(),
-            new BraveApiSearchProvider(),
-            new TavilySearchProvider(),
-            new JinaSearchProvider(),
-            new DDGSearchProvider(),
-        ];
-
-        for (const provider of providers) {
-            try {
-                results = await provider.search(query);
-                if (results.length > 0) {
-                    break;
-                }
-            } catch {
-                // Try the next provider. Bilancio enrichment is opportunistic.
+        let bestResult: { url: string; title: string; snippet?: string } | null = null;
+        try {
+            const routeResult = await this.router.route<Array<{ url: string; title: string; snippet?: string }>>(
+                'SERP',
+                { query },
+                { companyId, maxTier: 2 }
+            );
+            const selected = pickFinancialSearchResult(routeResult.data || []);
+            if (selected?.url) {
+                bestResult = {
+                    url: selected.url,
+                    title: selected.title || '',
+                    snippet: selected.snippet,
+                };
             }
+        } catch {
+            bestResult = null;
         }
 
-        if (results.length === 0) {
-            return null;
-        }
-
-        const bestResult = results.find((result) => result.url?.toLowerCase().includes('.pdf'))
-            || results.find((result) => {
-                const haystack = `${result.title || ''} ${result.snippet || ''}`.toLowerCase();
-                return haystack.includes('bilancio') || haystack.includes('fatturato') || haystack.includes('stato patrimoniale');
-            })
-            || results[0];
         if (!bestResult) {
             return null;
         }

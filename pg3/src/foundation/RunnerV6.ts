@@ -131,8 +131,8 @@ async function run() {
     const pipeline = new MasterPipeline({
         normalizer: new InputNormalizer(),
         registry, gate, dedup, oracleGuard, bleedingCtrl, valve,
-        bilancioHunter: new BilancioHunter(dedup),
-        linkedinSniper: new LinkedInSniper(dedup, valve),
+        bilancioHunter: new BilancioHunter(router),
+        linkedinSniper: new LinkedInSniper(router),
         browserPool: pool,
         costRouter: router,
         postProcessor: new EnrichmentPostProcessor(pool),
