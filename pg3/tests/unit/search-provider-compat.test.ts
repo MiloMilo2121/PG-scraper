@@ -6,7 +6,8 @@ import {
   SerperSearchProvider,
   TavilySearchProvider,
 } from '../../src/enricher/core/discovery/search_provider';
-import { buildProviderMap, SERP_PROVIDER_ORDER } from '../../src/foundation/provider_catalog';
+import { buildProviderMap } from '../../src/enricher/runtime/provider_catalog';
+import { SERP_PROVIDER_ORDER } from '../../src/shared-runtime/routing/provider_catalog';
 
 describe('search_provider compatibility exports', () => {
   it('keeps Serper and Jina constructors available for enrichment callers', () => {
@@ -36,5 +37,6 @@ describe('search_provider compatibility exports', () => {
     expect(providerMap.has('SERPER-API-1')).toBe(true);
     expect(providerMap.has('BRAVE-API-1')).toBe(true);
     expect(providerMap.has('TAVILY-API-2')).toBe(true);
+    expect(providerMap.get('SERPER-API-1')?.family).toBe('SERP');
   });
 });

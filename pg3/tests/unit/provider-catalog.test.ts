@@ -32,7 +32,13 @@ async function loadCatalog(overrides: Record<string, string>) {
 
   process.env = nextEnv;
 
-  return await import('../../src/foundation/provider_catalog');
+  const runtimeCatalog = await import('../../src/enricher/runtime/provider_catalog');
+  const sharedCatalog = await import('../../src/shared-runtime/routing/provider_catalog');
+
+  return {
+    ...runtimeCatalog,
+    ...sharedCatalog,
+  };
 }
 
 afterEach(() => {
@@ -56,8 +62,13 @@ describe('provider catalog', () => {
     const oracle = providers.get('ORACLE-CRAWL4AI-5');
 
     expect(direct?.costPerRequest).toBe(0);
+    expect(direct?.family).toBe('PROXY_FETCH');
     expect(brightData?.costPerRequest).toBeLessThan(0.01);
+    expect(brightData?.family).toBe('PROXY_FETCH');
     expect(oracle).toBeDefined();
+    expect(oracle?.family).toBe('PROXY_FETCH');
+    expect(providers.get('SERPER-API-1')?.family).toBe('SERP');
+    expect(providers.get('OPENAI-1')?.family).toBe('LLM');
   }, 120000);
 
   it('threads configurable local Oracle cost into the provider map', async () => {

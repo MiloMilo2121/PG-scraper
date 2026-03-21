@@ -1,3 +1,4 @@
+// Shared routing remains neutral: these arrays define the escalation order only.
 export const SERP_PROVIDER_ORDER = [
     'SERPER-API-1',
     'BRAVE-API-1',

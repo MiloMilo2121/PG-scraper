@@ -1,7 +1,7 @@
 import { MemoryFirstCache } from '../cache/MemoryFirstCache';
 import { CostLedger } from '../budget/CostLedger';
 import { HTTP_PROVIDER_ORDER, SERP_PROVIDER_ORDER } from './provider_catalog';
-import { ProviderAdapter } from './provider_adapter';
+import { ProviderAdapter, ProviderTaskFamily } from './provider_adapter';
 
 export type TaskType = 'SERP' | 'LLM_CLASSIFY' | 'LLM_VISION' | 'PROXY_FETCH' | 'LLM_PARSE';
 
@@ -21,6 +21,14 @@ export interface ProviderBudget {
     queue_depth: number;
     is_throttled: boolean;
 }
+
+const TASK_FAMILY_BY_TASK_TYPE: Partial<Record<TaskType, ProviderTaskFamily>> = {
+    SERP: 'SERP',
+    PROXY_FETCH: 'PROXY_FETCH',
+    LLM_CLASSIFY: 'LLM',
+    LLM_PARSE: 'LLM',
+    LLM_VISION: 'LLM',
+};
 
 export class ProviderOverloadedError extends Error {
     constructor(provider: string) {
@@ -177,23 +185,25 @@ export class CostRouter {
             }
         }
 
+        const requestedFamily = TASK_FAMILY_BY_TASK_TYPE[taskType] ?? null;
         const serpProviders: string[] = [...SERP_PROVIDER_ORDER];
         const httpProviders: string[] = [...HTTP_PROVIDER_ORDER];
-        const providerOrder = taskType === 'SERP'
+        const providerOrder = requestedFamily === 'SERP'
             ? serpProviders
-            : taskType === 'PROXY_FETCH'
+            : requestedFamily === 'PROXY_FETCH'
                 ? httpProviders
                 : [];
         const orderMap = new Map(providerOrder.map((providerId, index) => [providerId, index]));
 
         const sortedProviders = Array.from(this.providers.entries())
-            .filter(([id, adapter]) => {
-                if (taskType === 'SERP') return serpProviders.includes(id);
-                if (taskType === 'PROXY_FETCH') return httpProviders.includes(id);
-                if (taskType === 'LLM_PARSE' || taskType === 'LLM_CLASSIFY') return !serpProviders.includes(id) && !httpProviders.includes(id);
-                return true;
+            .filter(([, adapter]) => {
+                if (!requestedFamily) {
+                    return true;
+                }
+
+                return adapter.family === requestedFamily;
             })
-            .filter(([id, adapter]) => !options?.maxTier || adapter.tier <= options.maxTier)
+            .filter(([, adapter]) => !options?.maxTier || adapter.tier <= options.maxTier)
             .sort((a, b) => {
                 if (orderMap.size > 0) {
                     return (orderMap.get(a[0]) ?? Number.MAX_SAFE_INTEGER) - (orderMap.get(b[0]) ?? Number.MAX_SAFE_INTEGER);

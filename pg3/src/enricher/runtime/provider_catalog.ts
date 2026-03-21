@@ -33,7 +33,7 @@ async function runSearchProvider<T>(loader: () => Promise<Record<string, SearchP
 }
 
 async function runScraperFetch<T>(mode: 'direct' | 'brightdata', url: string, options: any): Promise<T> {
-    const { ScraperClient } = await import('../../enricher/utils/scraper_client');
+    const { ScraperClient } = await import('../utils/scraper_client');
     const result = await ScraperClient.fetchHtml(url, { mode, ...options });
     if (mode === 'direct' && (result.status === 403 || result.status === 429)) {
         throw new Error('BLOCK');
@@ -42,7 +42,7 @@ async function runScraperFetch<T>(mode: 'direct' | 'brightdata', url: string, op
 }
 
 async function runOracleFetch<T>(url: string): Promise<T> {
-    const { OracleClient } = await import('../../enricher/utils/oracle_client');
+    const { OracleClient } = await import('../utils/oracle_client');
     const result = await OracleClient.fetchHtmlStealth(url);
     return { data: result.html, status: 200 } as unknown as T;
 }
@@ -58,46 +58,52 @@ const BRIGHTDATA_WEB_UNLOCKER_COST_EUR = usdToEur(1.5 / 1000);
 export function buildProviderMap(): Map<string, ProviderAdapter> {
     return new Map([
         ['DNS-MX-MINING-0', {
+            family: 'SERP',
             costPerRequest: 0,
             tier: 0,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                return runSearchProvider<T>(() => import('../../enricher/core/discovery/mx_discovery_provider'), 'MxDiscoveryProvider', query);
+                return runSearchProvider<T>(() => import('../core/discovery/mx_discovery_provider'), 'MxDiscoveryProvider', query);
             }
         }],
         ['CRTSH-API-1', {
+            family: 'SERP',
             costPerRequest: 0,
             tier: 0,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'CrtShProvider', query);
+                return runSearchProvider<T>(() => import('../core/discovery/search_provider'), 'CrtShProvider', query);
             }
         }],
         ['SERPER-API-1', {
+            family: 'SERP',
             costPerRequest: 0.001,
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'SerperSearchProvider', query);
+                return runSearchProvider<T>(() => import('../core/discovery/search_provider'), 'SerperSearchProvider', query);
             }
         }],
         ['BRAVE-API-1', {
+            family: 'SERP',
             costPerRequest: 0.001,
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'BraveApiSearchProvider', query);
+                return runSearchProvider<T>(() => import('../core/discovery/search_provider'), 'BraveApiSearchProvider', query);
             }
         }],
         ['TAVILY-API-2', {
+            family: 'SERP',
             costPerRequest: 0.001,
             tier: 2,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'TavilySearchProvider', query);
+                return runSearchProvider<T>(() => import('../core/discovery/search_provider'), 'TavilySearchProvider', query);
             }
         }],
         ['HTTP-DIRECT-1', {
+            family: 'PROXY_FETCH',
             costPerRequest: 0,
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
@@ -108,6 +114,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
         }],
 
         ['HTTP-BRIGHTDATA-4', {
+            family: 'PROXY_FETCH',
             costPerRequest: BRIGHTDATA_WEB_UNLOCKER_COST_EUR,
             tier: 4,
             execute: async <T>(payload: any): Promise<T> => {
@@ -117,6 +124,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             }
         }],
         ['ORACLE-CRAWL4AI-5', {
+            family: 'PROXY_FETCH',
             costPerRequest: readLocalOracleFetchCostEur(),
             tier: 5,
             execute: async <T>(payload: any): Promise<T> => {
@@ -126,47 +134,53 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
         }],
 
         ['BRAVE-HTML-1', {
+            family: 'SERP',
             costPerRequest: 0,
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'BraveSearchProvider', query);
+                return runSearchProvider<T>(() => import('../core/discovery/search_provider'), 'BraveSearchProvider', query);
             }
         }],
         ['BING-HTML-1', {
+            family: 'SERP',
             costPerRequest: 0,
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'BingSearchProvider', query);
+                return runSearchProvider<T>(() => import('../core/discovery/search_provider'), 'BingSearchProvider', query);
             }
         }],
         ['DDG-LITE-1', {
+            family: 'SERP',
             costPerRequest: 0,
             tier: 1,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'DDGSearchProvider', query);
+                return runSearchProvider<T>(() => import('../core/discovery/search_provider'), 'DDGSearchProvider', query);
             }
         }],
         ['SEARXNG-NET-1', {
+            family: 'SERP',
             costPerRequest: 0,
             tier: 9,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                return runSearchProvider<T>(() => import('../../enricher/core/discovery/search_provider'), 'SearXNGProvider', query);
+                return runSearchProvider<T>(() => import('../core/discovery/search_provider'), 'SearXNGProvider', query);
             }
         }],
 
         ['PERPLEXITY-API-4', {
+            family: 'SERP',
             costPerRequest: 0.010,
             tier: 4,
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                return runSearchProvider<T>(() => import('../../enricher/core/discovery/perplexity_provider'), 'PerplexityProvider', query);
+                return runSearchProvider<T>(() => import('../core/discovery/perplexity_provider'), 'PerplexityProvider', query);
             }
         }],
         ['OPENAI-1', {
+            family: 'LLM',
             costPerRequest: 0.005,
             tier: 3,
             execute: async <T>(payload: any): Promise<T> => {
@@ -194,6 +208,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             }
         }],
         ['PERPLEXITY-1', {
+            family: 'LLM',
             costPerRequest: 0.010,
             tier: 8,
             execute: async <T>(payload: any): Promise<T> => {
@@ -219,6 +234,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             }
         }],
         ['DEEPSEEK-1', {
+            family: 'LLM',
             costPerRequest: 0.002,
             tier: 5,
             execute: async <T>(payload: any): Promise<T> => {
@@ -245,6 +261,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             }
         }],
         ['KIMI-1', {
+            family: 'LLM',
             costPerRequest: 0.002,
             tier: 6,
             execute: async <T>(payload: any): Promise<T> => {
@@ -271,6 +288,7 @@ export function buildProviderMap(): Map<string, ProviderAdapter> {
             }
         }],
         ['ZAI-1', {
+            family: 'LLM',
             costPerRequest: 0.002,
             tier: 7,
             execute: async <T>(payload: any): Promise<T> => {

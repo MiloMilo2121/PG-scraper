@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { BlockClassifier, BlockType } from '../../src/enricher/core/security/block_classifier';
+import { BlockClassifier, BlockType } from '../../src/shared-runtime/security/block_classifier';
 
 describe('BlockClassifier', () => {
 

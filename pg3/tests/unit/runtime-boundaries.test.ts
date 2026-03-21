@@ -50,6 +50,8 @@ describe('runtime boundaries', () => {
     expect(workerTs).toContain('createOmegaRuntime');
     expect(runnerV6Ts).toContain('createOmegaRuntime');
     expect(runtimeFactoryTs).toContain('export async function createOmegaRuntime');
+    expect(runtimeFactoryTs).toContain("from './provider_catalog'");
+    expect(runtimeFactoryTs).not.toContain("shared-runtime/routing/provider_catalog");
     expect(legacyRuntimeShimTs).toContain("../enricher/runtime/runtime_factory");
     expect(schedulerTs).not.toContain('runtime_factory');
   });
