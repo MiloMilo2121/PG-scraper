@@ -11,18 +11,14 @@
 
 import { Logger } from '../../utils/logger';
 import { config } from '../../config';
+import { ProxyTier } from '../../../foundation/network/proxy_tier_v9';
+
+export { ProxyTier };
 
 // V9 Configuration Injection (Must match .env laws)
 const PROXY_DATACENTER_URL = process.env.PROXY_DATACENTER_URL;
 const PROXY_RESIDENTIAL_URL = process.env.PROXY_RESIDENTIAL_URL;
 const PROXY_MOBILE_URL = process.env.PROXY_MOBILE_URL; // V9 Addition
-
-export enum ProxyTier {
-    DATACENTER = 'DATACENTER', // Tier 1
-    RESIDENTIAL = 'RESIDENTIAL', // Tier 2
-    MOBILE = 'MOBILE',         // Tier 3
-    DIRECT = 'DIRECT',
-}
 
 export interface ProxyConfig {
     server?: string;

@@ -8,7 +8,7 @@
  * microservice will implement.
  */
 
-import { ProxyTier } from '../../scraper/core/browser/proxy_manager_v9';
+import { ProxyTier } from './proxy_tier_v9';
 
 export interface ICloakHeaders {
     [key: string]: string;
