@@ -1,3 +1,19 @@
+jest.mock('@mozilla/readability', () => ({
+    Readability: class {
+        constructor(_document: unknown) {}
+        parse() {
+            return null;
+        }
+    },
+}));
+
+jest.mock('jsdom', () => ({
+    JSDOM: class {
+        window = { document: {} };
+        constructor(_html: string, _options?: unknown) {}
+    },
+}));
+
 import { ContentExtractor } from '../src/modules/extractor';
 
 describe('ContentExtractor Module', () => {

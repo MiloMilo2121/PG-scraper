@@ -20,7 +20,9 @@ const mockEvidence: Evidence = {
     is_https: true,
     has_privacy_policy: true,
     has_contact_page: true,
-    parked_indicators_count: 0
+    parked_indicators_count: 0,
+    address_match_score: 0,
+    name_match_score: 0
 };
 
 const mockInput: NormalizedEntity = {
