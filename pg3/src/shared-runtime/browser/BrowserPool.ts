@@ -3,8 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 const crypto = require('crypto');
 import { CostLedger } from '../budget/CostLedger';
-import { BlockClassifier, BlockType } from '../../enricher/core/security/block_classifier';
-import { config } from '../../enricher/config';
+import { BlockClassifier, BlockType } from '../security/block_classifier';
 
 export interface NavigationResult {
     status: 'OK' | 'TIMEOUT' | 'BLOCKED' | 'CF_CHALLENGE' | 'ERROR';
@@ -51,9 +50,11 @@ export class BrowserPool {
     private maxInstances: number;
     private maxReqsPerInstance: number;
     private navTimeoutMs: number;
+    private chromePath?: string;
     private blockResources: string[];
     private proxyUrl: string | undefined;
     private sessionStateDir: string;
+    private localBrowserNavCostEur: number;
 
     // Stats
     private recycledTotal = 0;
@@ -67,6 +68,8 @@ export class BrowserPool {
         blockResources?: string[];
         ledger: CostLedger;
         sessionStateDir?: string;
+        chromePath?: string;
+        localNavigationCostEur?: number;
         manageProcessSignals?: boolean;
     }) {
         this.maxInstances = options.maxInstances || 3;
@@ -74,8 +77,10 @@ export class BrowserPool {
         this.navTimeoutMs = options.navigationTimeout || 8000;
         this.blockResources = options.blockResources || ['image', 'font', 'media'];
         this.ledger = options.ledger;
+        this.chromePath = options.chromePath || process.env.CHROME_PATH || undefined;
         this.proxyUrl = process.env.PROXY_RESIDENTIAL_URL;
-        this.sessionStateDir = options.sessionStateDir || config.runtime.browserSessionDir;
+        this.sessionStateDir = options.sessionStateDir || path.join(process.cwd(), 'data', 'browser-sessions');
+        this.localBrowserNavCostEur = options.localNavigationCostEur ?? Number(process.env.LOCAL_BROWSER_NAV_COST_EUR || '0');
 
         fs.mkdirSync(this.sessionStateDir, { recursive: true });
 
@@ -114,8 +119,8 @@ export class BrowserPool {
                 ],
             };
 
-            if (config.browser.chromePath) {
-                launchOptions.executablePath = config.browser.chromePath;
+            if (this.chromePath) {
+                launchOptions.executablePath = this.chromePath;
             }
 
             // Route all browser traffic through the residential proxy if configured
@@ -334,7 +339,7 @@ export class BrowserPool {
         // Log Cost/Health
         await this.ledger.log({
             timestamp: new Date().toISOString(), module: 'BrowserPool', provider: 'playwright',
-              tier: 2, task_type: 'PROXY_FETCH', cost_eur: config.costing.localBrowserNavCostEur, cache_hit: false, cache_level: 'MISS',
+              tier: 2, task_type: 'PROXY_FETCH', cost_eur: this.localBrowserNavCostEur, cache_hit: false, cache_level: 'MISS',
               duration_ms: duration,
               success: status === 'OK',
               error: status === 'OK' ? undefined : status,

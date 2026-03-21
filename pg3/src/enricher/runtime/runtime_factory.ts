@@ -47,6 +47,8 @@ export async function createOmegaRuntime(): Promise<OmegaRuntime> {
         maxRequestsPerInstance: config.runtime.browserPoolMaxRequestsPerInstance,
         navigationTimeout: config.runtime.browserPoolNavTimeoutMs,
         sessionStateDir: config.runtime.browserSessionDir,
+        chromePath: config.browser.chromePath,
+        localNavigationCostEur: config.costing.localBrowserNavCostEur,
     });
     const registry = new ShadowRegistry('omega_shadow.sqlite');
     const router = new CostRouter(cache, ledger, buildProviderMap());
