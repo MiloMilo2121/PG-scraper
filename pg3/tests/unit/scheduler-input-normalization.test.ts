@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createCsvLoadDiagnostics, normalizeCsvRowForScheduler } from '../../src/enricher/scheduler';
+import { createCsvLoadDiagnostics, normalizeCsvRowForScheduler } from '../../src/enricher/scheduler_csv';
 
 describe('Scheduler CSV normalization', () => {
   it('maps common legacy headers to scheduler canonical fields', () => {

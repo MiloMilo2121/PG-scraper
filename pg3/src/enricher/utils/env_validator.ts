@@ -1,8 +1,13 @@
 
 import { Logger } from './logger';
 
+export interface EnvValidationReport {
+    missing: string[];
+    warnings: string[];
+}
+
 export class EnvValidator {
-    static validate() {
+    static validate(): EnvValidationReport {
         const missing: string[] = [];
         const warnings: string[] = [];
 
@@ -24,11 +29,10 @@ export class EnvValidator {
         if (missing.length > 0) {
             Logger.error('🚨 ENV VALIDATION FAILED (Missing Required Keys):');
             missing.forEach(m => Logger.error(`   - ${m}`));
-            // We don't force exit for warnings, but for missing required (like remote endpoint) we might.
-            // But usually we just let it fail at runtime or exit here.
-            // For now, let's just log loudly.
-        } else {
-            Logger.info('✅ Environment Variables Validated.');
+            throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
         }
+
+        Logger.info('✅ Environment Variables Validated.');
+        return { missing, warnings };
     }
 }

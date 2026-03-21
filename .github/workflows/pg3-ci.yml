@@ -2,15 +2,14 @@ name: pg3-ci
 
 on:
   push:
-    branches: [main, develop]
     paths:
       - "pg3/**"
       - ".github/workflows/pg3-ci.yml"
   pull_request:
-    branches: [main]
     paths:
       - "pg3/**"
       - ".github/workflows/pg3-ci.yml"
+  workflow_dispatch:
 
 jobs:
   typecheck_unit:

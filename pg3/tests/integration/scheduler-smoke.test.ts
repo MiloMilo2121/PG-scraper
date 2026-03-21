@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import IORedis from 'ioredis';
@@ -6,11 +8,14 @@ import { Queue } from 'bullmq';
 const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379/15';
 const queueName = 'enrichment';
 const queuePrefix = `itest_${Date.now()}`;
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pg3-scheduler-smoke-'));
+const sqlitePath = path.join(tempDir, 'scheduler-smoke.sqlite');
 let redisAvailable = true;
 
 describe('Scheduler smoke', () => {
   beforeAll(async () => {
     process.env.QUEUE_PREFIX = queuePrefix;
+    process.env.SQLITE_PATH = sqlitePath;
     const client = new IORedis(redisUrl, {
       maxRetriesPerRequest: 1,
       enableReadyCheck: false,
@@ -36,6 +41,8 @@ describe('Scheduler smoke', () => {
 
   afterAll(async () => {
     delete process.env.QUEUE_PREFIX;
+    delete process.env.SQLITE_PATH;
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   it('loads CSV, deduplicates deterministic ids, enqueues jobs and exits cleanly', async () => {

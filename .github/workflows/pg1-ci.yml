@@ -1,0 +1,38 @@
+name: pg1-ci
+
+on:
+  push:
+    paths:
+      - "pg1/**"
+      - ".github/workflows/pg1-ci.yml"
+  pull_request:
+    paths:
+      - "pg1/**"
+      - ".github/workflows/pg1-ci.yml"
+  workflow_dispatch:
+
+jobs:
+  typecheck_test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pg1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: pg1/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test

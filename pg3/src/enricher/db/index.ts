@@ -54,6 +54,37 @@ Logger.info(`🗄️ SQLite connected: ${SQLITE_PATH} (WAL mode)`);
 let schemaInitialized = false;
 let statementsInitialized = false;
 
+function getTableColumns(tableName: string): Set<string> {
+    const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+    return new Set(rows.map((row) => row.name));
+}
+
+function runMigrationStep(step: string, action: () => void): boolean {
+    try {
+        action();
+        return true;
+    } catch (error) {
+        Logger.warn('DB migration step failed', { step, error: error as Error });
+        return false;
+    }
+}
+
+function addColumnIfMissing(tableName: string, columns: Set<string>, columnName: string, ddl: string): boolean {
+    if (columns.has(columnName)) {
+        return false;
+    }
+
+    const added = runMigrationStep(`${tableName}.${columnName}`, () => {
+        db.exec(ddl);
+    });
+
+    if (added) {
+        columns.add(columnName);
+    }
+
+    return added;
+}
+
 export function initializeDatabase(): void {
     if (schemaInitialized) {
         return;
@@ -153,73 +184,70 @@ export function initializeDatabase(): void {
         CREATE INDEX IF NOT EXISTS idx_result_versions_company ON enrichment_result_versions(company_id);
     `);
 
-    try {
-        const cols = db.prepare(`PRAGMA table_info(companies)`).all() as Array<{ name: string }>;
-        const names = new Set(cols.map((col) => col.name));
-        const addIfMissing = (name: string, ddl: string) => {
-            if (!names.has(name)) db.exec(ddl);
-        };
+    const companyColumns = getTableColumns('companies');
+    addColumnIfMissing('companies', companyColumns, 'zip_code', `ALTER TABLE companies ADD COLUMN zip_code TEXT`);
+    addColumnIfMissing('companies', companyColumns, 'region', `ALTER TABLE companies ADD COLUMN region TEXT`);
+    addColumnIfMissing('companies', companyColumns, 'vat_code', `ALTER TABLE companies ADD COLUMN vat_code TEXT`);
+    addColumnIfMissing('companies', companyColumns, 'pg_url', `ALTER TABLE companies ADD COLUMN pg_url TEXT`);
+    addColumnIfMissing('companies', companyColumns, 'email', `ALTER TABLE companies ADD COLUMN email TEXT`);
+    addColumnIfMissing('companies', companyColumns, 'deleted_at', `ALTER TABLE companies ADD COLUMN deleted_at DATETIME`);
 
-        addIfMissing('zip_code', `ALTER TABLE companies ADD COLUMN zip_code TEXT`);
-        addIfMissing('region', `ALTER TABLE companies ADD COLUMN region TEXT`);
-        addIfMissing('vat_code', `ALTER TABLE companies ADD COLUMN vat_code TEXT`);
-        addIfMissing('pg_url', `ALTER TABLE companies ADD COLUMN pg_url TEXT`);
-        addIfMissing('email', `ALTER TABLE companies ADD COLUMN email TEXT`);
-        addIfMissing('deleted_at', `ALTER TABLE companies ADD COLUMN deleted_at DATETIME`);
+    const enrichmentColumns = getTableColumns('enrichment_results');
+    addColumnIfMissing('enrichment_results', enrichmentColumns, 'discovery_method', `ALTER TABLE enrichment_results ADD COLUMN discovery_method TEXT`);
+    addColumnIfMissing('enrichment_results', enrichmentColumns, 'discovery_confidence', `ALTER TABLE enrichment_results ADD COLUMN discovery_confidence REAL`);
+    addColumnIfMissing('enrichment_results', enrichmentColumns, 'reason_code', `ALTER TABLE enrichment_results ADD COLUMN reason_code TEXT`);
+    addColumnIfMissing('enrichment_results', enrichmentColumns, 'email', `ALTER TABLE enrichment_results ADD COLUMN email TEXT`);
+    addColumnIfMissing('enrichment_results', enrichmentColumns, 'decision_maker_name', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_name TEXT`);
+    addColumnIfMissing('enrichment_results', enrichmentColumns, 'decision_maker_role', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_role TEXT`);
+    addColumnIfMissing('enrichment_results', enrichmentColumns, 'decision_maker_linkedin_url', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_linkedin_url TEXT`);
+    addColumnIfMissing('enrichment_results', enrichmentColumns, 'decision_maker_confidence', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_confidence REAL`);
+    addColumnIfMissing('enrichment_results', enrichmentColumns, 'updated_at', `ALTER TABLE enrichment_results ADD COLUMN updated_at DATETIME`);
+    addColumnIfMissing('enrichment_results', enrichmentColumns, 'deleted_at', `ALTER TABLE enrichment_results ADD COLUMN deleted_at DATETIME`);
 
-        const erCols = db.prepare(`PRAGMA table_info(enrichment_results)`).all() as Array<{ name: string }>;
-        const erNames = new Set(erCols.map((col) => col.name));
-        const addErIfMissing = (name: string, ddl: string) => {
-            if (!erNames.has(name)) db.exec(ddl);
-        };
-
-        addErIfMissing('discovery_method', `ALTER TABLE enrichment_results ADD COLUMN discovery_method TEXT`);
-        addErIfMissing('discovery_confidence', `ALTER TABLE enrichment_results ADD COLUMN discovery_confidence REAL`);
-        addErIfMissing('reason_code', `ALTER TABLE enrichment_results ADD COLUMN reason_code TEXT`);
-        addErIfMissing('email', `ALTER TABLE enrichment_results ADD COLUMN email TEXT`);
-        addErIfMissing('decision_maker_name', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_name TEXT`);
-        addErIfMissing('decision_maker_role', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_role TEXT`);
-        addErIfMissing('decision_maker_linkedin_url', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_linkedin_url TEXT`);
-        addErIfMissing('decision_maker_confidence', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_confidence REAL`);
-        addErIfMissing('updated_at', `ALTER TABLE enrichment_results ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`);
-        addErIfMissing('deleted_at', `ALTER TABLE enrichment_results ADD COLUMN deleted_at DATETIME`);
-
-        db.exec(`
-            WITH ranked AS (
-                SELECT
-                    id,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY company_id
-                        ORDER BY datetime(COALESCE(updated_at, enriched_at)) DESC,
-                                 datetime(COALESCE(enriched_at, updated_at)) DESC,
-                                 rowid DESC
-                    ) AS rn
-                FROM enrichment_results
-                WHERE deleted_at IS NULL
-            )
-            UPDATE enrichment_results
-            SET deleted_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
-        `);
-
-        db.exec(`
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_enrichment_results_company_active
-            ON enrichment_results(company_id)
-            WHERE deleted_at IS NULL
-        `);
-
-        const jlCols = db.prepare(`PRAGMA table_info(job_log)`).all() as Array<{ name: string }>;
-        const jlNames = new Set(jlCols.map((col) => col.name));
-        const addJlIfMissing = (name: string, ddl: string) => {
-            if (!jlNames.has(name)) db.exec(ddl);
-        };
-
-        addJlIfMissing('reason_code', `ALTER TABLE job_log ADD COLUMN reason_code TEXT`);
-        addJlIfMissing('run_id', `ALTER TABLE job_log ADD COLUMN run_id TEXT`);
-    } catch (error) {
-        Logger.warn('DB migration check failed (continuing)', { error: error as Error });
+    if (enrichmentColumns.has('updated_at')) {
+        runMigrationStep('enrichment_results.updated_at_backfill', () => {
+            db.exec(`
+                UPDATE enrichment_results
+                SET updated_at = COALESCE(updated_at, enriched_at, CURRENT_TIMESTAMP)
+                WHERE updated_at IS NULL
+            `);
+        });
     }
+
+    if (enrichmentColumns.has('deleted_at') && enrichmentColumns.has('updated_at')) {
+        runMigrationStep('enrichment_results.soft_delete_dedupe', () => {
+            db.exec(`
+                WITH ranked AS (
+                    SELECT
+                        id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY company_id
+                            ORDER BY datetime(COALESCE(updated_at, enriched_at)) DESC,
+                                     datetime(COALESCE(enriched_at, updated_at)) DESC,
+                                     rowid DESC
+                        ) AS rn
+                    FROM enrichment_results
+                    WHERE deleted_at IS NULL
+                )
+                UPDATE enrichment_results
+                SET deleted_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
+            `);
+        });
+
+        runMigrationStep('enrichment_results.active_unique_index', () => {
+            db.exec(`
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_enrichment_results_company_active
+                ON enrichment_results(company_id)
+                WHERE deleted_at IS NULL
+            `);
+        });
+    }
+
+    const jobLogColumns = getTableColumns('job_log');
+    addColumnIfMissing('job_log', jobLogColumns, 'reason_code', `ALTER TABLE job_log ADD COLUMN reason_code TEXT`);
+    addColumnIfMissing('job_log', jobLogColumns, 'run_id', `ALTER TABLE job_log ADD COLUMN run_id TEXT`);
 
     schemaInitialized = true;
     initializeStatements();
