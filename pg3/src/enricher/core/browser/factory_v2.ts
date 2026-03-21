@@ -26,6 +26,10 @@ function getSandboxArgs(): string[] {
     return (inDocker || isRoot) ? ['--no-sandbox', '--disable-setuid-sandbox'] : [];
 }
 
+function isProxyRoutingEnabled(): boolean {
+    return process.env.DISABLE_PROXY !== 'true';
+}
+
 export class BrowserFactory {
     private static instance: BrowserFactory;
     private browser: Browser | null = null;
@@ -140,11 +144,11 @@ export class BrowserFactory {
 
             // Proxy validation (Playwright passes the actual proxy config at the Context level)
             const proxyManager = ProxyManager.getInstance();
-            if (config.scrapeDo.enforce) {
+            if (isProxyRoutingEnabled()) {
                 const p = proxyManager.getPlaywrightProxy('https://www.google.com');
                 if (!p) {
-                    // BUG-01 FIX: Hard-fail if proxy is enforced but missing (Law 005: Assume Malice)
-                    const msg = `[BrowserFactory:${this.instanceId}] SCRAPE_DO_ENFORCE=true but no proxy available. Refusing to launch unprotected browser.`;
+                    // Hard-fail if proxy routing is enabled but no proxy is configured.
+                    const msg = `[BrowserFactory:${this.instanceId}] Proxy routing is enabled but no proxy is available. Refusing to launch an unprotected browser.`;
                     Logger.error(msg);
                     throw new Error(msg);
                 }
