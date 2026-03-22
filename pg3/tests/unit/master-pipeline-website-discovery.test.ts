@@ -145,4 +145,44 @@ describe('MasterPipeline website discovery recall', () => {
     expect(result.website.discovery_layer).toBe('SERP_COMPANY_SEMANTIC');
     expect(gate.check).toHaveBeenCalledWith('https://acme.it', undefined, 'ACME S.R.L.');
   });
+
+  it('skips known company-directory aggregators so noisy SERP hits do not crowd out the official site', async () => {
+    const { pipeline, gate, dedup } = createPipeline(async (url: string) =>
+      url === 'https://acme.it' ? 'VERIFIED_SEMANTIC' : 'NO_MATCH'
+    );
+
+    dedup.search.mockResolvedValue({
+      results: [
+        {
+          title: 'ACME S.R.L. company profile',
+          snippet: 'SignalHire profile for ACME S.R.L.',
+          url: 'https://www.signalhire.com/companies/acme-srl',
+          source: 'ddg',
+          normalized_url: 'https://www.signalhire.com/companies/acme-srl',
+          domain: 'signalhire.com',
+        },
+        {
+          title: 'ACME S.R.L. - Home',
+          snippet: 'Sito ufficiale ACME S.R.L.',
+          url: 'https://acme.it',
+          source: 'ddg',
+          normalized_url: 'https://acme.it',
+          domain: 'acme.it',
+        },
+      ],
+      linkedin_buffered: 0,
+      queries_tried: ['"ACME S.R.L." Milano sito ufficiale'],
+      providers_used: ['jina'],
+    });
+
+    const result = await pipeline.processCompany({
+      company_name: 'ACME S.R.L.',
+      city: 'Milano',
+    }, 0);
+
+    expect(result.status).toBe('FOUND_COMPLETE');
+    expect(result.website.url).toBe('https://acme.it');
+    expect(gate.check).toHaveBeenCalledTimes(1);
+    expect(gate.check).toHaveBeenCalledWith('https://acme.it', undefined, 'ACME S.R.L.');
+  });
 });

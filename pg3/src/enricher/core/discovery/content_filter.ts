@@ -16,7 +16,9 @@ export class ContentFilter {
         'wikipedia.org', 'amazon.it', 'ebay.it', 'groupon.it',
         'guidatitolari.it', 'registroimprese.it', 'ufficiocamerale.it',
         'informazione-aziende.it', 'trovanumeri.com', 'reteimprese.it', 'area-clienti.com',
-        'pagineimprese.it', 'aziende.virgilio.it', 'yelp.com', 'linkedin.it'
+        'pagineimprese.it', 'aziende.virgilio.it', 'yelp.com', 'linkedin.it',
+        'signalhire.com', 'rocketreach.co', 'zoominfo.com', 'apollo.io',
+        'lusha.com', 'arounddeal.com', 'datanyze.com', 'companywall.it'
     ];
 
     // Task 16: Parking / Domain for Sale patterns

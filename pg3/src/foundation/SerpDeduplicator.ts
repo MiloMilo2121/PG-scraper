@@ -5,6 +5,7 @@ import { NormalizedInput } from './InputNormalizer';
 import { RateLimitError } from 'openai'; // or our own
 import { PagineGialleHarvester } from '../enricher/core/directories/paginegialle';
 import { ContentFilter } from '../enricher/core/discovery/content_filter';
+import { InputWebsiteCandidate } from './InputWebsiteCandidate';
 
 export interface CleanSearchResult {
     title: string;
@@ -33,6 +34,8 @@ const NOISE_DOMAINS = new Set([
     'wikipedia.org', 'it.wikipedia.org', 'dnb.com',
     'informazione-aziende.it', 'impresaitalia.info',
     'atoka.io', 'cerved.com', 'cribis.com',
+    'signalhire.com', 'rocketreach.co', 'zoominfo.com', 'apollo.io',
+    'lusha.com', 'arounddeal.com', 'datanyze.com', 'companywall.it',
 ]);
 
 export class SerpDeduplicator {
@@ -96,7 +99,12 @@ export class SerpDeduplicator {
                 continue;
             }
 
-            domains.add(`https://www.${domain}`);
+            const assessed = InputWebsiteCandidate.assess(`https://${domain}`);
+            if (assessed.classification !== 'VALID' || !assessed.normalizedUrl) {
+                continue;
+            }
+
+            domains.add(assessed.normalizedUrl);
         }
 
         return Array.from(domains);

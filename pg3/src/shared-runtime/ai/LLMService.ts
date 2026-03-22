@@ -20,6 +20,7 @@ export class LLMService {
     // Hydra Router State
     private static keyCooldowns: Map<string, number> = new Map(); // apiKey -> unlockTimestamp (Jail)
     private static keyIndices: Map<string, number> = new Map(); // providerKey -> currentIndex
+    private static disabledModels: Map<string, { until: number; reason: string }> = new Map();
     private static llmLimit = pLimit(20); // Max 20 concurrent LLM requests globally
 
     // ─────────────────────────────────────────────
@@ -147,6 +148,84 @@ export class LLMService {
         await new Promise(r => setTimeout(r, delayMs));
     }
 
+    private static isModelDisabled(model: string): boolean {
+        const state = this.disabledModels.get(model);
+        if (!state) {
+            return false;
+        }
+
+        if (Date.now() > state.until) {
+            this.disabledModels.delete(model);
+            return false;
+        }
+
+        return true;
+    }
+
+    private static shouldDisableModel(error: unknown): boolean {
+        const msg = `${(error as any)?.message || ''}`.toLowerCase();
+        return (
+            msg.includes('invalid authentication')
+            || msg.includes('authentication fails')
+            || msg.includes('api key')
+            || msg.includes('unauthorized')
+            || msg.includes('incorrect api key')
+            || msg.includes('modello non esiste')
+            || msg.includes('model does not exist')
+            || msg.includes('no api keys configured')
+        );
+    }
+
+    private static disableModel(model: string, error: unknown): void {
+        const reason = `${(error as any)?.message || 'non-retryable provider failure'}`;
+        this.disabledModels.set(model, {
+            until: Date.now() + (30 * 60 * 1000),
+            reason,
+        });
+        Logger.warn(`[LLM] ⛔ Temporarily disabling model ${model} for 30m`, { error: error as Error });
+    }
+
+    private static normalizeStructuredSchema(schema: Record<string, unknown>): Record<string, unknown> {
+        const visit = (node: unknown): unknown => {
+            if (Array.isArray(node)) {
+                return node.map((item) => visit(item));
+            }
+
+            if (!node || typeof node !== 'object') {
+                return node;
+            }
+
+            const next: Record<string, unknown> = { ...(node as Record<string, unknown>) };
+
+            if (next.properties && typeof next.properties === 'object' && !Array.isArray(next.properties)) {
+                const normalizedProperties: Record<string, unknown> = {};
+                for (const [key, value] of Object.entries(next.properties as Record<string, unknown>)) {
+                    normalizedProperties[key] = visit(value);
+                }
+                next.properties = normalizedProperties;
+            }
+
+            if (next.items) {
+                next.items = visit(next.items);
+            }
+
+            for (const arrayKey of ['anyOf', 'allOf', 'oneOf']) {
+                const branch = next[arrayKey];
+                if (Array.isArray(branch)) {
+                    next[arrayKey] = branch.map((item) => visit(item));
+                }
+            }
+
+            if (next.type === 'object' && !Object.prototype.hasOwnProperty.call(next, 'additionalProperties')) {
+                next.additionalProperties = false;
+            }
+
+            return next;
+        };
+
+        return visit(schema) as Record<string, unknown>;
+    }
+
     // ─────────────────────────────────────────────
     // TEMPERATURE PER MODEL
     // ─────────────────────────────────────────────
@@ -193,6 +272,11 @@ export class LLMService {
             const currentModel = modelsToTry[mi];
             const isLastModel = mi === modelsToTry.length - 1;
 
+            if (this.isModelDisabled(currentModel)) {
+                Logger.info(`[LLM] ⏭️ Skipping disabled model ${currentModel}`);
+                continue;
+            }
+
             // Up to 3 attempts per model (original + 2 backoff retries)
             for (let attempt = 0; attempt < 3; attempt++) {
                 let currentApiKey = '';
@@ -213,6 +297,10 @@ export class LLMService {
                 } catch (error) {
                     const retryable = this.isRetryableError(error);
                     Logger.warn(`[LLM] complete() failed with ${currentModel} (attempt ${attempt + 1}, retryable: ${retryable})`, { error: error as Error });
+
+                    if (!retryable && this.shouldDisableModel(error)) {
+                        this.disableModel(currentModel, error);
+                    }
 
                     if (retryable) {
                         // Put key in Cooldown Jail for 60 seconds
@@ -253,10 +341,16 @@ export class LLMService {
         fallbackModels?: string[]
     ): Promise<T | null> {
         const modelsToTry = [model, ...(fallbackModels || [])];
+        const normalizedSchema = this.normalizeStructuredSchema(schema);
 
         for (let mi = 0; mi < modelsToTry.length; mi++) {
             const currentModel = modelsToTry[mi];
             const isLastModel = mi === modelsToTry.length - 1;
+
+            if (this.isModelDisabled(currentModel)) {
+                Logger.info(`[LLM] ⏭️ Skipping disabled model ${currentModel}`);
+                continue;
+            }
 
             // DeepSeek/Kimi support "json_object" but NOT "json_schema" (Structured Outputs)
             const needsSimpleJsonMode = currentModel.includes('deepseek') || currentModel.includes('moonshot') || currentModel.includes('kimi-');
@@ -267,7 +361,7 @@ export class LLMService {
                     json_schema: {
                         name: 'validation_result',
                         strict: true,
-                        schema,
+                        schema: normalizedSchema,
                     },
                 };
 
@@ -301,6 +395,10 @@ export class LLMService {
                 } catch (error) {
                     const retryable = this.isRetryableError(error);
                     Logger.warn(`[LLM] completeStructured() failed with ${currentModel} (attempt ${attempt + 1}, retryable: ${retryable})`, { error: error as Error });
+
+                    if (!retryable && this.shouldDisableModel(error)) {
+                        this.disableModel(currentModel, error);
+                    }
 
                     if (retryable) {
                         // Put key in Cooldown Jail for 60 seconds

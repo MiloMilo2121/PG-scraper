@@ -16,6 +16,7 @@ import { FatturatoItaliaHarvester } from '../enricher/core/directories/fatturato
 import { PagineGialleHarvester } from '../enricher/core/directories/paginegialle';
 import { HyperGuesserVX } from '../enricher/core/discovery/hyperguesser_vx/hyper_guesser_vx';
 import { RdapValidator } from '../enricher/core/discovery/rdap_validator';
+import { ContentFilter } from '../enricher/core/discovery/content_filter';
 import { PostDiscoveryEnrichmentStage } from '../enricher/runtime/stages/post_discovery_enrichment_stage';
 import { RuntimeStageOutcome, RuntimeStageStatus } from '../enricher/runtime/stages/stage_types';
 import crypto from 'crypto';
@@ -78,6 +79,7 @@ export class MasterPipeline {
             const companyId = crypto.randomUUID();
             const layersAttempted: string[] = [];
             type CheckUrlOutcome = { matched: boolean; error?: string; timedOut: boolean };
+            type CheckAttemptState = { expired: boolean; startedAt: number; timeoutMs: number };
 
             // Check Circuit Breaker
             const processedCompanies = Math.max(1, companyIdx + 1);
@@ -118,32 +120,53 @@ export class MasterPipeline {
             // THE BEST LOSER TRACKER
             let bestLoser: { url: string; layer: string; score: number } | null = null;
             const checkedCandidateUrls = new Set<string>();
+            const locationSignals = [input.city, input.provincia]
+                .filter(Boolean)
+                .map((value) => (value || '').toLowerCase());
+
+            const remainingBudgetMs = (attemptState: CheckAttemptState, safetyBufferMs = 750): number =>
+                Math.max(0, attemptState.timeoutMs - (Date.now() - attemptState.startedAt) - safetyBufferMs);
+
+            const commitDiscovery = (attemptState: CheckAttemptState, url: string, layer: string): boolean => {
+                if (attemptState.expired) {
+                    return false;
+                }
+
+                discoveredUrl = url;
+                discoveryLayer = layer;
+                return true;
+            };
 
             // In a perfect system, if Registry returns URL, we take it. 
             // Since ShadowRegistry only returns PIVA right now, we use that for later verification.
 
             // Helper for Ultimate Golden Match (now with semantic name matching)
             const companyNameForGate = input.company_name;
-            const checkUrl = async (url: string, layerName: string): Promise<boolean> => {
+            const checkUrl = async (url: string, layerName: string, attemptState: CheckAttemptState): Promise<boolean> => {
+                if (attemptState.expired || ContentFilter.isDirectoryOrSocial(url)) {
+                    return false;
+                }
+
                 const gateStatus = await this.gate.check(url, piva, companyNameForGate);
                 if (gateStatus === 'VERIFIED') {
-                    discoveredUrl = url;
-                    discoveryLayer = layerName + '_PIVA_MATCH';
-                    return true;
+                    return commitDiscovery(attemptState, url, layerName + '_PIVA_MATCH');
                 } else if (gateStatus === 'VERIFIED_SEMANTIC') {
-                    discoveredUrl = url;
-                    discoveryLayer = layerName + '_SEMANTIC';
-                    return true;
+                    return commitDiscovery(attemptState, url, layerName + '_SEMANTIC');
                 } else if (gateStatus === 'NEEDS_BROWSER') {
                     // The ultimate WAF bypass: Chromium loads it and we check HTML
                     let nav = await this.browserPool.navigateSafe(url);
 
                     // 🐍 OMEGA V9: If BrowserPool returned empty/blocked, escalate to Python Oracle (Crawl4AI)
-                    if (nav.status !== 'OK' || !nav.html || nav.html.length < 500) {
+                    const shouldTryOracle =
+                        !attemptState.expired &&
+                        (nav.status === 'BLOCKED' || nav.status === 'CF_CHALLENGE' || nav.status === 'TIMEOUT');
+                    const oracleTimeoutMs = Math.min(15000, remainingBudgetMs(attemptState, 1000));
+
+                    if (shouldTryOracle && oracleTimeoutMs >= 2500) {
                         try {
                             const { OracleClient } = require('../enricher/utils/oracle_client');
-                            const oracleResult = await OracleClient.fetchHtmlStealth(url, 45000);
-                            if (oracleResult.success && oracleResult.html && oracleResult.html.length > 500) {
+                            const oracleResult = await OracleClient.fetchHtmlStealth(url, oracleTimeoutMs);
+                            if (!attemptState.expired && oracleResult.success && oracleResult.html && oracleResult.html.length > 500) {
                                 console.log(`[MasterPipeline] 🐍 Oracle bypass succeeded for ${url}`);
                                 nav = { status: 'OK' as const, html: oracleResult.html, finalUrl: url, blocked_resources: 0, duration_ms: 0, browser_id: 'oracle-crawl4ai' };
                             }
@@ -154,20 +177,21 @@ export class MasterPipeline {
                             }
                         }
                     }
-                    if (nav.status === 'OK' && nav.html) {
+                    if (!attemptState.expired && nav.status === 'OK' && nav.html) {
                         // Try PIVA match first
                         if (piva) {
                             const cleanPiva = piva.replace(/[^0-9]/g, '');
                             const bodyText = nav.html.replace(/[^0-9]/g, '');
                             if (bodyText.includes(cleanPiva)) {
-                                discoveredUrl = url;
-                                discoveryLayer = layerName + '_WAF_PIVA';
-                                return true;
+                                return commitDiscovery(attemptState, url, layerName + '_WAF_PIVA');
                             } else {
                                 // ASYNC DEEP-SCRAPING FALLBACK
                                 // If PIVA is completely missing from Homepage, we spin up parallel workers to check legal pages.
                                 const checkSubUrl = async (path: string): Promise<boolean> => {
                                     try {
+                                        if (attemptState.expired) {
+                                            return false;
+                                        }
                                         const subUrl = url.replace(/\/$/, '') + path;
                                         const subNav = await this.browserPool.navigateSafe(subUrl);
                                         if (subNav.status === 'OK' && subNav.html && subNav.html.replace(/[^0-9]/g, '').includes(cleanPiva)) {
@@ -186,9 +210,7 @@ export class MasterPipeline {
                                 ]);
 
                                 if (deepResults.includes(true)) {
-                                    discoveredUrl = url;
-                                    discoveryLayer = layerName + '_WAF_PIVA_DEEP';
-                                    return true;
+                                    return commitDiscovery(attemptState, url, layerName + '_WAF_PIVA_DEEP');
                                 }
                             }
                         }
@@ -210,6 +232,7 @@ export class MasterPipeline {
                         const titleMatched = nameTokens.filter(t => titleText.includes(t));
                         const bodyRatio = nameTokens.length > 0 ? matched.length / nameTokens.length : 0;
                         const titleRatio = nameTokens.length > 0 ? titleMatched.length / nameTokens.length : 0;
+                        const hasLocationSignal = locationSignals.some((signal) => signal && htmlLower.includes(signal));
 
                         // Domain similarity check for Best Loser logic
                         let domainStr = '';
@@ -218,14 +241,16 @@ export class MasterPipeline {
                         const isHighDomainSim = compactName.length >= 4 && (domainStr.includes(compactName) || compactName.includes(domainStr));
                         const combinedScore = (bodyRatio * 0.6) + (titleRatio * 0.4);
 
-                        // Accept if body match >= 0.5 OR title match >= 0.4 with some body overlap
-                        if (nameTokens.length > 0 && (bodyRatio >= 0.5 || (titleRatio >= 0.4 && bodyRatio >= 0.3))) {
-                            discoveredUrl = url;
-                            discoveryLayer = layerName + '_WAF_SEMANTIC';
+                        // Only accept browser semantics when we also have a strong ownership anchor.
+                        const hasOwnershipAnchor = isHighDomainSim || hasLocationSignal;
+                        if (nameTokens.length > 0 && hasOwnershipAnchor && (bodyRatio >= 0.5 || (titleRatio >= 0.4 && bodyRatio >= 0.3))) {
+                            if (!commitDiscovery(attemptState, url, layerName + '_WAF_SEMANTIC')) {
+                                return false;
+                            }
                             console.log(`[MasterPipeline] 🧠 Browser semantic match: body=${matched.join('+')}(${(bodyRatio * 100).toFixed(0)}%) title=${titleMatched.join('+')}(${(titleRatio * 100).toFixed(0)}%) for "${companyNameForGate}" on ${url}`);
                             return true;
                         } else if (nameTokens.length > 0 && isHighDomainSim && combinedScore > 0.1) {
-                            if (!bestLoser || combinedScore > bestLoser.score) {
+                            if (!attemptState.expired && (!bestLoser || combinedScore > bestLoser.score)) {
                                 bestLoser = { url, layer: layerName + '_BEST_LOSER', score: combinedScore };
                                 console.log(`[MasterPipeline] 🥉 Potential BEST LOSER logged: ${url} (score ${combinedScore.toFixed(2)})`);
                             }
@@ -242,11 +267,22 @@ export class MasterPipeline {
                 options: { timeoutMs?: number } = {}
             ): Promise<CheckUrlOutcome> => {
                 const timeoutMs = options.timeoutMs ?? 8000;
+                const attemptState: CheckAttemptState = {
+                    expired: false,
+                    startedAt: Date.now(),
+                    timeoutMs,
+                };
+                let timeoutHandle: NodeJS.Timeout | undefined;
                 try {
                     console.log(`[MasterPipeline] ⚡ Checking: ${url} (${layerName}) for "${input.company_name}"`);
                     const result = await Promise.race([
-                        checkUrl(url, layerName),
-                        new Promise<boolean>((_, reject) => setTimeout(() => reject(new Error('CHECK_URL_TIMEOUT')), timeoutMs))
+                        checkUrl(url, layerName, attemptState),
+                        new Promise<boolean>((_, reject) => {
+                            timeoutHandle = setTimeout(() => {
+                                attemptState.expired = true;
+                                reject(new Error('CHECK_URL_TIMEOUT'));
+                            }, timeoutMs);
+                        })
                     ]);
                     if (result) {
                         console.log(`[MasterPipeline] ✅ FOUND: ${url} via ${discoveryLayer}`);
@@ -259,6 +295,11 @@ export class MasterPipeline {
                         error: err.message,
                         timedOut: err.message === 'CHECK_URL_TIMEOUT'
                     };
+                } finally {
+                    attemptState.expired = true;
+                    if (timeoutHandle) {
+                        clearTimeout(timeoutHandle);
+                    }
                 }
             };
 
@@ -345,7 +386,10 @@ export class MasterPipeline {
                             'PHONE_ENTITY_OFFICIAL_WEBSITE_REJECTED';
                     } else {
                         const outcome = await checkCandidateVariants(harvest.officialWebsite, 'PG_PHONE', { timeoutMs: 15000 });
-                        if (!discoveredUrl) {
+                        if (!discoveredUrl && (harvest.matchedBy === 'phone' || harvest.pgUrl || rawInput['pg_url'])) {
+                            discoveredUrl = assessedWebsite.normalizedUrl || harvest.officialWebsite;
+                            discoveryLayer = 'PG_PHONE_SOURCE_TRUST';
+                        } else if (!discoveredUrl) {
                             phoneEntityReasonCode = outcome.timedOut
                                 ? 'PHONE_ENTITY_TIMEOUT'
                                 : 'PHONE_ENTITY_NOT_VERIFIED';

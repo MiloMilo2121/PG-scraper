@@ -6,6 +6,7 @@ describe('ContentFilter', () => {
     expect(ContentFilter.isDirectoryOrSocial('https://facebook.com/page')).toBe(true);
     expect(ContentFilter.isDirectoryOrSocial('https://it.linkedin.com/company/x')).toBe(true);
     expect(ContentFilter.isDirectoryOrSocial('https://shop.paginegialle.it/abc')).toBe(true);
+    expect(ContentFilter.isDirectoryOrSocial('https://www.signalhire.com/companies/acme')).toBe(true);
   });
 
   it('does not block unrelated domains that only contain similar substrings', () => {

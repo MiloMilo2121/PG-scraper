@@ -73,6 +73,10 @@ export class InputWebsiteCandidate {
                 return undefined;
             }
 
+            if (!this.isLikelyValidHostname(parsed.hostname)) {
+                return undefined;
+            }
+
             parsed.hash = '';
             parsed.search = '';
             parsed.username = '';
@@ -85,6 +89,29 @@ export class InputWebsiteCandidate {
         } catch {
             return undefined;
         }
+    }
+
+    private static isLikelyValidHostname(hostname: string): boolean {
+        const labels = hostname
+            .toLowerCase()
+            .split('.')
+            .map((label) => label.trim())
+            .filter(Boolean);
+
+        if (labels.length < 2) {
+            return false;
+        }
+
+        if (labels.some((label) => !/^[a-z0-9-]{1,63}$/i.test(label) || label.startsWith('-') || label.endsWith('-'))) {
+            return false;
+        }
+
+        const tld = labels[labels.length - 1];
+        if (!/^[a-z]{2,24}$/i.test(tld)) {
+            return false;
+        }
+
+        return true;
     }
 
     private static isMessagingOrRedirect(url: string): boolean {

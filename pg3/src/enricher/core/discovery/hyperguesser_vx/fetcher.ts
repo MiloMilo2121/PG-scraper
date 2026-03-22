@@ -41,61 +41,74 @@ export class HyperGuesserVXFetcher {
     }
 
     private static async fetchDomain(domain: string): Promise<FetchedCandidate> {
-        const url = `https://${domain}`;
-        try {
+        const candidateUrls = Array.from(new Set([
+            `https://${domain}`,
+            domain.startsWith('www.') ? null : `https://www.${domain}`,
+            `http://${domain}`,
+        ].filter((value): value is string => Boolean(value))));
+
+        let lastError = 'UNREACHABLE';
+
+        for (const url of candidateUrls) {
+            try {
             // Highly optimized HTTP request disguised as a regular browser
-            const response = await fetch(url, {
-                method: 'GET',
-                dispatcher: fetcherAgent,
-                redirect: 'follow',
-                signal: AbortSignal.timeout(5000),
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+                const response = await fetch(url, {
+                    method: 'GET',
+                    dispatcher: fetcherAgent,
+                    redirect: 'follow',
+                    signal: AbortSignal.timeout(5000),
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
+                    }
+                });
+
+                const html = await response.text();
+                if (typeof html !== 'string' || response.status >= 500) {
+                    lastError = 'INVALID_RESPONSE';
+                    continue;
                 }
-            });
 
-              const html = await response.text();
-              if (typeof html !== 'string' || response.status >= 500) {
-                  return { domain, url, title: '', text: '', error: 'INVALID_RESPONSE' };
-              }
+                const honeypotVerdict = HoneyPotDetector.getInstance().analyzeContent(html);
+                if (!honeypotVerdict.safe) {
+                    lastError = honeypotVerdict.reason || 'HONEYPOT_SIGNAL';
+                    continue;
+                }
 
-              const honeypotVerdict = HoneyPotDetector.getInstance().analyzeContent(html);
-              if (!honeypotVerdict.safe) {
-                  return { domain, url, title: '', text: '', error: honeypotVerdict.reason || 'HONEYPOT_SIGNAL' };
-              }
+                // Extract pure text using cheerio
+                const $ = cheerio.load(html);
 
-              // Extract pure text using cheerio
-              const $ = cheerio.load(html);
+                // Remove useless tags that pollute the LLM context
+                $('script, style, link, img, noscript, svg').remove();
 
-            // Remove useless tags that pollute the LLM context
-            $('script, style, link, img, noscript, svg').remove();
+                const title = $('title').text().trim();
+                const rawText = $('body').text().replace(/\s+/g, ' ').trim();
 
-            const title = $('title').text().trim();
-            const rawText = $('body').text().replace(/\s+/g, ' ').trim();
+                // Parked domain heuristic check right at the fetch layer
+                if (rawText.toLowerCase().includes('this domain is for sale') ||
+                    rawText.toLowerCase().includes('dominio in vendita')) {
+                    lastError = 'PARKED_DOMAIN';
+                    continue;
+                }
 
-            // Parked domain heuristic check right at the fetch layer
-            if (rawText.toLowerCase().includes('this domain is for sale') ||
-                rawText.toLowerCase().includes('dominio in vendita')) {
-                return { domain, url, title, text: '', error: 'PARKED_DOMAIN' };
+                // Cap the text to the first 2500 characters. We only need enough for the LLM
+                // to understand if the company name/sector matches.
+                const truncatedText = rawText.substring(0, 2500);
+
+                return {
+                    domain,
+                    url: response.url || url,
+                    title,
+                    text: truncatedText
+                };
+
+            } catch (error: any) {
+                lastError = error.message;
             }
-
-            // Cap the text to the first 2500 characters. We only need enough for the LLM 
-            // to understand if the company name/sector matches.
-            const truncatedText = rawText.substring(0, 2500);
-
-            return {
-                domain,
-                url: response.url || url,
-                title,
-                text: truncatedText
-            };
-
-        } catch (error: any) {
-            // Usually ECONNREFUSED or timeout for dead HTTPS ports
-            return { domain, url, title: '', text: '', error: error.message };
         }
+
+        return { domain, url: `https://${domain}`, title: '', text: '', error: lastError };
     }
 
     private static chunkArray<T>(array: T[], size: number): T[][] {

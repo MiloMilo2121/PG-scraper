@@ -26,4 +26,9 @@ describe('InputWebsiteCandidate', () => {
     expect(assessment.candidates).toContain('https://acme.it');
     expect(assessment.candidates).toContain('https://www.acme.it');
   });
+
+  it('rejects junk hostname fragments extracted from initials and legal suffixes', () => {
+    expect(InputWebsiteCandidate.assess('https://s.r.l').classification).toBe('INVALID');
+    expect(InputWebsiteCandidate.assess('https://i.t.m').classification).toBe('INVALID');
+  });
 });

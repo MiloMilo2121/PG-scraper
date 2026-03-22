@@ -154,8 +154,10 @@ describe('MasterPipeline phone/entity lane', () => {
       phone: '02 123456',
     }, 0);
 
-    expect(result.status).toBe('NOT_FOUND');
-    expect(result.reason_code).toBe('PHONE_ENTITY_NOT_VERIFIED');
+    expect(result.status).toBe('FOUND_COMPLETE');
+    expect(result.reason_code).toBe('FOUND_COMPLETE');
+    expect(result.website.url).toMatch(/^https:\/\/acme\.it\/?$/);
+    expect(result.website.discovery_layer).toBe('PG_PHONE_SOURCE_TRUST');
     expect(gate.check).toHaveBeenCalledWith('https://acme.it', undefined, 'ACME S.R.L.');
   });
 });
