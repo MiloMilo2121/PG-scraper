@@ -7,6 +7,9 @@ describe('ContentFilter', () => {
     expect(ContentFilter.isDirectoryOrSocial('https://it.linkedin.com/company/x')).toBe(true);
     expect(ContentFilter.isDirectoryOrSocial('https://shop.paginegialle.it/abc')).toBe(true);
     expect(ContentFilter.isDirectoryOrSocial('https://www.signalhire.com/companies/acme')).toBe(true);
+    expect(ContentFilter.isDirectoryOrSocial('https://wa.me/393331234567')).toBe(true);
+    expect(ContentFilter.isDirectoryOrSocial('https://chat.whatsapp.com/invite/example')).toBe(true);
+    expect(ContentFilter.isDirectoryOrSocial('https://maps.app.goo.gl/example')).toBe(true);
   });
 
   it('does not block unrelated domains that only contain similar substrings', () => {

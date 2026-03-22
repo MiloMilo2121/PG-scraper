@@ -43,6 +43,8 @@ interface EvaluationRow {
 interface Summary {
   dataset_input_csv: string;
   dataset_expected_csv: string;
+  selection_mode: string;
+  selection_offset: number;
   total_candidates: number;
   evaluated: number;
   found_complete: number;
@@ -87,6 +89,10 @@ interface CliArgs {
   inputCsv: string;
   expectedCsv: string;
   limit: number;
+  offset: number;
+  selectionMode: 'benchmarkable' | 'benchmarkable_pg';
+  selectionCachePath?: string;
+  selectionOnly: boolean;
   outDir: string;
 }
 
@@ -107,6 +113,12 @@ function parseArgs(argv: string[]): CliArgs {
   const inputCsv = flags.get('input') || positional[0];
   const expectedCsv = flags.get('expected') || positional[1];
   const limit = Number(flags.get('limit') || '30');
+  const offset = Number(flags.get('offset') || '0');
+  const selectionMode = (flags.get('selection-mode') || 'benchmarkable_pg') as CliArgs['selectionMode'];
+  const selectionCachePath = flags.get('selection-cache')
+    ? path.resolve(flags.get('selection-cache') as string)
+    : undefined;
+  const selectionOnly = flags.get('selection-only') === 'true';
   const outDir = path.resolve(
     flags.get('out-dir') || path.join('output', 'website_eval', `real_eval_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`)
   );
@@ -121,10 +133,22 @@ function parseArgs(argv: string[]): CliArgs {
     throw new Error(`Invalid --limit value: ${limit}`);
   }
 
+  if (!Number.isFinite(offset) || offset < 0) {
+    throw new Error(`Invalid --offset value: ${offset}`);
+  }
+
+  if (selectionMode !== 'benchmarkable' && selectionMode !== 'benchmarkable_pg') {
+    throw new Error(`Invalid --selection-mode value: ${selectionMode}`);
+  }
+
   return {
     inputCsv: path.resolve(inputCsv),
     expectedCsv: path.resolve(expectedCsv),
     limit,
+    offset,
+    selectionMode,
+    selectionCachePath,
+    selectionOnly,
     outDir,
   };
 }
@@ -258,6 +282,88 @@ function benchmarkScore(input: CsvRow, expected: CsvRow): number {
   return score;
 }
 
+interface CachedSelection {
+  dataset_input_csv: string;
+  dataset_expected_csv: string;
+  selection_mode: 'benchmarkable_pg';
+  generated_at: string;
+  qualified_join_keys: string[];
+}
+
+function ensureParentDir(filePath: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+}
+
+function saveSelectionCache(filePath: string, args: CliArgs, targets: Array<{ input: CsvRow; expected: CsvRow }>): void {
+  ensureParentDir(filePath);
+  const payload: CachedSelection = {
+    dataset_input_csv: args.inputCsv,
+    dataset_expected_csv: args.expectedCsv,
+    selection_mode: 'benchmarkable_pg',
+    generated_at: new Date().toISOString(),
+    qualified_join_keys: targets.map((target) => joinKey(target.expected)),
+  };
+  fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+}
+
+function loadSelectionCache(filePath: string): CachedSelection | null {
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as CachedSelection;
+  } catch {
+    return null;
+  }
+}
+
+async function collectPgQualifiedTargets(
+  candidates: Array<{ input: CsvRow; expected: CsvRow; benchmark_score: number }>,
+  requiredCount: number,
+): Promise<Array<{ input: CsvRow; expected: CsvRow; benchmark_score: number }>> {
+  const eligible = candidates.filter((target) => target.input.pg_url || target.expected.pg_url || target.input.phone);
+  const qualified: Array<{ input: CsvRow; expected: CsvRow; benchmark_score: number }> = [];
+  const concurrency = 6;
+
+  for (let start = 0; start < eligible.length && qualified.length < requiredCount; start += concurrency) {
+    const batch = eligible.slice(start, start + concurrency);
+    const results = await Promise.all(
+      batch.map(async (target) => {
+        try {
+          const harvest = await PagineGialleHarvester.harvestByPhone({
+            ...target.input,
+            pg_url: target.input.pg_url || target.expected.pg_url,
+          } as any);
+
+          if (harvest?.officialWebsite && !ContentFilter.isDirectoryOrSocial(harvest.officialWebsite)) {
+            return target;
+          }
+        } catch {
+          // Ignore selection-time PG failures and continue scanning the pool.
+        }
+
+        return null;
+      }),
+    );
+
+    for (const result of results) {
+      if (result) {
+        qualified.push(result);
+        if (qualified.length >= requiredCount) {
+          break;
+        }
+      }
+    }
+
+    if (start === 0 || (start + concurrency) % 60 === 0 || qualified.length >= requiredCount) {
+      console.log(`[RealEval] PG prequalification progress: scanned ${Math.min(start + concurrency, eligible.length)}/${eligible.length}, qualified ${qualified.length}/${requiredCount}`);
+    }
+  }
+
+  return qualified.slice(0, requiredCount);
+}
+
 function createDiscoveryOnlyRuntime(): DiscoveryRuntime {
   const ledger = new CostLedger({ filePath: config.runtime.costLedgerPath });
   const cache = new MemoryFirstCache({ l1MaxMemoryMB: 50 });
@@ -377,34 +483,38 @@ async function main(): Promise<void> {
     .filter((row): row is { input: CsvRow; expected: CsvRow; benchmark_score: number } => Boolean(row))
     .sort((left, right) => right.benchmark_score - left.benchmark_score);
 
-  const selectionPool = evaluationTargets.slice(0, Math.max(args.limit * 4, 80));
-  const pgQualifiedTargets: typeof evaluationTargets = [];
+  const selectionSourceByKey = new Map(evaluationTargets.map((target) => [joinKey(target.expected), target]));
+  const requiredCount = args.offset + args.limit;
+  let pgQualifiedTargets: typeof evaluationTargets = [];
 
-  for (const target of selectionPool) {
-    if (!(target.input.pg_url || target.expected.pg_url || target.input.phone)) {
-      continue;
+  if (args.selectionMode === 'benchmarkable_pg') {
+    const cachedSelection = args.selectionCachePath ? loadSelectionCache(args.selectionCachePath) : null;
+    if (cachedSelection
+      && cachedSelection.dataset_input_csv === args.inputCsv
+      && cachedSelection.dataset_expected_csv === args.expectedCsv
+      && cachedSelection.selection_mode === 'benchmarkable_pg') {
+      pgQualifiedTargets = cachedSelection.qualified_join_keys
+        .map((key) => selectionSourceByKey.get(key))
+        .filter((target): target is { input: CsvRow; expected: CsvRow; benchmark_score: number } => Boolean(target));
+      console.log(`[RealEval] Loaded PG selection cache with ${pgQualifiedTargets.length} qualified companies from ${args.selectionCachePath}`);
     }
 
-    try {
-      const harvest = await PagineGialleHarvester.harvestByPhone({
-        ...target.input,
-        pg_url: target.input.pg_url || target.expected.pg_url,
-      } as any);
-
-      if (harvest?.officialWebsite && !ContentFilter.isDirectoryOrSocial(harvest.officialWebsite)) {
-        pgQualifiedTargets.push(target);
+    if (pgQualifiedTargets.length < requiredCount) {
+      pgQualifiedTargets = await collectPgQualifiedTargets(evaluationTargets, requiredCount);
+      if (args.selectionCachePath) {
+        saveSelectionCache(args.selectionCachePath, args, pgQualifiedTargets);
+        console.log(`[RealEval] Saved PG selection cache to ${args.selectionCachePath}`);
       }
-    } catch {
-      // Ignore selection-time PG failures and continue scanning the pool.
-    }
-
-    if (pgQualifiedTargets.length >= args.limit) {
-      break;
     }
   }
 
-  const finalTargets = (pgQualifiedTargets.length >= args.limit ? pgQualifiedTargets : evaluationTargets)
-    .slice(0, args.limit);
+  const selectionPool = args.selectionMode === 'benchmarkable_pg' && pgQualifiedTargets.length >= requiredCount
+    ? pgQualifiedTargets
+    : evaluationTargets.slice(0, Math.max(requiredCount * 4, 80));
+  const selectionSource = args.selectionMode === 'benchmarkable_pg' && pgQualifiedTargets.length >= requiredCount
+    ? pgQualifiedTargets
+    : selectionPool;
+  const finalTargets = selectionSource.slice(args.offset, args.offset + args.limit);
 
   if (finalTargets.length === 0) {
     throw new Error('No rows with expected websites could be matched between input and expected CSVs.');
@@ -414,9 +524,18 @@ async function main(): Promise<void> {
   const outputCsv = path.join(args.outDir, 'real_website_eval_results.csv');
   const outputJson = path.join(args.outDir, 'real_website_eval_summary.json');
 
+  const effectiveSelectionMode = args.selectionMode === 'benchmarkable_pg' && selectionSource === pgQualifiedTargets
+    ? 'benchmarkable_pg'
+    : 'benchmarkable';
   console.log(`[RealEval] Selected ${finalTargets.length} real companies from ${args.expectedCsv}`);
-  console.log(`[RealEval] Selection strategy: ${pgQualifiedTargets.length >= args.limit ? 'benchmarkable_pg' : 'benchmarkable'}`);
+  console.log(`[RealEval] Selection strategy: ${effectiveSelectionMode}`);
+  console.log(`[RealEval] Selection offset: ${args.offset}`);
   console.log(`[RealEval] Output directory: ${args.outDir}`);
+
+  if (args.selectionOnly) {
+    console.log('[RealEval] Selection-only mode enabled; skipping runtime evaluation.');
+    return;
+  }
 
   const runtime = createDiscoveryOnlyRuntime();
   const details: EvaluationRow[] = [];
@@ -475,6 +594,8 @@ async function main(): Promise<void> {
   const summary: Summary = {
     dataset_input_csv: args.inputCsv,
     dataset_expected_csv: args.expectedCsv,
+    selection_mode: effectiveSelectionMode,
+    selection_offset: args.offset,
     total_candidates: expectedWithSite.length,
     evaluated: details.length,
     found_complete: foundComplete,

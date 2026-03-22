@@ -10,6 +10,8 @@ export class ContentFilter {
     private static DIRECTORIES = [
         'paginegialle.it', 'paginebianche.it', 'yelp.it', 'tripadvisor.it',
         'facebook.com', 'instagram.com', 'linkedin.com', 'twitter.com',
+        'wa.me', 'whatsapp.com', 'api.whatsapp.com', 'chat.whatsapp.com',
+        't.me', 'telegram.me', 'linktr.ee', 'maps.app.goo.gl', 'g.page',
         'virgilio.it', 'kompass.com', 'europages.com', 'misterimprese.it',
         'prontopro.it', 'habitissimo.it', 'infojobs.it', 'indeed.com',
         'glassdoor.it', 'trovalavoro.it', 'bakeca.it', 'subito.it',
