@@ -199,6 +199,58 @@ ensure_redis() {
     redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction >/dev/null
 }
 
+get_redis_policy() {
+  if command -v redis-cli >/dev/null 2>&1; then
+    redis-cli -u "$REDIS_URL" CONFIG GET maxmemory-policy 2>/dev/null | tail -n 1
+    return
+  fi
+
+  if docker ps --format '{{.Names}}' | grep -qx 'antigravity-redis'; then
+    docker exec antigravity-redis redis-cli CONFIG GET maxmemory-policy 2>/dev/null | tail -n 1
+    return
+  fi
+
+  return 1
+}
+
+set_redis_policy_noeviction() {
+  if command -v redis-cli >/dev/null 2>&1; then
+    redis-cli -u "$REDIS_URL" CONFIG SET maxmemory-policy noeviction >/dev/null 2>&1
+    return $?
+  fi
+
+  if docker ps --format '{{.Names}}' | grep -qx 'antigravity-redis'; then
+    docker exec antigravity-redis redis-cli CONFIG SET maxmemory-policy noeviction >/dev/null 2>&1
+    return $?
+  fi
+
+  return 1
+}
+
+require_redis_noeviction() {
+  local current_policy
+  current_policy="$(get_redis_policy || true)"
+
+  if [ -z "$current_policy" ]; then
+    echo "❌ Unable to determine Redis maxmemory-policy for $REDIS_URL" >&2
+    exit 1
+  fi
+
+  if [ "$current_policy" = "noeviction" ]; then
+    return
+  fi
+
+  if set_redis_policy_noeviction; then
+    current_policy="$(get_redis_policy || true)"
+    if [ "$current_policy" = "noeviction" ]; then
+      return
+    fi
+  fi
+
+  echo "❌ Redis maxmemory-policy is '$current_policy', expected 'noeviction'." >&2
+  exit 1
+}
+
 find_latest_combined_csv() {
   ls -t output/campaigns/campaign_COMBINED_*.csv 2>/dev/null | head -n 1
 }
@@ -216,6 +268,7 @@ echo "  - $GENERATION_LOG"
 echo "  - $E2E_LOG"
 
 ensure_redis
+require_redis_noeviction
 
 START_TS="$(date +%s)"
 

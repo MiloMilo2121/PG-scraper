@@ -5,11 +5,37 @@ SCRIPT_DIR="$(cd -- "$(/usr/bin/dirname -- "$0")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+load_dotenv_preserving_env() {
+  local dotenv_file="$1"
+  local line key value
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    [[ "$line" != *=* ]] && continue
+
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value%$'\r'}"
+
+    if (( ${+parameters[$key]} )); then
+      continue
+    fi
+
+    if [[ "$value" == '"'*'"' && "$value" == *'"' ]]; then
+      value="${value:1:-1}"
+    elif [[ "$value" == "'"*"'" && "$value" == *"'" ]]; then
+      value="${value:1:-1}"
+    fi
+
+    export "$key=$value"
+  done < "$dotenv_file"
+}
+
 for dotenv_file in ".env" ".env.local"; do
   if [[ -f "$dotenv_file" ]]; then
-    set -a
-    source "$dotenv_file"
-    set +a
+    load_dotenv_preserving_env "$dotenv_file"
   fi
 done
 
@@ -59,6 +85,12 @@ echo "env.DISABLE_PROXY=${DISABLE_PROXY:-}" >> "$OUT_DIR/run_meta.txt"
 echo "env.DISABLE_STEALTH=${DISABLE_STEALTH:-}" >> "$OUT_DIR/run_meta.txt"
 echo "env.REDIS_URL=${REDIS_URL:-}" >> "$OUT_DIR/run_meta.txt"
 echo "env.SCRAPE_DO_TOKEN=${SCRAPE_DO_TOKEN:+(set)}" >> "$OUT_DIR/run_meta.txt"
+echo "env.SERPER_API_KEY=${SERPER_API_KEY:+(set)}" >> "$OUT_DIR/run_meta.txt"
+echo "env.JINA_API_KEY=${JINA_API_KEY:+(set)}" >> "$OUT_DIR/run_meta.txt"
+echo "env.PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY:+(set)}" >> "$OUT_DIR/run_meta.txt"
+echo "env.KIMI_API_KEY=${KIMI_API_KEY:+(set)}" >> "$OUT_DIR/run_meta.txt"
+echo "env.DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:+(set)}" >> "$OUT_DIR/run_meta.txt"
+echo "env.CAPTCHA_2_API_KEY=${CAPTCHA_2_API_KEY:+(set)}" >> "$OUT_DIR/run_meta.txt"
 echo "env.PROXY_RESIDENTIAL_URL=${PROXY_RESIDENTIAL_URL:+(set)}" >> "$OUT_DIR/run_meta.txt"
 echo "env.PROXY_DATACENTER_URL=${PROXY_DATACENTER_URL:+(set)}" >> "$OUT_DIR/run_meta.txt"
 echo "env.CONCURRENCY_LIMIT=${CONCURRENCY_LIMIT:-}" >> "$OUT_DIR/run_meta.txt"
@@ -153,6 +185,67 @@ sock.settimeout(2)
 sock.connect((host, port))
 sock.close()
 PY
+}
+
+get_redis_policy() {
+  if command -v redis-cli >/dev/null 2>&1; then
+    redis-cli -u "$REDIS_URL" CONFIG GET maxmemory-policy 2>/dev/null | /usr/bin/tail -n 1
+    return
+  fi
+
+  local redis_host redis_port redis_db
+  read -r redis_host redis_port redis_db <<<"$(redis_host_port_db)"
+
+  if is_local_redis_host "$redis_host" && command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx 'antigravity-redis'; then
+    docker exec antigravity-redis redis-cli CONFIG GET maxmemory-policy 2>/dev/null | /usr/bin/tail -n 1
+    return
+  fi
+
+  return 1
+}
+
+set_redis_policy_noeviction() {
+  if command -v redis-cli >/dev/null 2>&1; then
+    redis-cli -u "$REDIS_URL" CONFIG SET maxmemory-policy noeviction >/dev/null 2>&1
+    return $?
+  fi
+
+  local redis_host redis_port redis_db
+  read -r redis_host redis_port redis_db <<<"$(redis_host_port_db)"
+
+  if is_local_redis_host "$redis_host" && command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx 'antigravity-redis'; then
+    docker exec antigravity-redis redis-cli CONFIG SET maxmemory-policy noeviction >/dev/null 2>&1
+    return $?
+  fi
+
+  return 1
+}
+
+require_redis_noeviction() {
+  local redis_host redis_port redis_db current_policy
+  read -r redis_host redis_port redis_db <<<"$(redis_host_port_db)"
+  current_policy="$(get_redis_policy || true)"
+
+  if [[ -z "$current_policy" ]]; then
+    echo "ERROR: Unable to determine Redis maxmemory-policy for ${REDIS_URL}." >&2
+    exit 8
+  fi
+
+  if [[ "$current_policy" == "noeviction" ]]; then
+    echo "redis_policy=noeviction" >> "$OUT_DIR/run_meta.txt"
+    return
+  fi
+
+  if is_local_redis_host "$redis_host" && set_redis_policy_noeviction; then
+    current_policy="$(get_redis_policy || true)"
+    if [[ "$current_policy" == "noeviction" ]]; then
+      echo "redis_policy=noeviction (autofixed from non-compliant policy)" >> "$OUT_DIR/run_meta.txt"
+      return
+    fi
+  fi
+
+  echo "ERROR: Redis maxmemory-policy is '${current_policy}', expected 'noeviction' for BullMQ safety." >&2
+  exit 8
 }
 
 ensure_local_redis_container() {
@@ -308,6 +401,7 @@ if [[ "$REQUIRE_ORACLE_STEALTH" == "true" ]]; then
 fi
 
 require_redis_ready
+require_redis_noeviction
 if [[ "$E2E_REDIS_FLUSH" == "true" ]]; then
   flush_redis
 else

@@ -360,6 +360,15 @@ export class CostRouter {
         if (message.includes('serp_empty_result')) {
             return { errorClass: 'semantic_empty', punitive: false };
         }
+        if (
+            statusCode === 400 ||
+            message.includes('400 bad request') ||
+            message.includes('out of credits') ||
+            message.includes('quota') ||
+            message.includes('credit exhausted')
+        ) {
+            return { errorClass: 'provider_auth', punitive: false };
+        }
         if (statusCode === 401 || statusCode === 402 || message.includes('auth') || message.includes('api_key')) {
             return { errorClass: 'provider_auth', punitive: false };
         }
