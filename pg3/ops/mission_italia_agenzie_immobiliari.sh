@@ -38,7 +38,15 @@ resolve_chrome_bin() {
     return
   fi
 
-  for candidate in /usr/bin/chromium-browser /usr/bin/chromium /snap/bin/chromium; do
+  for candidate in \
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" \
+    /opt/homebrew/bin/chromium \
+    /usr/bin/chromium-browser \
+    /usr/bin/chromium \
+    /snap/bin/chromium; do
     if [ -x "$candidate" ]; then
       echo "$candidate"
       return
