@@ -528,7 +528,18 @@ async function preFlightSingle(category: string, province: string): Promise<Scra
             Logger.info(`   🚨 OVERFLOW (>${PG_OVERFLOW_THRESHOLD})! Splitting by municipality...`);
 
             const municipalities = await MunicipalitySplitter.getMunicipalities(province);
-            Logger.info(`   🏘️ GPT municipalities: [${municipalities.join(', ')}]`);
+            Logger.info(`   🏘️ Split municipalities: [${municipalities.join(', ')}]`);
+
+            if (municipalities.length < 2) {
+                Logger.warn(`   ⚠️ Splitter returned fewer than 2 municipalities for ${province}. Falling back to province-wide scrape.`);
+                return [{
+                    category,
+                    location: province,
+                    province,
+                    isMunicipality: false,
+                    pgResultCount: totalResults,
+                }];
+            }
 
             const splitTargets: ScrapeTarget[] = [];
             for (const muni of municipalities) {

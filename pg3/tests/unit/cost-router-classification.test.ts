@@ -7,11 +7,11 @@ type ErrorClassification = {
 };
 
 function classify(errorMsg?: string, statusCode?: number): ErrorClassification {
-  const router = Object.create(CostRouter.prototype) as CostRouter & {
-    classifyError: (errorMsg?: string, statusCode?: number) => ErrorClassification;
-  };
+  const router = Object.create(CostRouter.prototype) as CostRouter;
 
-  return router.classifyError(errorMsg, statusCode);
+  return (router as unknown as {
+    classifyError: (errorMsg?: string, statusCode?: number) => ErrorClassification;
+  }).classifyError(errorMsg, statusCode);
 }
 
 describe('CostRouter error classification', () => {

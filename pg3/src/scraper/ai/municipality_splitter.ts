@@ -1,7 +1,7 @@
 import { Logger } from '../utils/logger';
 import { LLMService } from '../../shared-runtime/ai/LLMService';
 import { config } from '../config';
-import { PROVINCE_CODES } from '../data/pg_categories';
+import { PROVINCE_CODES, PROVINCE_NAME_TO_CODE } from '../data/pg_categories';
 
 /**
  * 🏘️ MUNICIPALITY SPLITTER
@@ -19,6 +19,21 @@ import * as path from 'path';
 const CACHE_FILE = path.join(process.cwd(), 'data', 'municipalities_cache.json');
 let MEMOLOCK_CACHE: Map<string, string[]> | null = null;
 const INFLIGHT_REQUESTS = new Map<string, Promise<string[]>>();
+
+function normalizeProvinceKey(value: string): string {
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/['’]/g, ' ')
+        .replace(/[-–]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+}
+
+const NORMALIZED_PROVINCE_CODE_MAP: Record<string, string> = Object.fromEntries(
+    Object.entries(PROVINCE_NAME_TO_CODE).map(([name, code]) => [normalizeProvinceKey(name), code])
+);
 
 function sanitizeMunicipalityValue(value: unknown): string | null {
     let candidate = value;
@@ -70,23 +85,65 @@ function sanitizeMunicipalityList(values: unknown, fallbackProvince?: string): s
     return sanitized.slice(0, 5);
 }
 
+function getCacheAliases(rawKey: string): string[] {
+    const aliases = new Set<string>();
+    const trimmedKey = rawKey.trim();
+    if (!trimmedKey) {
+        return [];
+    }
+
+    const normalizedRawKey = normalizeProvinceKey(trimmedKey);
+    aliases.add(normalizedRawKey);
+
+    if (/^[A-Za-z]{2}$/.test(trimmedKey)) {
+        const provinceName = PROVINCE_CODES[trimmedKey.toUpperCase()];
+        if (provinceName) {
+            aliases.add(normalizeProvinceKey(provinceName));
+        }
+    } else {
+        const provinceCode = NORMALIZED_PROVINCE_CODE_MAP[normalizedRawKey];
+        if (provinceCode) {
+            aliases.add(normalizeProvinceKey(provinceCode));
+        }
+    }
+
+    return Array.from(aliases);
+}
+
+function upsertCacheEntry(cache: Map<string, string[]>, rawKey: string, values: unknown): boolean {
+    const aliases = getCacheAliases(rawKey);
+    const fallbackProvince = /^[A-Za-z]{2}$/.test(rawKey)
+        ? PROVINCE_CODES[rawKey.toUpperCase()] || rawKey.toUpperCase()
+        : rawKey;
+    const sanitized = sanitizeMunicipalityList(values, fallbackProvince);
+    let mutated = false;
+
+    for (const alias of aliases) {
+        const current = cache.get(alias);
+        if (JSON.stringify(current) !== JSON.stringify(sanitized)) {
+            cache.set(alias, sanitized);
+            mutated = true;
+        }
+    }
+
+    return mutated;
+}
+
 function loadCache(): Map<string, string[]> {
     if (MEMOLOCK_CACHE) return MEMOLOCK_CACHE;
     try {
         if (fs.existsSync(CACHE_FILE)) {
             const rawData = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8')) as Record<string, unknown>;
-            const normalizedEntries: Array<[string, string[]]> = [];
+            const normalizedCache = new Map<string, string[]>();
             let cacheMutated = false;
 
             for (const [province, values] of Object.entries(rawData)) {
-                const sanitized = sanitizeMunicipalityList(values, province.toUpperCase());
-                if (JSON.stringify(values) !== JSON.stringify(sanitized)) {
+                if (upsertCacheEntry(normalizedCache, province, values)) {
                     cacheMutated = true;
                 }
-                normalizedEntries.push([province, sanitized]);
             }
 
-            MEMOLOCK_CACHE = new Map(normalizedEntries);
+            MEMOLOCK_CACHE = normalizedCache;
             if (cacheMutated) {
                 saveCache(MEMOLOCK_CACHE);
             }
@@ -129,7 +186,7 @@ export class MunicipalitySplitter {
     public static async getMunicipalities(province: string): Promise<string[]> {
         const cache = loadCache();
         const resolvedProvince = PROVINCE_CODES[province.toUpperCase()] || province;
-        const cacheKey = resolvedProvince.toLowerCase().trim();
+        const cacheKey = normalizeProvinceKey(resolvedProvince);
 
         // Persistent Cache hit
         if (cache.has(cacheKey)) {
@@ -152,7 +209,7 @@ export class MunicipalitySplitter {
                 const raw = await LLMService.complete(
                     prompt,
                     'glm-4.7-flash',            // Primary: Z.ai (Free/Fast)
-                    ['deepseek-chat', 'kimi-k2.5'] // Fallbacks (Law 505)
+                    ['gpt-4o-mini', 'deepseek-chat', 'kimi-k2.5'] // Fallbacks (Law 505)
                 );
 
                 if (!raw) throw new Error('Empty LLM response');
@@ -183,7 +240,7 @@ export class MunicipalitySplitter {
 
                 Logger.info(`[MunicipalitySplitter] ✅ ${resolvedProvince} → [${municipalities.join(', ')}]`);
 
-                cache.set(cacheKey, municipalities);
+                upsertCacheEntry(cache, resolvedProvince, municipalities);
                 saveCache(cache);
 
                 return municipalities;
