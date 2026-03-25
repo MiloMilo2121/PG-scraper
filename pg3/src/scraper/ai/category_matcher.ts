@@ -63,11 +63,19 @@ export class CategoryMatcher {
      */
     public static async match(userQuery: string): Promise<string[]> {
         const cacheKey = userQuery.toLowerCase().trim();
+        const exactMatch = ALL_PG_CATEGORIES.find((category) => category.toLowerCase() === cacheKey);
 
         if (MEMORY_CACHE.has(cacheKey)) {
             const cached = MEMORY_CACHE.get(cacheKey)!;
             Logger.info(`[CategoryMatcher] 💾 Cache hit for "${userQuery}" → ${cached.length} categories`);
             return cached;
+        }
+
+        if (exactMatch) {
+            Logger.info(`[CategoryMatcher] ⚡ Exact category match for "${userQuery}"`);
+            MEMORY_CACHE.set(cacheKey, [exactMatch]);
+            saveDiskCache();
+            return [exactMatch];
         }
 
         Logger.info(`[CategoryMatcher] 🧠 Matching "${userQuery}" against ${ALL_PG_CATEGORIES.length} PG categories...`);
