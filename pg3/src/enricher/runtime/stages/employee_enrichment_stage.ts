@@ -23,6 +23,7 @@ export class EmployeeEnrichmentStage {
           status: 'skipped',
           duration_ms: Date.now() - startedAt,
           detail: 'website discovery required before employee estimation',
+          reason_code: 'EMPLOYEE_SKIPPED_NO_WEBSITE',
         },
       };
     }
@@ -37,6 +38,13 @@ export class EmployeeEnrichmentStage {
           status: employees ? 'success' : 'not_found',
           duration_ms: Date.now() - startedAt,
           detail: employees ? 'employee estimate produced' : 'employee estimate unavailable',
+          reason_code: employees ? 'EMPLOYEE_ESTIMATE_FOUND' : 'EMPLOYEE_ESTIMATE_NOT_FOUND',
+          confidence: employees ? 0.68 : 0,
+          provider: employees ? 'post_processor' : undefined,
+          source_url: discoveredUrl,
+          attempted_count: 1,
+          evidence_count: employees ? 1 : 0,
+          entity_match_status: employees ? 'semantic' : 'unknown',
         },
       };
     } catch (error) {
@@ -48,6 +56,9 @@ export class EmployeeEnrichmentStage {
           status: 'failed',
           duration_ms: Date.now() - startedAt,
           error: (error as Error).message,
+          reason_code: 'EMPLOYEE_ESTIMATE_FAILED',
+          source_url: discoveredUrl,
+          attempted_count: 1,
         },
       };
     }

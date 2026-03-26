@@ -52,6 +52,39 @@ export class QuerySanitizer {
         variants.push(normalized.length > 200 ? normalized.substring(0, 200).trim() : normalized);
     }
 
+    private extractWebsiteHost(website?: string): string | null {
+        if (!website) {
+            return null;
+        }
+
+        try {
+            const hostname = new URL(website).hostname.replace(/^www\./i, '').toLowerCase();
+            return hostname || null;
+        } catch {
+            return null;
+        }
+    }
+
+    private buildDomainHintTokens(input: NormalizedInput): string[] {
+        const tokens = new Set<string>();
+        const websiteHost = this.extractWebsiteHost(input.website);
+        const emailDomain = input.email_domain?.replace(/^www\./i, '').toLowerCase();
+
+        for (const host of [websiteHost, emailDomain]) {
+            if (!host) {
+                continue;
+            }
+
+            tokens.add(host);
+            const root = host.split('.').slice(0, -1).join('.');
+            if (root) {
+                tokens.add(root);
+            }
+        }
+
+        return [...tokens].filter(Boolean);
+    }
+
     public buildCompanyQuery(input: NormalizedInput, options: {
         target: 'serp' | 'linkedin' | 'registry' | 'bilancio';
         includeCity?: boolean;
@@ -165,16 +198,72 @@ export class QuerySanitizer {
             this.pushUniqueVariant(variants, seen, `"${primaryName}" ${locationHints.join(' ')} sito ufficiale`);
             this.pushUniqueVariant(variants, seen, `"${primaryName}" ${locationHints.join(' ')} ("contatti" OR "chi siamo")`);
         } else if (target === 'linkedin') {
-            const v1 = this.buildCompanyQuery(input, { target: 'linkedin', includeDomain: 'site:linkedin.com/in' });
-            if (v1) variants.push(v1);
+            const domainHints = this.buildDomainHintTokens(input);
+            const primaryName = sanitizedVariants[0] || cleanName;
+            const locationQuery = locationHints.join(' ');
+            const domainQuery = domainHints.length > 0
+                ? `(${domainHints.map((hint) => `"${hint}"`).join(' OR ')})`
+                : '';
+
+            this.pushUniqueVariant(
+                variants,
+                seen,
+                `site:linkedin.com/in "${primaryName}" ${locationQuery} (Titolare OR Founder OR CEO OR Amministratore)`
+            );
+            this.pushUniqueVariant(
+                variants,
+                seen,
+                `site:linkedin.com/in "${primaryName}" ${locationQuery} ("Owner" OR "Managing Director" OR "Presidente")`
+            );
+
+            if (domainQuery) {
+                this.pushUniqueVariant(
+                    variants,
+                    seen,
+                    `site:linkedin.com/in "${primaryName}" ${locationQuery} ${domainQuery}`
+                );
+            }
+
+            for (const candidateName of sanitizedVariants.slice(1, 3)) {
+                this.pushUniqueVariant(
+                    variants,
+                    seen,
+                    `site:linkedin.com/in "${candidateName}" ${locationQuery} (Titolare OR Founder OR CEO)`
+                );
+            }
         } else if (target === 'registry') {
             const v1 = this.buildCompanyQuery(input, { target: 'registry', includeDomain: 'site:registroimprese.it OR site:informazione-aziende.it' });
             if (v1) variants.push(v1);
         } else if (target === 'bilancio') {
-            const v1 = this.buildCompanyQuery(input, { target: 'bilancio', fileType: 'filetype:pdf' });
-            if (v1) variants.push(v1);
+            const primaryName = sanitizedVariants[0] || cleanName;
+            const locationQuery = locationHints.join(' ');
+            const cleanPiva = (piva || '').replace(/[^0-9]/g, '');
+
+            if (cleanPiva.length === 11) {
+                this.pushUniqueVariant(
+                    variants,
+                    seen,
+                    `"${cleanPiva}" filetype:pdf (bilancio OR fatturato OR "stato patrimoniale")`
+                );
+            }
+
+            this.pushUniqueVariant(
+                variants,
+                seen,
+                `"${primaryName}" ${locationQuery} filetype:pdf (bilancio OR fatturato OR "stato patrimoniale")`
+            );
+            this.pushUniqueVariant(
+                variants,
+                seen,
+                `site:fatturatoitalia.it "${primaryName}" ${locationQuery}`
+            );
+            this.pushUniqueVariant(
+                variants,
+                seen,
+                `site:registroimprese.it "${primaryName}" ${locationQuery} bilancio`
+            );
         }
 
-        return variants.slice(0, target === 'company' ? 12 : 3);
+        return variants.slice(0, target === 'company' ? 12 : target === 'linkedin' ? 5 : 4);
     }
 }

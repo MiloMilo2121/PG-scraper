@@ -703,6 +703,11 @@ export class MasterPipeline {
             status,
             duration_ms: 0,
             detail: discoveredUrl ? discoveryLayer : reasonCode,
+            reason_code: discoveredUrl ? 'WEBSITE_FOUND' : reasonCode,
+            confidence: discoveredUrl ? (discoveryLayer.includes('LLM_ORACLE_SEMANTIC') ? 0.75 : discoveryLayer.includes('SEMANTIC') ? 0.8 : 0.95) : 0,
+            source_url: discoveredUrl || undefined,
+            evidence_count: discoveredUrl ? 1 : 0,
+            entity_match_status: discoveredUrl ? (discoveryLayer.includes('SEMANTIC') ? 'semantic' : 'matched') : 'unknown',
         };
     }
 
@@ -722,6 +727,7 @@ export class MasterPipeline {
             status: 'skipped',
             duration_ms: 0,
             detail,
+            reason_code: detail,
         };
     }
 

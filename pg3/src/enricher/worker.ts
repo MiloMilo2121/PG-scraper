@@ -54,18 +54,29 @@ function mapJobResult(job: EnrichmentJobData, pipelineResult: any): JobResult {
     const vat = pipelineResult.vat || job.vat_code;
     const revenue = pipelineResult.financial?.fatturato_current || pipelineResult.financial?.revenue;
     const employees = pipelineResult.employees || pipelineResult.financial?.employees;
-    const reasonCode = pipelineResult.reason_code || pipelineResult.status;
+    const hasAnySignal = Boolean(
+        websiteUrl
+        || vat
+        || revenue
+        || employees
+        || pipelineResult.pec
+        || pipelineResult.email
+        || pipelineResult.decision_maker?.name
+    );
+    const reasonCode = !websiteUrl && hasAnySignal
+        ? 'ENRICHMENT_ONLY_NO_WEBSITE'
+        : (pipelineResult.reason_code || pipelineResult.status);
 
     return {
-        success: pipelineResult.status === 'FOUND_COMPLETE',
+        success: hasAnySignal,
         company_id: job.company_id,
         vat,
         revenue,
         employees: employees ? String(employees) : undefined,
         website_found: websiteUrl ? 'true' : 'false',
         website_url: websiteUrl,
-        error: pipelineResult.status === 'FOUND_COMPLETE' ? undefined : reasonCode,
-        error_category: pipelineResult.status === 'FOUND_COMPLETE' ? undefined : 'NOT_FOUND',
+        error: hasAnySignal ? undefined : reasonCode,
+        error_category: hasAnySignal ? undefined : 'NOT_FOUND',
         reason_code: reasonCode,
         discovery_method: pipelineResult.website?.discovery_layer,
         discovery_confidence: pipelineResult.website?.confidence,
@@ -74,14 +85,17 @@ function mapJobResult(job: EnrichmentJobData, pipelineResult: any): JobResult {
 
 function persistSuccess(job: EnrichmentJobData, pipelineResult: any, durationMs: number, attempt: number): JobResult {
     const result = mapJobResult(job, pipelineResult);
+    const stageOutcomes = pipelineResult.meta?.stage_outcomes;
+    const persistedReasonCode = result.reason_code || pipelineResult.reason_code || pipelineResult.status;
 
-    if (pipelineResult.status === 'FOUND_COMPLETE' && pipelineResult.website?.url) {
+    if (result.success) {
         const leadScore = LeadScorer.score({
             company_name: job.company_name,
             phone: job.phone,
             address: job.address,
-            website: pipelineResult.website.url,
-            discovery_confidence: pipelineResult.website.confidence,
+            website: pipelineResult.website?.url,
+            email: pipelineResult.email,
+            discovery_confidence: pipelineResult.website?.confidence,
         } as any);
 
         insertEnrichmentResult({
@@ -101,9 +115,10 @@ function persistSuccess(job: EnrichmentJobData, pipelineResult: any, durationMs:
             decision_maker_confidence: pipelineResult.decision_maker?.confidence,
             lead_score: leadScore,
             data_source: 'omega_worker',
-            discovery_method: pipelineResult.website.discovery_layer,
-            discovery_confidence: pipelineResult.website.confidence,
-            reason_code: pipelineResult.reason_code || pipelineResult.status,
+            discovery_method: pipelineResult.website?.discovery_layer,
+            discovery_confidence: pipelineResult.website?.confidence,
+            reason_code: persistedReasonCode,
+            stage_outcomes: stageOutcomes,
         });
     }
 
@@ -114,7 +129,8 @@ function persistSuccess(job: EnrichmentJobData, pipelineResult: any, durationMs:
         attempt,
         undefined,
         undefined,
-        pipelineResult.reason_code || pipelineResult.status,
+        persistedReasonCode,
+        stageOutcomes,
         job.run_id
     );
 
@@ -143,6 +159,7 @@ async function processJob(job: Job<EnrichmentJobData>, runtime: OmegaRuntime): P
             err.message,
             Logger.categorizeError(err),
             'WORKER_EXCEPTION',
+            undefined,
             job.data.run_id
         );
 

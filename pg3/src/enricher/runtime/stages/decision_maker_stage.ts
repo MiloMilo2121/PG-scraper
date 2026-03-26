@@ -21,12 +21,13 @@ export class DecisionMakerStage {
           status: 'skipped',
           duration_ms: Date.now() - startedAt,
           detail: 'website discovery required before decision-maker search',
+          reason_code: 'DM_SKIPPED_NO_WEBSITE',
         },
       };
     }
 
     try {
-      const decisionMaker = await this.linkedinSniper.snipe(companyId, input);
+      const decisionMaker = await this.linkedinSniper.snipe(companyId, input, discoveredUrl);
       return {
         decisionMaker,
         outcome: {
@@ -34,6 +35,13 @@ export class DecisionMakerStage {
           status: decisionMaker ? 'success' : 'not_found',
           duration_ms: Date.now() - startedAt,
           detail: decisionMaker ? 'linkedin candidate found' : 'no linkedin candidate found',
+          reason_code: decisionMaker ? 'DM_SOURCE_FOUND' : 'DM_NOT_FOUND',
+          confidence: decisionMaker?.confidence,
+          provider: decisionMaker?.source,
+          source_url: decisionMaker?.linkedin_url,
+          attempted_count: 1,
+          evidence_count: decisionMaker ? 1 : 0,
+          entity_match_status: decisionMaker ? 'matched' : 'unknown',
         },
       };
     } catch (error) {
@@ -44,6 +52,7 @@ export class DecisionMakerStage {
           status: 'failed',
           duration_ms: Date.now() - startedAt,
           error: (error as Error).message,
+          reason_code: 'DM_FAILED',
         },
       };
     }

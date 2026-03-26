@@ -131,6 +131,7 @@ export function initializeDatabase(): void {
             discovery_method TEXT,
             discovery_confidence REAL,
             reason_code TEXT,
+            stage_outcomes_json TEXT,
             deleted_at DATETIME,
             enriched_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -144,6 +145,7 @@ export function initializeDatabase(): void {
             error_message TEXT,
             error_category TEXT,
             reason_code TEXT,
+            stage_outcomes_json TEXT,
             run_id TEXT,
             duration_ms INTEGER,
             attempt INTEGER DEFAULT 1,
@@ -201,6 +203,7 @@ export function initializeDatabase(): void {
     addColumnIfMissing('enrichment_results', enrichmentColumns, 'decision_maker_role', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_role TEXT`);
     addColumnIfMissing('enrichment_results', enrichmentColumns, 'decision_maker_linkedin_url', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_linkedin_url TEXT`);
     addColumnIfMissing('enrichment_results', enrichmentColumns, 'decision_maker_confidence', `ALTER TABLE enrichment_results ADD COLUMN decision_maker_confidence REAL`);
+    addColumnIfMissing('enrichment_results', enrichmentColumns, 'stage_outcomes_json', `ALTER TABLE enrichment_results ADD COLUMN stage_outcomes_json TEXT`);
     addColumnIfMissing('enrichment_results', enrichmentColumns, 'updated_at', `ALTER TABLE enrichment_results ADD COLUMN updated_at DATETIME`);
     addColumnIfMissing('enrichment_results', enrichmentColumns, 'deleted_at', `ALTER TABLE enrichment_results ADD COLUMN deleted_at DATETIME`);
 
@@ -247,6 +250,7 @@ export function initializeDatabase(): void {
 
     const jobLogColumns = getTableColumns('job_log');
     addColumnIfMissing('job_log', jobLogColumns, 'reason_code', `ALTER TABLE job_log ADD COLUMN reason_code TEXT`);
+    addColumnIfMissing('job_log', jobLogColumns, 'stage_outcomes_json', `ALTER TABLE job_log ADD COLUMN stage_outcomes_json TEXT`);
     addColumnIfMissing('job_log', jobLogColumns, 'run_id', `ALTER TABLE job_log ADD COLUMN run_id TEXT`);
 
     schemaInitialized = true;
@@ -291,6 +295,8 @@ export interface EnrichmentResult {
     discovery_method?: string;
     discovery_confidence?: number;
     reason_code?: string;
+    stage_outcomes?: Record<string, unknown>;
+    stage_outcomes_json?: string;
 }
 
 export interface FieldEvidence {
@@ -352,8 +358,8 @@ function initializeStatements(): void {
 
     upsertResultStmt = db.prepare(`
         INSERT INTO enrichment_results
-        (id, company_id, vat, revenue, revenue_year, employees, is_estimated_employees, pec, email, website_validated, decision_maker_name, decision_maker_role, decision_maker_linkedin_url, decision_maker_confidence, lead_score, data_source, discovery_method, discovery_confidence, reason_code, enriched_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        (id, company_id, vat, revenue, revenue_year, employees, is_estimated_employees, pec, email, website_validated, decision_maker_name, decision_maker_role, decision_maker_linkedin_url, decision_maker_confidence, lead_score, data_source, discovery_method, discovery_confidence, reason_code, stage_outcomes_json, enriched_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(company_id) WHERE deleted_at IS NULL DO UPDATE SET
             vat = COALESCE(NULLIF(excluded.vat, ''), enrichment_results.vat),
             revenue = COALESCE(NULLIF(excluded.revenue, ''), enrichment_results.revenue),
@@ -375,6 +381,7 @@ function initializeStatements(): void {
             discovery_method = COALESCE(NULLIF(excluded.discovery_method, ''), enrichment_results.discovery_method),
             discovery_confidence = COALESCE(excluded.discovery_confidence, enrichment_results.discovery_confidence),
             reason_code = COALESCE(NULLIF(excluded.reason_code, ''), enrichment_results.reason_code),
+            stage_outcomes_json = COALESCE(NULLIF(excluded.stage_outcomes_json, ''), enrichment_results.stage_outcomes_json),
             deleted_at = NULL,
             updated_at = CURRENT_TIMESTAMP
         RETURNING id
@@ -389,8 +396,8 @@ function initializeStatements(): void {
     `);
 
     insertJobLogStmt = db.prepare(`
-        INSERT INTO job_log (company_id, status, error_message, error_category, reason_code, run_id, duration_ms, attempt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO job_log (company_id, status, error_message, error_category, reason_code, stage_outcomes_json, run_id, duration_ms, attempt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     insertFieldEvidenceStmt = db.prepare(`
@@ -467,6 +474,8 @@ export function insertEnrichmentResult(result: EnrichmentResult): void {
     }
 
     const tx = db.transaction(() => {
+        const stageOutcomesJson = result.stage_outcomes_json
+            || (result.stage_outcomes ? JSON.stringify(result.stage_outcomes) : undefined);
         const persisted = upsertResultStmt.get(
             requestedId,
             result.company_id,
@@ -486,7 +495,8 @@ export function insertEnrichmentResult(result: EnrichmentResult): void {
             result.data_source,
             result.discovery_method,
             result.discovery_confidence,
-            result.reason_code
+            result.reason_code,
+            stageOutcomesJson
         ) as { id: string } | undefined;
         const targetResultId = persisted?.id || requestedId;
 
@@ -513,9 +523,19 @@ export function getEnrichmentResult(companyId: string): EnrichmentResult | undef
         return undefined;
     }
 
+    let stageOutcomes: Record<string, unknown> | undefined;
+    if (typeof row.stage_outcomes_json === 'string' && row.stage_outcomes_json.trim()) {
+        try {
+            stageOutcomes = JSON.parse(row.stage_outcomes_json);
+        } catch {
+            stageOutcomes = undefined;
+        }
+    }
+
     return {
         ...row,
         is_estimated_employees: Boolean(row.is_estimated_employees),
+        stage_outcomes: stageOutcomes,
     };
 }
 
@@ -527,10 +547,21 @@ export function logJobResult(
     errorMessage?: string,
     errorCategory?: string,
     reasonCode?: string,
+    stageOutcomes?: Record<string, unknown>,
     runId?: string
 ): void {
     ensureReady();
-    insertJobLogStmt.run(companyId, status, errorMessage, errorCategory, reasonCode, runId, durationMs, attempt);
+    insertJobLogStmt.run(
+        companyId,
+        status,
+        errorMessage,
+        errorCategory,
+        reasonCode,
+        stageOutcomes ? JSON.stringify(stageOutcomes) : null,
+        runId,
+        durationMs,
+        attempt
+    );
 }
 
 export function getStats(): { total: number; enriched: number; pending: number; failed: number } {

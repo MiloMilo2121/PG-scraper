@@ -57,6 +57,14 @@ describe('DB persistence', () => {
       is_estimated_employees: false,
       data_source: 'WEBSITE',
       reason_code: 'MATCHED_SITE',
+      stage_outcomes: {
+        decision_maker: {
+          stage: 'decision_maker',
+          status: 'success',
+          duration_ms: 123,
+          reason_code: 'DM_SOURCE_FOUND',
+        },
+      },
     });
 
     const rawDb = dbModule.default as any;
@@ -69,6 +77,7 @@ describe('DB persistence', () => {
     expect(persisted?.email).toBe('ceo@acme.it');
     expect(persisted?.decision_maker_name).toBe('Mario Rossi');
     expect(persisted?.decision_maker_linkedin_url).toBe('https://linkedin.com/in/mario-rossi');
+    expect((persisted?.stage_outcomes as any)?.decision_maker?.reason_code).toBe('DM_SOURCE_FOUND');
   });
 
   it('keeps a single active enrichment row per company across reruns', () => {

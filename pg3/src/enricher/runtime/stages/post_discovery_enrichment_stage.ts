@@ -39,10 +39,12 @@ export class PostDiscoveryEnrichmentStage {
   }
 
   public async run(companyId: string, input: NormalizedInput, discoveredUrl: string | null): Promise<PostDiscoveryEnrichmentResult> {
-    const financialStage = await this.financialStage.run(companyId, input);
-    const decisionMakerStage = await this.decisionMakerStage.run(companyId, input, discoveredUrl);
-    const employeeStage = await this.employeeStage.run(companyId, input, discoveredUrl);
-    const contactStage = await this.contactStage.run(companyId, input, discoveredUrl);
+    const [financialStage, decisionMakerStage, employeeStage, contactStage] = await Promise.all([
+      this.financialStage.run(companyId, input),
+      this.decisionMakerStage.run(companyId, input, discoveredUrl),
+      this.employeeStage.run(companyId, input, discoveredUrl),
+      this.contactStage.run(companyId, input, discoveredUrl),
+    ]);
 
     let employees = financialStage.employees;
     let isEstimatedEmployees = financialStage.isEstimatedEmployees;
