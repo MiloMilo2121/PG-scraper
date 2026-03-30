@@ -10,15 +10,30 @@ export interface SerpResult {
     source?: string;
 }
 
+/** Deduplicate results by URL. */
+function dedup(results: { url: string; title: string }[]): SerpResult[] {
+    const seen = new Set<string>();
+    const out: SerpResult[] = [];
+    for (const r of results) {
+        if (!seen.has(r.url)) {
+            seen.add(r.url);
+            out.push(r);
+        }
+    }
+    return out;
+}
+
 export class GoogleSerpAnalyzer {
-    // Multiple selector strategies to handle Google DOM changes
+    // Multiple selector strategies to handle Google DOM changes.
+    // ORDER MATTERS: Playwright-rendered Google (via Crawl4AI) uses jsname="UWckNb" with direct hrefs.
+    // Classic scrapers use /url?q= redirects. Both paths are covered below.
     private static readonly FALLBACK_SELECTORS = [
-        '.yuRUbf a',           // Classic desktop
+        'a[jsname="UWckNb"]',  // ✅ Playwright/Crawl4AI rendered — direct href, most reliable
+        '.yuRUbf a',           // Classic desktop (raw HTML scrape)
         '.kCrYT a',            // Mobile / lite
         '.tF2Cxc a',           // 2023+ layout
         '.g .LC20lb',          // Title-based (parent has link)
         'div[data-snf] a',     // Structured results
-        'a[jsname="UWckNb"]',  // Modern JS-rendered
         'a[data-ved]',         // Any result link with tracking
         '#search a h3',        // h3 inside link (walk up to <a>)
     ];
@@ -28,12 +43,35 @@ export class GoogleSerpAnalyzer {
         const results: { url: string; title: string }[] = [];
         const registry = SelectorRegistry.getInstance();
 
-        // 1. Get dynamic selector from registry
+        // 1. FAST PATH: jsname="UWckNb" — dominant in Playwright/Crawl4AI rendered Google pages.
+        // These anchors have direct https:// hrefs (no /url?q= redirect).
+        const jsNameContainers = $('a[jsname="UWckNb"]');
+        if (jsNameContainers.length >= 3) {
+            Logger.info(`[GoogleSerp] ✅ Fast path: jsname="UWckNb" matched ${jsNameContainers.length} results.`);
+            registry.update('google', 'result_link', 'a[jsname="UWckNb"]');
+            jsNameContainers.each((_, el) => {
+                const url = $(el).attr('href') || '';
+                const title = $(el).find('h3').text().trim() || $(el).text().trim();
+                if (url.startsWith('http') &&
+                    !url.includes('google.com') &&
+                    !url.includes('accounts.google') &&
+                    !url.includes('support.google') &&
+                    !url.includes('policies.google')) {
+                    results.push({ url, title });
+                }
+            });
+            if (results.length > 0) {
+                const unique = dedup(results);
+                Logger.info(`[GoogleSerp] Fast path extracted ${unique.length} unique results.`);
+                return unique.slice(0, 10);
+            }
+        }
+
+        // 2. Get dynamic selector from registry (may have been updated by a previous run)
         let selector = registry.get('google', 'result_link', '.yuRUbf a, .kCrYT a');
         let containers = $(selector);
 
-        // 2. Try hardcoded fallback selectors before resorting to LLM healer
-        // If we found less than 3 results, it means the registry selector might be stale or matching a sidebar element.
+        // 3. Try hardcoded fallback selectors before resorting to LLM healer
         if (containers.length < 3) {
             for (const fallback of this.FALLBACK_SELECTORS) {
                 const testContainers = $(fallback);
@@ -45,7 +83,7 @@ export class GoogleSerpAnalyzer {
             }
         }
 
-        // 3. Extract links from /url?q= redirect pattern (common in Google HTML)
+        // 4. Extract links from /url?q= redirect pattern (classic raw-HTML Google)
         if (containers.length === 0) {
             $('a[href*="/url?q="]').each((_, el) => {
                 let href = $(el).attr('href') || '';
@@ -59,11 +97,11 @@ export class GoogleSerpAnalyzer {
                 }
             });
             if (results.length > 0) {
-                return results.slice(0, 10);
+                return dedup(results).slice(0, 10);
             }
         }
 
-        // 4. Self-Healing via LLM (last resort)
+        // 5. Self-Healing via LLM (last resort)
         if (containers.length === 0) {
             Logger.warn('[GoogleSerp] All fallback selectors failed. Engaging LLM Healer...');
             const bodyHtml = $('body').html() || html;
@@ -103,17 +141,7 @@ export class GoogleSerpAnalyzer {
             }
         });
 
-        // Dedup results based on URL
-        const seen = new Set<string>();
-        const uniqueResults: SerpResult[] = [];
-        for (const r of results) {
-            if (!seen.has(r.url)) {
-                seen.add(r.url);
-                uniqueResults.push(r);
-            }
-        }
-
-        return uniqueResults.slice(0, 10);
+        return dedup(results).slice(0, 10);
     }
 }
 
