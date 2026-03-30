@@ -108,6 +108,11 @@ export function initializeDatabase(): void {
         CREATE INDEX IF NOT EXISTS idx_results_vat ON enrichment_results(vat);
         CREATE INDEX IF NOT EXISTS idx_job_log_company ON job_log(company_id);
         CREATE INDEX IF NOT EXISTS idx_job_log_status ON job_log(status);
+
+        -- 🔑 Business-key uniqueness: same company can't be inserted twice under same name+city.
+        -- COALESCE(city,'') so that two NULL-city rows still deduplicate correctly.
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_name_city
+            ON companies(company_name, COALESCE(city, ''));
     `);
 
     // Lightweight migrations for existing DBs (CREATE TABLE IF NOT EXISTS won't add new columns).
@@ -124,6 +129,22 @@ export function initializeDatabase(): void {
         addIfMissing('vat_code', `ALTER TABLE companies ADD COLUMN vat_code TEXT`);
         addIfMissing('pg_url', `ALTER TABLE companies ADD COLUMN pg_url TEXT`);
         addIfMissing('email', `ALTER TABLE companies ADD COLUMN email TEXT`);
+
+        // Business-key uniqueness index for existing databases that pre-date the schema fix.
+        // We first deduplicate in-place (keep the row with the highest rowid = most recent),
+        // then create the unique index. This is a no-op if the index already exists.
+        const idxList = db.prepare(`PRAGMA index_list(companies)`).all() as Array<{ name: string }>;
+        if (!idxList.some(i => i.name === 'idx_companies_name_city')) {
+            db.exec(`
+                DELETE FROM companies WHERE rowid NOT IN (
+                    SELECT MAX(rowid) FROM companies
+                    GROUP BY company_name, COALESCE(city, '')
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_name_city
+                    ON companies(company_name, COALESCE(city, ''));
+            `);
+            Logger.info('[DB] Created unique index idx_companies_name_city (deduplication ran)');
+        }
 
         // Enrichment results migrations
         const erCols = db.prepare(`PRAGMA table_info(enrichment_results)`).all() as Array<{ name: string }>;

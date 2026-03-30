@@ -49,22 +49,28 @@ export class AntigravityClient {
     private async flush() {
         if (this.buffer.length === 0) return;
 
+        // Snapshot the batch but DO NOT clear the buffer yet.
+        // Only clear after a confirmed successful send to prevent data loss on network failure.
         const batch = [...this.buffer];
-        this.buffer = []; // Clear buffer
 
         try {
-            // Mocking the actual API call for now to prevent errors if endpoint doesn't exist
             if (process.env.ANTIGRAVITY_URL) {
                 await axios.post(ANTIGRAVITY_ENDPOINT, { events: batch }, {
-                    headers: { 'Authorization': `Bearer ${API_KEY}` }
+                    headers: { 'Authorization': `Bearer ${API_KEY}` },
+                    timeout: 5000,
                 });
             }
-
-            // Visual Debug Log
-            Logger.info(`🚀 [Antigravity] Pushed ${batch.length} updates to Dashboard.`);
+            // Success: safe to remove the sent items from the buffer
+            this.buffer = this.buffer.slice(batch.length);
+            Logger.info(`[Antigravity] Pushed ${batch.length} updates to Dashboard.`);
         } catch (error) {
-            Logger.error('[Antigravity] Failed to push updates', { error: error as Error });
-            // Optional: Re-queue logic could go here
+            // Network failure: keep events in buffer so they retry on next flush cycle.
+            // Cap the buffer at 500 to avoid unbounded growth during prolonged outages.
+            Logger.error('[Antigravity] Failed to push updates — will retry', { error: error as Error });
+            if (this.buffer.length > 500) {
+                this.buffer = this.buffer.slice(-500); // Keep only most recent 500
+                Logger.warn('[Antigravity] Buffer overflow during outage — oldest events dropped');
+            }
         }
     }
 }

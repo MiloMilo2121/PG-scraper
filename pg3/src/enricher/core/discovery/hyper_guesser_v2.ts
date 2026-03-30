@@ -118,10 +118,14 @@ export class HyperGuesser {
             this.addVariations(domains, ultraCleanName, suffixes);
         }
 
-        // Selective Stop Words Logic: try with selective words kept
+        // Selective Stop Words Logic: keep "group", "solutions", etc. that cleanName strips.
+        // BUG FIX: compare the *compact* forms (no spaces) so the check isn't always true.
         const nameWithSelective = this.normalizeWithSelectiveStopWords(ctx.companyName);
-        if (nameWithSelective && nameWithSelective !== cleanName.replace(/\s/g, '')) {
-            this.addVariations(domains, nameWithSelective.replace(/\s/g, ''), suffixes);
+        const nameWithSelectiveCompact = nameWithSelective.replace(/\s/g, '');
+        const ultraCleanCompact = ultraCleanName.replace(/\s/g, '');
+        if (nameWithSelectiveCompact && nameWithSelectiveCompact !== ultraCleanCompact) {
+            this.addVariations(domains, nameWithSelectiveCompact, suffixes);
+            this.addVariations(domains, nameWithSelectiveCompact.replace(/-/g, ''), suffixes);
         }
     }
 
@@ -137,7 +141,8 @@ export class HyperGuesser {
         norm = this.normalizeCorporateAbbreviations(norm);
         for (const stop of this.STOP_WORDS) {
             const plain = stop.replace(/\./g, '');
-            const regex = new RegExp(`(?:^|\\s)${plain}(?:\\s|$)`, 'gi');
+            // BUG FIX: include hyphens as word boundaries so "rossi-srl" strips "srl" correctly
+            const regex = new RegExp(`(?:^|[\\s-])${plain}(?:[\\s-]|$)`, 'gi');
             norm = norm.replace(regex, ' ');
         }
         return norm.replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, ' ').trim();
@@ -155,7 +160,8 @@ export class HyperGuesser {
         const allStops = [...this.STOP_WORDS, ...this.SELECTIVE_STOP_WORDS];
         for (const stop of allStops) {
             const plain = stop.replace(/\./g, '');
-            const regex = new RegExp(`(?:^|\\s)${plain}(?:\\s|$)`, 'gi');
+            // Use hyphens as word boundaries too (e.g. "rossi-srl" → "rossi")
+            const regex = new RegExp(`(?:^|[\\s-])${plain}(?:[\\s-]|$)`, 'gi');
             norm = norm.replace(regex, ' ');
         }
 

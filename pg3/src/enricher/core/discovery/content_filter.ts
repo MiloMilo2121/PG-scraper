@@ -8,15 +8,26 @@ export class ContentFilter {
 
     // Task 15: Directory Blocklist
     private static DIRECTORIES = [
-        'paginegialle.it', 'paginebianche.it', 'yelp.it', 'tripadvisor.it',
-        'facebook.com', 'instagram.com', 'linkedin.com', 'twitter.com',
-        'virgilio.it', 'kompass.com', 'europages.com', 'misterimprese.it',
-        'prontopro.it', 'habitissimo.it', 'infojobs.it', 'indeed.com',
-        'glassdoor.it', 'trovalavoro.it', 'bakeca.it', 'subito.it',
-        'wikipedia.org', 'amazon.it', 'ebay.it', 'groupon.it',
-        'guidatitolari.it', 'registroimprese.it', 'ufficiocamerale.it',
-        'informazione-aziende.it', 'trovanumeri.com', 'reteimprese.it', 'area-clienti.com',
-        'pagineimprese.it', 'aziende.virgilio.it', 'yelp.com', 'linkedin.it'
+        // Italian directories
+        'paginegialle.it', 'paginebianche.it', 'misterimprese.it', 'pagineimprese.it',
+        'reteimprese.it', 'guidatitolari.it', 'informazione-aziende.it', 'trovanumeri.com',
+        'area-clienti.com', 'aziende.virgilio.it', 'virgilio.it', 'infobel.it',
+        'ufficiocamerale.it', 'registroimprese.it', 'infoimprese.it',
+        'moneymap.it', 'italyfoodbeverage.it', 'duemilauno.it',
+        'tuttocamere.it', 'imprese.costruzioni.it', 'impresaitalia.info',
+        // Social
+        'facebook.com', 'instagram.com', 'linkedin.com', 'linkedin.it', 'twitter.com',
+        'x.com', 'tiktok.com', 'youtube.com', 'pinterest.it', 'pinterest.com',
+        // Reviews / marketplace
+        'tripadvisor.it', 'tripadvisor.com', 'yelp.it', 'yelp.com',
+        'trustpilot.com', 'google.com', 'maps.google.com',
+        'amazon.it', 'ebay.it', 'groupon.it', 'bakeca.it', 'subito.it',
+        // Jobs
+        'infojobs.it', 'indeed.com', 'glassdoor.it', 'trovalavoro.it',
+        // Encyclopedic / generic
+        'wikipedia.org', 'wikidata.org', 'crunchbase.com',
+        // International directories
+        'kompass.com', 'europages.com', 'prontopro.it', 'habitissimo.it',
     ];
 
     // Task 16: Parking / Domain for Sale patterns
@@ -111,8 +122,11 @@ export class ContentFilter {
     static isItalianLanguage(text: string): boolean {
         const lowerText = text.toLowerCase();
         if (lowerText.length < 120) {
-            // Too short to classify - check for .it TLD or obvious Italian
-            return lowerText.includes('.it') || lowerText.includes('italia') || true;
+            // Too short for full classification: accept only if explicit Italian signal is present.
+            // BUG FIX: removed the trailing `|| true` that made this always return true.
+            return lowerText.includes('.it') || lowerText.includes('italia') ||
+                lowerText.includes(' di ') || lowerText.includes(' della ') ||
+                lowerText.includes(' servizi') || lowerText.includes(' azienda');
         }
         let score = 0;
 

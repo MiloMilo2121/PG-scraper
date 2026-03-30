@@ -37,10 +37,16 @@ export interface LedgerSummary {
 
 export class CostLedger {
     private ringBuffer: LedgerEntry[] = [];
-    private readonly MAX_BUFFER_SIZE = 1000;
+    // Bumped from 1000 → 10 000: with 15 concurrency + ~5 API calls/company
+    // a 2k-company run generates ~150k entries; 10k keeps ~60-90 minutes of history
+    private readonly MAX_BUFFER_SIZE = 10_000;
     private logFilePath: string;
     private pendingWrites: LedgerEntry[] = [];
     private writeInterval: NodeJS.Timeout;
+    // Monotonically increasing totals — never reset, never capped
+    private totalCostAccumulator = 0;
+    private totalCallsAccumulator = 0;
+    private totalSuccessAccumulator = 0;
 
     constructor(logDirectory: string = process.cwd()) {
         this.logFilePath = path.join(logDirectory, 'cost_ledger.jsonl');
@@ -49,7 +55,12 @@ export class CostLedger {
     }
 
     public async log(entry: LedgerEntry): Promise<void> {
-        // Add to ring buffer
+        // Update monotonic accumulators FIRST — these never overflow or lose data
+        this.totalCostAccumulator += entry.cost_eur;
+        this.totalCallsAccumulator++;
+        if (entry.success) this.totalSuccessAccumulator++;
+
+        // Add to ring buffer (for short-window health checks)
         this.ringBuffer.push(entry);
         if (this.ringBuffer.length > this.MAX_BUFFER_SIZE) {
             this.ringBuffer.shift(); // Remove oldest
@@ -71,18 +82,32 @@ export class CostLedger {
         });
     }
 
+    /**
+     * Returns accurate lifetime totals using monotonic accumulators.
+     * When `since` is provided, falls back to ring-buffer scan (best-effort for recent windows).
+     */
     public async getSummary(since?: Date): Promise<LedgerSummary> {
+        if (!since) {
+            // Lifetime totals — always accurate regardless of buffer size
+            return {
+                total_cost_eur: this.totalCostAccumulator,
+                total_calls: this.totalCallsAccumulator,
+                success_rate: this.totalCallsAccumulator > 0
+                    ? this.totalSuccessAccumulator / this.totalCallsAccumulator
+                    : 1
+            };
+        }
+
+        // Windowed query: scan ring buffer (best-effort — entries older than buffer are gone)
         let totalCost = 0;
         let totalCalls = 0;
         let successCount = 0;
-
         for (const entry of this.ringBuffer) {
-            if (since && new Date(entry.timestamp) < since) continue;
+            if (new Date(entry.timestamp) < since) continue;
             totalCalls++;
             totalCost += entry.cost_eur;
             if (entry.success) successCount++;
         }
-
         return {
             total_cost_eur: totalCost,
             total_calls: totalCalls,
@@ -96,8 +121,8 @@ export class CostLedger {
 
     public async getCostPerCompany(totalCompanies: number): Promise<number> {
         if (totalCompanies === 0) return 0;
-        const summary = await this.getSummary();
-        return summary.total_cost_eur / totalCompanies;
+        // Use the monotonic accumulator — never affected by ring-buffer overflow
+        return this.totalCostAccumulator / totalCompanies;
     }
 
     public getHealthSnapshot(windowSeconds: number = 30): HealthSnapshot {

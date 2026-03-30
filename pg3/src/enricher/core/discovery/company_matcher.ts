@@ -230,8 +230,27 @@ export class CompanyMatcher {
 
   public static tokenizeCompanyName(companyName: string): string[] {
     const tokens = tokenize(companyName);
-    // ASSUMPTION: Allow 2-char tokens to support brand abbreviations (e.g., "AB" in "AB Meccanica")
+    // Allow 2-char tokens for brand abbreviations (e.g., "AB" in "AB Meccanica").
+    // Single-char tokens are dropped for text/body matching to avoid false positives on
+    // common letter occurrences — but see tokenizeCompanyNameForDomain() for domain matching.
     return tokens.filter((token) => token.length >= 2 && !LEGAL_SUFFIXES.has(token));
+  }
+
+  /**
+   * Like tokenizeCompanyName() but also keeps 1-char tokens that are the LEADING brand token
+   * (e.g. "Z" in "Z Industries SRL") so domain coverage works for such brands.
+   * Single-char tokens are only kept when they are the first meaningful token.
+   */
+  private static tokenizeCompanyNameForDomain(companyName: string): string[] {
+    const tokens = tokenize(companyName);
+    const filtered = tokens.filter((token) => !LEGAL_SUFFIXES.has(token));
+    if (filtered.length === 0) return [];
+    const standard = filtered.filter((t) => t.length >= 2);
+    // If the first meaningful token is a single char (e.g. brand initial), include it
+    if (filtered[0].length === 1 && !standard.includes(filtered[0])) {
+      return [filtered[0], ...standard];
+    }
+    return standard;
   }
 
   // ASSUMPTION: Made public so UnifiedDiscoveryService can use it for title-based matching boost
@@ -290,7 +309,9 @@ export class CompanyMatcher {
     }
 
     const compactHost = hostname.replace(/[^a-z0-9]/g, '');
-    const tokens = this.tokenizeCompanyName(companyName);
+    // Use domain-specific tokenizer so single-char brand initials (e.g. "Z" in "Z Industries")
+    // are included when computing domain coverage.
+    const tokens = this.tokenizeCompanyNameForDomain(companyName);
     if (tokens.length === 0) return 0;
 
     const compactName = tokens.join('');

@@ -22,6 +22,34 @@ const RUNNER_CONCURRENCY_LIMIT = config.runner.concurrencyLimit;
 const RUNNER_MEMORY_WARN_MB = config.runner.memoryWarnMb;
 const RUNNER_PROGRESS_LOG_EVERY = config.runner.progressLogEvery;
 
+// ---------------------------------------------------------------------------
+// Graceful Shutdown
+// ---------------------------------------------------------------------------
+let isShuttingDown = false;
+// executeRun() registers its buffer-flush function here so the signal handler
+// can drain whatever is in memory before the process exits.
+let pendingFlush: (() => Promise<void>) | null = null;
+
+async function gracefulShutdown(signal: string) {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    Logger.warn(`\n🛑 ${signal} received — flushing buffers and shutting down gracefully...`);
+    try {
+        if (pendingFlush) await pendingFlush();
+        Logger.info('✅ Buffers flushed.');
+    } catch (e) {
+        Logger.error('Error flushing buffers on shutdown', { error: e as Error });
+    }
+    try {
+        await BrowserFactory.getInstance().close();
+        Logger.info('✅ Browser closed.');
+    } catch { /* browser may already be closed */ }
+    process.exit(0);
+}
+
+process.once('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.once('SIGINT',  () => gracefulShutdown('SIGINT'));
+
 const RunnerCompanySchema = z.object({
     company_name: z.string().trim().min(1),
     city: z.string().optional(),
@@ -151,6 +179,13 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
         await writeQueue(() => writer.writeRecords(batch));
     };
 
+    // Register the flush function so the SIGTERM handler can drain buffers at any time
+    pendingFlush = async () => {
+        await flushBuffer(validBuffer, validWriter);
+        await flushBuffer(invalidBuffer, invalidWriter);
+        await flushBuffer(notFoundBuffer, notFoundWriter);
+    };
+
     const limit = pLimit(RUNNER_CONCURRENCY_LIMIT);
     let processedCount = companies.length - pending.length;
 
@@ -170,6 +205,8 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
     }, 5000);
 
     const tasks = pending.map(company => limit(async () => {
+        // Don't start new work after a shutdown signal is received
+        if (isShuttingDown) return;
         try {
             AntigravityClient.getInstance().trackCompanyUpdate(company, 'SEARCHING');
             const res = await SERVICE.discover(company, mode);
@@ -230,6 +267,7 @@ async function executeRun(runId: number, mode: DiscoveryMode, companies: Company
     } finally {
         clearInterval(memoryWatchdog);
         clearInterval(flushInterval);
+        pendingFlush = null; // Run is done — no more buffers to flush
     }
 }
 

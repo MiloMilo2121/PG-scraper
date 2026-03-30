@@ -39,6 +39,9 @@ export class BrowserPool {
     private maxReqsPerInstance: number;
     private navTimeoutMs: number;
     private blockResources: string[];
+    // Event-based wait queue: resolvers called when an instance becomes available.
+    // Replaces the previous 200ms-interval busy-wait — zero CPU overhead while waiting.
+    private waitQueue: Array<() => void> = [];
 
     // Stats
     private recycledTotal = 0;
@@ -120,33 +123,52 @@ export class BrowserPool {
     }
 
     private async acquireInstance(): Promise<BrowserInstance> {
-        // Find available
-        let available = this.instances.find(i => !i.is_busy);
-
-        if (!available && this.instances.length < this.maxInstances) {
-            // Can spawn a new one
-            available = await this.createInstance();
-            this.instances.push(available);
+        // Fast path: an idle instance already exists
+        const available = this.instances.find(i => !i.is_busy);
+        if (available) {
             available.is_busy = true;
             return available;
         }
 
-        if (!available) {
-            // Wait logic
-            const start = Date.now();
-            while (Date.now() - start < 10000) {
-                await new Promise(r => setTimeout(r, 200));
-                available = this.instances.find(i => !i.is_busy);
-                if (available) {
-                    available.is_busy = true;
-                    return available;
-                }
-            }
-            throw new BrowserPoolExhaustedError();
+        // Pool not full yet: spawn a new browser
+        if (this.instances.length < this.maxInstances) {
+            const fresh = await this.createInstance();
+            this.instances.push(fresh);
+            fresh.is_busy = true;
+            return fresh;
         }
 
-        available.is_busy = true;
-        return available;
+        // Pool full and all busy: wait for a release notification (event-based, zero polling).
+        // The waiter is resolved by releaseInstance() when any browser becomes free.
+        return new Promise<BrowserInstance>((resolve, reject) => {
+            const timeoutHandle = setTimeout(() => {
+                const idx = this.waitQueue.indexOf(tryAcquire);
+                if (idx !== -1) this.waitQueue.splice(idx, 1);
+                reject(new BrowserPoolExhaustedError());
+            }, 10_000);
+
+            const tryAcquire = () => {
+                const inst = this.instances.find(i => !i.is_busy);
+                if (inst) {
+                    clearTimeout(timeoutHandle);
+                    inst.is_busy = true;
+                    resolve(inst);
+                } else {
+                    // Edge case: notified but still none available (concurrent acquires).
+                    // Re-queue ourselves for the next release.
+                    this.waitQueue.push(tryAcquire);
+                }
+            };
+
+            this.waitQueue.push(tryAcquire);
+        });
+    }
+
+    /** Marks an instance as available and wakes the next waiter, if any. */
+    private releaseInstance(instance: BrowserInstance): void {
+        instance.is_busy = false;
+        const next = this.waitQueue.shift();
+        if (next) next();
     }
 
     private async recycleInstance(instance: BrowserInstance) {
@@ -228,8 +250,12 @@ export class BrowserPool {
         // Determine if we need to recycle
         if (instance.requests_served >= this.maxReqsPerInstance || status === 'ERROR') {
             await this.recycleInstance(instance);
+            // recycleInstance removes the instance from the pool; wake any waiter so it can
+            // either grab another idle instance or spawn a new one.
+            const next = this.waitQueue.shift();
+            if (next) next();
         } else {
-            instance.is_busy = false; // release
+            this.releaseInstance(instance);
         }
 
         // Log Cost/Health
@@ -280,6 +306,7 @@ export class BrowserPool {
             total: this.instances.length,
             available: this.instances.filter(i => !i.is_busy).length,
             busy: this.instances.filter(i => i.is_busy).length,
+            waiters: this.waitQueue.length,
             recycled_total: this.recycledTotal,
             errors_total: this.errorsTotal
         };

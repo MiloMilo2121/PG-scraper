@@ -214,6 +214,8 @@ export class PagineGialleHarvester {
     const $ = cheerio.load(searchHtml);
 
     const candidates: Array<{ url: string; name: string; address: string; score: number }> = [];
+
+    // Primary: CSS-based extraction (exact class names that PG uses today)
     $('.search-itm').each((_, el) => {
       const item = $(el);
       const name = item.find('.search-itm__rag').first().text().trim();
@@ -222,6 +224,7 @@ export class PagineGialleHarvester {
       const urlRaw =
         item.find('a.remove_blank_for_app').first().attr('href') ||
         item.find('.search-itm__rag a').first().attr('href') ||
+        item.find('a[href*="paginegialle.it/"]').first().attr('href') ||
         '';
       const url = (urlRaw || '').trim();
       if (!url.startsWith('https://www.paginegialle.it/') || url.includes('/ricerca/')) return;
@@ -229,6 +232,27 @@ export class PagineGialleHarvester {
       const score = scoreNameMatch(company.company_name, name);
       candidates.push({ url, name, address, score });
     });
+
+    // Fallback: regex extraction when CSS structure has changed.
+    // Match all PG company-profile hrefs (not search/ricerca URLs) from any anchor.
+    if (candidates.length === 0) {
+      Logger.warn('[PagineGialleHarvester] CSS selector returned 0 results — activating regex fallback');
+      const pgUrlPattern = /href="(https:\/\/www\.paginegialle\.it\/[^/"#?]+(?:\/[^/"#?]+)*)"/g;
+      let m: RegExpExecArray | null;
+      const seen = new Set<string>();
+      while ((m = pgUrlPattern.exec(searchHtml)) !== null) {
+        const url = m[1];
+        if (url.includes('/ricerca/') || seen.has(url)) continue;
+        seen.add(url);
+        // Try to extract the company name from nearby text via cheerio anchor lookup
+        const anchor = $(`a[href="${url}"]`).first();
+        const name = anchor.closest('[class*="itm"], [class*="card"], [class*="result"], li, article')
+          .find('h2, h3, h4, strong, [class*="rag"], [class*="name"]').first().text().trim()
+          || anchor.text().trim();
+        const score = scoreNameMatch(company.company_name, name);
+        candidates.push({ url, name, address: '', score });
+      }
+    }
 
     if (candidates.length === 0) return null;
     candidates.sort((a, b) => b.score - a.score);
@@ -271,6 +295,19 @@ export class PagineGialleHarvester {
         if (href) rawWebsiteCandidates.push(href);
       }
     });
+
+    // Fallback: scan all anchors — if none matched the CTA selector, look for any external https link
+    // that appears near "sito" or "web" keywords in text or title (structural resilience).
+    if (rawWebsiteCandidates.length === 0) {
+      $('a[href^="http"]').each((_, el) => {
+        const a = $(el);
+        const href = a.attr('href') || '';
+        const combined = ((a.attr('title') || '') + ' ' + a.text()).toLowerCase();
+        if (isLikelyOfficialWebsiteUrl(href) && (combined.includes('sito') || combined.includes('web') || combined.includes('visit'))) {
+          rawWebsiteCandidates.push(href);
+        }
+      });
+    }
 
     const officialWebsite = uniq(rawWebsiteCandidates)
       .map((u) => u.trim())

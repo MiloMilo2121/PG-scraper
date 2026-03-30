@@ -139,21 +139,21 @@ export class MasterPipeline {
                 }
             };
 
-            // STAGE 2: Email Domain Candidate
-            layersAttempted.push('STAGE_2_EMAIL_DOMAIN');
-            if (input.email_domain) {
-                const candidateUrl = `https://www.${input.email_domain}`;
-                await checkUrlWithTimeout(candidateUrl, 'EMAIL_DOMAIN');
-            }
-
-            // STAGE 3: Hyper Guesser (Direct Domain Probe)
-            if (!discoveredUrl && input.company_name_variants.length > 0) {
-                layersAttempted.push('STAGE_3_HYPER_GUESSER');
-                const baseGuess = input.company_name_variants[0].replace(/[^a-z0-9]/g, '');
-                if (baseGuess.length >= 3) {
-                    const guessUrl = `https://www.${baseGuess}.it`;
-                    await checkUrlWithTimeout(guessUrl, 'HYPER_GUESSER');
+            // STAGE 2 + 3: Email Domain & HyperGuesser run IN PARALLEL — both are cheap HEAD checks
+            {
+                const stage23: Promise<boolean>[] = [];
+                if (input.email_domain) {
+                    layersAttempted.push('STAGE_2_EMAIL_DOMAIN');
+                    stage23.push(checkUrlWithTimeout(`https://www.${input.email_domain}`, 'EMAIL_DOMAIN'));
                 }
+                if (input.company_name_variants.length > 0) {
+                    const baseGuess = input.company_name_variants[0].replace(/[^a-z0-9]/g, '');
+                    if (baseGuess.length >= 3) {
+                        layersAttempted.push('STAGE_3_HYPER_GUESSER');
+                        stage23.push(checkUrlWithTimeout(`https://www.${baseGuess}.it`, 'HYPER_GUESSER'));
+                    }
+                }
+                if (stage23.length > 0) await Promise.all(stage23);
             }
 
             // STAGE 4: SERP Company Search
@@ -163,11 +163,27 @@ export class MasterPipeline {
 
                 console.log(`[MasterPipeline] 🔎 SERP returned ${serpRes.results.length} candidates for "${input.company_name}" (providers: ${serpRes.providers_used.join(',')})`);
 
-                // Only check top 3 candidates to avoid timeout cascade
-                const topCandidates = serpRes.results.slice(0, 3);
-                for (const cand of topCandidates) {
-                    const found = await checkUrlWithTimeout(cand.url, 'SERP_COMPANY');
-                    if (found) break;
+                // Check top candidates IN PARALLEL with early-exit: whichever resolves true first wins.
+                // This slashes worst-case time from 3×8s=24s to ~8s regardless of how many fail.
+                const topCandidates = serpRes.results.slice(0, 4);
+                if (topCandidates.length > 0) {
+                    await new Promise<void>((resolve) => {
+                        let settled = 0;
+                        let found = false;
+                        for (const cand of topCandidates) {
+                            checkUrlWithTimeout(cand.url, 'SERP_COMPANY').then(result => {
+                                if (result && !found) {
+                                    found = true;
+                                    resolve();
+                                }
+                                settled++;
+                                if (settled === topCandidates.length) resolve();
+                            }).catch(() => {
+                                settled++;
+                                if (settled === topCandidates.length) resolve();
+                            });
+                        }
+                    });
                 }
 
                 // STAGE 5: SERP Registry Search
