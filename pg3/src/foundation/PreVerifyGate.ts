@@ -264,12 +264,22 @@ export class PreVerifyGate {
                     const matchedTokens = nameTokens.filter(token => siteTextLower.includes(token));
                     const matchRatio = nameTokens.length > 0 ? matchedTokens.length / nameTokens.length : 0;
 
-                    // Also check domain vs company name
-                    const domain = new URL(url).hostname.replace('www.', '').split('.')[0].toLowerCase();
-                    const nameSlug = companyName.toLowerCase().replace(/[^a-z0-9]/g, '');
-                    const domainMatchesName = nameSlug.includes(domain) || domain.includes(nameSlug.substring(0, Math.min(nameSlug.length, 8)));
+                    // Tightened domain similarity: Jaccard on character n-grams between domain and name slug.
+                    // The old prefix check (nameSlug.includes(domain) or 8-char prefix) was too loose —
+                    // rossigroup-solutions.it would pass for "Rossi SRL" because "rossi" appears in both.
+                    const domainRaw = new URL(url).hostname.replace('www.', '').replace(/\.[^.]+$/, '').toLowerCase().replace(/[-_]/g, '');
+                    const nameTokensSlug = nameTokens.map(t => t.replace(/[^a-z0-9]/g, '')).join('');
+                    // Require domain to cover at least half the name slug characters (bidirectional overlap)
+                    const overlapLen = [...domainRaw].filter(c => nameTokensSlug.includes(c)).length;
+                    const domainStrictMatch = nameTokensSlug.length > 0 &&
+                        domainRaw.length >= 4 &&
+                        (overlapLen / Math.max(domainRaw.length, nameTokensSlug.length)) >= 0.55;
 
-                    const verified = matchRatio >= 0.6 || (matchRatio >= 0.4 && domainMatchesName);
+                    // A content-clone attack copies name tokens into body but registers a fresh domain.
+                    // Require strict domain match when matchRatio is in the "medium confidence" zone.
+                    const verified = matchRatio >= 0.6
+                        ? domainStrictMatch || matchRatio >= 0.8  // High body match: still require some domain signal unless overwhelming
+                        : (matchRatio >= 0.45 && domainStrictMatch); // Low body match: only pass if domain also matches strictly
 
                     await this.ledger.log({
                         timestamp: new Date().toISOString(),
@@ -278,7 +288,7 @@ export class PreVerifyGate {
                     });
 
                     if (verified) {
-                        console.log(`[PreVerifyGate] ✅ Semantic match: ${matchedTokens.join('+')} (${(matchRatio * 100).toFixed(0)}%) for "${companyName}" on ${url}`);
+                        console.log(`[PreVerifyGate] ✅ Semantic match: ${matchedTokens.join('+')} (${(matchRatio * 100).toFixed(0)}%) domainStrictMatch=${domainStrictMatch} for "${companyName}" on ${url}`);
                     }
 
                     resolve(verified ? 'VERIFIED' : 'MISS');

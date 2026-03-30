@@ -234,9 +234,10 @@ export class PagineGialleHarvester {
     candidates.sort((a, b) => b.score - a.score);
 
     // With phone search, we accept the top candidate even if the name is slightly off.
-    // Still, if the name match is extremely weak, we return null to avoid bad extractions.
+    // Threshold raised from 0.15 → 0.35: common names (e.g. "Rossi SRL") at 0.15 are too weak
+    // to distinguish between multiple listings sharing the same phone number.
     const best = candidates[0];
-    if (best.score < 0.15 && candidates.length > 1) {
+    if (best.score < 0.35 && candidates.length > 1) {
       // If there are multiple results and we can't match by name, it's risky.
       return null;
     }

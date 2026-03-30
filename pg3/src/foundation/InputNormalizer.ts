@@ -23,8 +23,9 @@ export class InputNormalizer {
         // Encodings & Character Normalization
         const cleanString = (str: string | undefined) => {
             if (!str) return '';
-            // NFC normalization
-            let cleaned = str.normalize('NFC');
+            // NFKC normalization: decomposes compatibility characters (homoglyphs, fullwidth, etc.)
+            // before canonical recomposition — NFC alone leaves cross-script homoglyphs intact.
+            let cleaned = str.normalize('NFKC');
             // Remove BOM, Control chars, zero-width spaces
             cleaned = cleaned.replace(/[\u200B-\u200D\uFEFF]/g, '');
             // Normalize dashes

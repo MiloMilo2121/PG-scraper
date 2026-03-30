@@ -588,7 +588,23 @@ export class UnifiedDiscoveryService {
         try {
             const harvest = await PagineGialleHarvester.harvestByPhone(company);
             if (harvest?.officialWebsite) {
-                return [{ url: harvest.officialWebsite, source: 'pg_phone', confidence: 0.9 }];
+                // VAT gate: if both sides expose a VAT number, they must match.
+                // A mismatch means the PG listing belongs to a different company (poisoned directory entry).
+                const inputVat = (company.piva || company.vat_code || company.vat || '').replace(/\D/g, '');
+                const harvestVat = (harvest.vat || '').replace(/\D/g, '');
+                if (inputVat && harvestVat && inputVat !== harvestVat) {
+                    Logger.warn('[PagineGiallePhone] VAT mismatch — rejecting candidate', {
+                        inputVat, harvestVat, url: harvest.officialWebsite, company_name: company.company_name,
+                    });
+                    return null;
+                }
+                // Full VAT match → high confidence; one side missing VAT → unverified, lower confidence
+                const verified = !!(inputVat && harvestVat && inputVat === harvestVat);
+                return [{
+                    url: harvest.officialWebsite,
+                    source: verified ? 'pg_phone_vat_verified' : 'pg_phone_unverified',
+                    confidence: verified ? 0.9 : 0.65,
+                }];
             }
         } catch (e: any) {
             Logger.warn('[PagineGiallePhone] Harvest failed', { error: e, company_name: company.company_name });
