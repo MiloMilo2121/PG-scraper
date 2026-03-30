@@ -39,16 +39,17 @@ export class OracleClient {
      * @param url The target URL blocked by Cloudflare/DataDome
      * @param timeoutMs Timeout in milliseconds (default: 60000)
      */
-    static async fetchHtmlStealth(url: string, timeoutMs: number = 60000): Promise<OracleCrawlResponse> {
+    static async fetchHtmlStealth(url: string, timeoutMs: number = 60000, jsCode?: string | string[], waitFor?: string): Promise<OracleCrawlResponse> {
         const baseUrl = this.resolveBaseUrl();
 
         try {
             Logger.info(`[OracleClient] Passing ${url} to Python Oracle for stealth extraction...`);
 
-            const response = await axios.post(`${baseUrl}/extract`, {
-                url: url,
-                bypass_cache: true
-            }, {
+            const payload: any = { url, bypass_cache: true };
+            if (jsCode) payload.js_code = jsCode;
+            if (waitFor) payload.wait_for = waitFor;
+
+            const response = await axios.post(`${baseUrl}/extract`, payload, {
                 timeout: timeoutMs,
                 headers: { 'Content-Type': 'application/json' }
             });

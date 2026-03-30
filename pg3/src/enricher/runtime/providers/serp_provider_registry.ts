@@ -20,6 +20,15 @@ export function buildSerpProviderEntries(): ProviderRegistryEntry[] {
                 return runSearchProvider<T>(() => import('../../core/discovery/search_provider'), 'CrtShProvider', query);
             },
         }],
+        ['ORACLE-SERP-1', {
+            family: 'SERP',
+            costPerRequest: 0,
+            tier: 0, // Tier 0 makes it a primary absolute weapon
+            execute: async <T>(payload: any): Promise<T> => {
+                const query = typeof payload === 'string' ? payload : payload.query;
+                return runSearchProvider<T>(() => import('../../core/discovery/oracle_search_provider'), 'OracleSearchProvider', query);
+            },
+        }],
         ['SERPER-API-1', {
             family: 'SERP',
             costPerRequest: 0.001,

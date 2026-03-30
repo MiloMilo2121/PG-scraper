@@ -33,13 +33,14 @@ export class GoogleSerpAnalyzer {
         let containers = $(selector);
 
         // 2. Try hardcoded fallback selectors before resorting to LLM healer
-        if (containers.length === 0) {
+        // If we found less than 3 results, it means the registry selector might be stale or matching a sidebar element.
+        if (containers.length < 3) {
             for (const fallback of this.FALLBACK_SELECTORS) {
-                containers = $(fallback);
-                if (containers.length > 0) {
-                    Logger.info(`[GoogleSerp] Fallback selector worked: ${fallback} (${containers.length} results)`);
+                const testContainers = $(fallback);
+                if (testContainers.length > containers.length) {
+                    Logger.info(`[GoogleSerp] Fallback selector worked better: ${fallback} (${testContainers.length} results)`);
+                    containers = testContainers;
                     registry.update('google', 'result_link', fallback);
-                    break;
                 }
             }
         }
@@ -93,7 +94,11 @@ export class GoogleSerpAnalyzer {
 
             const title = $(el).find('h3').text().trim() || $(el).text().trim();
 
-            if (url && url.startsWith('http') && !url.includes('google.com/search')) {
+            if (url && url.startsWith('http') && 
+                !url.includes('google.com/search') && 
+                !url.includes('support.google.com') && 
+                !url.includes('policies.google.com') &&
+                !url.includes('accounts.google.com')) {
                 results.push({ url, title });
             }
         });
