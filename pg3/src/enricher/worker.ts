@@ -108,7 +108,7 @@ function persistSuccess(job: EnrichmentJobData, pipelineResult: any, durationMs:
             is_estimated_employees: Boolean(pipelineResult.is_estimated_employees),
             pec: pipelineResult.pec,
             email: pipelineResult.email,
-            website_validated: pipelineResult.website.url,
+            website_validated: pipelineResult.website?.url,
             decision_maker_name: pipelineResult.decision_maker?.name,
             decision_maker_role: pipelineResult.decision_maker?.role,
             decision_maker_linkedin_url: pipelineResult.decision_maker?.linkedin_url,
