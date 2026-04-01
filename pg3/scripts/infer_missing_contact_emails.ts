@@ -4,6 +4,9 @@ import * as dns from 'dns';
 import { parse } from 'csv-parse/sync';
 import { stringify } from 'csv-stringify/sync';
 
+import { HyperGuesserVXFetcher } from '../src/enricher/core/discovery/hyperguesser_vx/fetcher';
+import { selectBestSemanticCandidate } from '../src/enricher/core/discovery/hyperguesser_vx/semantic_matcher';
+import { CompanyInput } from '../src/enricher/types';
 import { DomainGuesser } from '../src/enricher/utils/domain_guesser';
 import {
   EmailInferenceResult,
@@ -16,6 +19,7 @@ type CampaignRow = Record<string, string>;
 
 interface InferredCampaignRow extends CampaignRow {
   inferred_domain: string;
+  inferred_website_url: string;
   inferred_email: string;
   inferred_email_candidates: string;
   inference_mode: string;
@@ -28,7 +32,7 @@ interface Summary {
   total_rows: number;
   rows_missing_contact_input: number;
   rows_inferred_from_website_mx: number;
-  rows_inferred_from_company_guess_mx: number;
+  rows_inferred_from_company_guess_semantic: number;
   rows_with_best_email_after_inference: number;
 }
 
@@ -50,6 +54,53 @@ function pickAnchorDomain(row: CampaignRow): string | undefined {
   }
 
   return undefined;
+}
+
+function toCompanyInput(row: CampaignRow): CompanyInput {
+  return {
+    company_name: row.company_name || row.name || '',
+    address: row.address || undefined,
+    city: row.city || undefined,
+    province: row.province || undefined,
+    phone: row.phone || undefined,
+    category: row.category || undefined,
+    vat_code: row.vat_code || undefined,
+  };
+}
+
+async function confirmGuessedWebsite(
+  row: CampaignRow,
+  domainGuesser: DomainGuesser,
+  resolveMxCached: (domain: string) => Promise<unknown[]>,
+): Promise<{ domain: string; url: string; confidence: number } | null> {
+  const company = toCompanyInput(row);
+  const guesses = domainGuesser.guessFromCompanyName(company.company_name);
+  if (!guesses.length) {
+    return null;
+  }
+
+  const uniqueGuesses = Array.from(new Set(guesses));
+  const mxChecks = await Promise.all(uniqueGuesses.map(async (domain) => ({
+    domain,
+    alive: (await resolveMxCached(domain)).length > 0,
+  })));
+  const aliveGuesses = mxChecks.filter((entry) => entry.alive).map((entry) => entry.domain);
+
+  if (!aliveGuesses.length) {
+    return null;
+  }
+
+  const fetchedCandidates = await HyperGuesserVXFetcher.fetchBatch(aliveGuesses, Math.min(5, aliveGuesses.length));
+  const match = selectBestSemanticCandidate(company, fetchedCandidates, 0.72);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    domain: match.domain,
+    url: match.selected_url,
+    confidence: match.confidence,
+  };
 }
 
 async function main(): Promise<void> {
@@ -89,7 +140,7 @@ async function main(): Promise<void> {
   const enriched: InferredCampaignRow[] = [];
   let rowsMissingContactInput = 0;
   let rowsInferredFromWebsiteMx = 0;
-  let rowsInferredFromCompanyGuessMx = 0;
+  let rowsInferredFromCompanyGuessSemantic = 0;
 
   for (const row of rows) {
     const confirmedEmail = (row.final_email || '').trim().toLowerCase();
@@ -110,22 +161,26 @@ async function main(): Promise<void> {
       }
 
       if (!inference && !anchorDomain && allowCompanyGuess) {
-        const guessedDomain = await domainGuesser.guessAndVerify(row.company_name || row.name || '');
-        if (guessedDomain) {
+        const guessedWebsite = await confirmGuessedWebsite(row, domainGuesser, resolveMxCached);
+        if (guessedWebsite) {
           inference = await inferEmailFromDomain(
             row.company_name || row.name || '',
-            guessedDomain,
-            'company_guess_mx',
+            guessedWebsite.domain,
+            'company_guess_semantic',
             resolveMxCached,
           );
+          if (inference) {
+            inference.websiteUrl = guessedWebsite.url;
+            inference.confidence = Math.max(inference.confidence, guessedWebsite.confidence * 0.75);
+          }
         }
       }
     }
 
     if (inference?.mode === 'website_mx') {
       rowsInferredFromWebsiteMx += 1;
-    } else if (inference?.mode === 'company_guess_mx') {
-      rowsInferredFromCompanyGuessMx += 1;
+    } else if (inference?.mode === 'company_guess_semantic') {
+      rowsInferredFromCompanyGuessSemantic += 1;
     }
 
     const bestEmail = confirmedEmail || inference?.inferredEmail || '';
@@ -136,6 +191,7 @@ async function main(): Promise<void> {
     enriched.push({
       ...row,
       inferred_domain: inference?.domain || '',
+      inferred_website_url: inference?.websiteUrl || '',
       inferred_email: inference?.inferredEmail || '',
       inferred_email_candidates: inference?.candidates.join('|') || '',
       inference_mode: inference?.mode || '',
@@ -149,7 +205,7 @@ async function main(): Promise<void> {
     total_rows: rows.length,
     rows_missing_contact_input: rowsMissingContactInput,
     rows_inferred_from_website_mx: rowsInferredFromWebsiteMx,
-    rows_inferred_from_company_guess_mx: rowsInferredFromCompanyGuessMx,
+    rows_inferred_from_company_guess_semantic: rowsInferredFromCompanyGuessSemantic,
     rows_with_best_email_after_inference: enriched.filter((row) => row.best_email).length,
   };
 

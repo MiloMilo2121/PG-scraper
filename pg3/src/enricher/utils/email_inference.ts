@@ -2,8 +2,9 @@ export interface EmailInferenceResult {
     domain: string;
     candidates: string[];
     inferredEmail: string;
-    mode: 'website_mx' | 'company_guess_mx';
+    mode: 'website_mx' | 'company_guess_semantic';
     confidence: number;
+    websiteUrl?: string;
 }
 
 const DOMAIN_DENYLIST = new Set([
@@ -112,7 +113,7 @@ export function buildGenericEmailCandidates(companyName: string, domain: string)
 export async function inferEmailFromDomain(
     companyName: string,
     domain: string,
-    mode: 'website_mx' | 'company_guess_mx',
+    mode: 'website_mx' | 'company_guess_semantic',
     resolveMx: (domain: string) => Promise<unknown[]>,
 ): Promise<EmailInferenceResult | null> {
     const normalizedDomain = domain.trim().toLowerCase();
@@ -139,6 +140,6 @@ export async function inferEmailFromDomain(
         candidates,
         inferredEmail: candidates[0],
         mode,
-        confidence: mode === 'website_mx' ? 0.45 : 0.35,
+        confidence: mode === 'website_mx' ? 0.45 : 0.6,
     };
 }

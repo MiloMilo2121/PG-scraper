@@ -3,7 +3,7 @@ import { ModelRouter, TaskDifficulty } from '../../ai/model_router';
 import { FetchedCandidate } from './fetcher';
 import { CompanyInput } from '../../../types';
 import { Logger } from '../../../utils/logger';
-import { ContentFilter } from '../content_filter';
+import { selectBestSemanticCandidate } from './semantic_matcher';
 
 export interface TriageResult {
     selected_url: string | null;
@@ -70,94 +70,16 @@ export class HyperGuesserVXValidator {
     }
 
     private static selectDeterministicCandidate(company: CompanyInput, candidates: FetchedCandidate[]): TriageResult | null {
-        const scored = candidates
-            .map((candidate) => ({
-                candidate,
-                score: this.scoreCandidate(company, candidate),
-            }))
-            .sort((left, right) => right.score - left.score);
-
-        const best = scored[0];
-        if (!best || best.score < 0.72) {
+        const best = selectBestSemanticCandidate(company, candidates, 0.72);
+        if (!best) {
             return null;
         }
 
         return {
-            selected_url: best.candidate.url,
-            confidence: Number(Math.min(0.89, best.score).toFixed(2)),
-            reason: 'Deterministic fallback selected the strongest domain/title/company match.',
+            selected_url: best.selected_url,
+            confidence: best.confidence,
+            reason: best.reason,
         };
-    }
-
-    private static scoreCandidate(company: CompanyInput, candidate: FetchedCandidate): number {
-        const title = (candidate.title || '').toLowerCase();
-        const body = (candidate.text || '').toLowerCase();
-        const companyTokens = this.companyTokens(company.company_name || '');
-        const compactVariants = this.companyCompactVariants(company.company_name || '');
-
-        const titleMatches = companyTokens.filter((token) => title.includes(token));
-        const bodyMatches = companyTokens.filter((token) => body.includes(token));
-
-        let score = 0;
-
-        if (companyTokens.length > 0) {
-            score += (titleMatches.length / companyTokens.length) * 0.45;
-            score += (bodyMatches.length / companyTokens.length) * 0.25;
-        }
-
-        let domainSlug = '';
-        try {
-            domainSlug = new URL(candidate.url).hostname.replace(/^www\./i, '').split('.')[0].toLowerCase();
-        } catch {
-            domainSlug = '';
-        }
-
-        if (compactVariants.some((variant) => domainSlug === variant)) {
-            score += 0.30;
-        } else if (compactVariants.some((variant) => domainSlug.includes(variant) || variant.includes(domainSlug))) {
-            score += 0.18;
-        }
-
-        const locationSignals = [company.city, company.province]
-            .filter(Boolean)
-            .map((value) => (value || '').toLowerCase());
-        if (locationSignals.some((signal) => signal && (title.includes(signal) || body.includes(signal)))) {
-            score += 0.10;
-        }
-
-        if (ContentFilter.isDirectoryOrSocial(candidate.url)) {
-            score -= 0.60;
-        }
-        if (ContentFilter.isDirectoryLikeTitle(candidate.title || '')) {
-            score -= 0.20;
-        }
-
-        return Math.max(0, score);
-    }
-
-    private static companyTokens(companyName: string): string[] {
-        return Array.from(new Set(
-            companyName
-                .toLowerCase()
-                .replace(/s\.?r\.?l\.?s?|s\.?p\.?a\.?|s\.?n\.?c\.?|s\.?a\.?s\.?|societa'?|unipersonale|in liquidazione/gi, ' ')
-                .replace(/[^a-z0-9\s]/g, ' ')
-                .split(/\s+/)
-                .filter((token) => token.length >= 4)
-        ));
-    }
-
-    private static companyCompactVariants(companyName: string): string[] {
-        const normalized = companyName
-            .toLowerCase()
-            .replace(/s\.?r\.?l\.?s?|s\.?p\.?a\.?|s\.?n\.?c\.?|s\.?a\.?s\.?|societa'?|unipersonale|in liquidazione/gi, ' ')
-            .replace(/[^a-z0-9\s]/g, ' ')
-            .trim();
-
-        const compact = normalized.replace(/\s+/g, '');
-        const tokens = normalized.split(/\s+/).filter((token) => token.length >= 4);
-        const firstTwo = tokens.slice(0, 2).join('');
-
-        return Array.from(new Set([compact, firstTwo].filter((variant) => variant.length >= 4)));
     }
 
     private static buildPrompt(comp: CompanyInput, candidates: FetchedCandidate[]): string {
