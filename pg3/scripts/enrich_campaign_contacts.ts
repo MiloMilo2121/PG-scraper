@@ -46,6 +46,16 @@ const WEBSITE_HOST_DENYLIST = new Set([
   'maps.google.com',
   'google.com',
   'paginegialle.it',
+  'facebook.com',
+  'm.facebook.com',
+  'instagram.com',
+  'linkedin.com',
+  'casa.it',
+  'immobiliare.it',
+  'idealista.it',
+  'wikicasa.it',
+  'subito.it',
+  'bakeca.it',
 ]);
 
 function parseArg(flag: string): string | undefined {
