@@ -23,14 +23,41 @@ export class PecHunter {
         '/impressum',
     ];
     private static readonly roleWeights: Record<string, number> = {
+        agenzia: 6,
         amministrazione: 5,
         commerciale: 5,
+        contatto: 4,
+        contact: 4,
+        immobiliare: 4,
         sales: 4,
+        studio: 4,
         contatti: 3,
         office: 3,
         hello: 2,
         info: 1,
     };
+    private static readonly softPenaltyPrefixes = [
+        'dpo',
+        'privacy',
+        'gdpr',
+        'legal',
+        'compliance',
+        'segnalazioni',
+        'webmaster',
+    ];
+    private static readonly hardRejectLocalPatterns = [
+        'noreply',
+        'no-reply',
+        'mailer-daemon',
+        'postmaster',
+        'hostmaster',
+        'cpanel_notice',
+        'cpanel',
+        'autodiscover',
+        'wordpress',
+        'bounce',
+        'do-not-reply',
+    ];
 
     // Pattern to match common Italian PEC domains
     private static pecRegex = /[a-zA-Z0-9.\-_+]+@(?:pec|legalmail|cert|sicurezzapostale|telecompost|postecert)[a-zA-Z0-9.\-_]*\.[a-zA-Z]{2,}/gi;
@@ -151,21 +178,29 @@ export class PecHunter {
 
     private static prioritizeEmails(candidates: string[], rootUrl: string): { pec: string | null; email: string | null } {
         const rootHost = PecHunter.getHostname(rootUrl);
+        const rootDomain = PecHunter.getRegistrableDomain(rootHost);
         const pecCandidates = candidates.filter((candidate) => PecHunter.isPecEmail(candidate));
         const standardCandidates = candidates.filter((candidate) => !pecCandidates.includes(candidate));
 
         const rank = (candidate: string): number => {
             const [local = '', domain = ''] = candidate.split('@');
+            const domainHost = domain.toLowerCase();
+            const domainRoot = PecHunter.getRegistrableDomain(domainHost);
             let score = 0;
-            if (rootHost && domain.includes(rootHost)) score += 5;
+            if (rootDomain && domainRoot === rootDomain) {
+                score += 12;
+            } else if (rootHost && (domainHost === rootHost || rootHost.endsWith(`.${domainHost}`) || domainHost.endsWith(`.${rootHost}`))) {
+                score += 8;
+            }
             for (const [prefix, weight] of Object.entries(PecHunter.roleWeights)) {
                 if (local.startsWith(prefix)) {
                     score += weight;
                     break;
                 }
             }
-            if (local.includes('noreply') || local.includes('no-reply')) score -= 10;
-            if (candidate.includes('sentry')) score -= 10;
+            if (PecHunter.softPenaltyPrefixes.some((prefix) => local.startsWith(prefix))) score -= 6;
+            if (local.includes('noreply') || local.includes('no-reply')) score -= 12;
+            if (candidate.includes('sentry')) score -= 12;
             return score;
         };
 
@@ -226,6 +261,10 @@ export class PecHunter {
         if (candidate.includes('sentry')) {
             return false;
         }
+        const [local = ''] = candidate.split('@');
+        if (PecHunter.hardRejectLocalPatterns.some((pattern) => local.includes(pattern))) {
+            return false;
+        }
         return true;
     }
 
@@ -239,5 +278,20 @@ export class PecHunter {
         } catch {
             return '';
         }
+    }
+
+    private static getRegistrableDomain(host: string): string {
+        const cleaned = host.replace(/^www\./, '').toLowerCase();
+        const parts = cleaned.split('.').filter(Boolean);
+        if (parts.length <= 2) {
+            return cleaned;
+        }
+
+        const last = parts[parts.length - 1];
+        const secondLast = parts[parts.length - 2];
+        const useThreePartSuffix = last.length === 2 && secondLast.length <= 3;
+        return useThreePartSuffix
+            ? parts.slice(-3).join('.')
+            : parts.slice(-2).join('.');
     }
 }

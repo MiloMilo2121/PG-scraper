@@ -58,6 +58,23 @@ const WEBSITE_HOST_DENYLIST = new Set([
   'bakeca.it',
 ]);
 
+const EMAIL_ROLE_WEIGHTS: Record<string, number> = {
+  agenzia: 6,
+  amministrazione: 5,
+  commerciale: 5,
+  contatto: 4,
+  contact: 4,
+  immobiliare: 4,
+  sales: 4,
+  studio: 4,
+  contatti: 3,
+  office: 3,
+  hello: 2,
+  info: 1,
+};
+
+const EMAIL_SOFT_PENALTIES = ['dpo', 'privacy', 'gdpr', 'legal', 'compliance', 'segnalazioni', 'webmaster'];
+
 function parseArg(flag: string): string | undefined {
   const match = process.argv.slice(2).find((arg) => arg.startsWith(`${flag}=`));
   return match?.slice(flag.length + 1);
@@ -112,6 +129,64 @@ function uniqueDefined(values: Array<string | undefined>): string[] {
   }
 
   return out;
+}
+
+function getHostname(value: string | undefined): string {
+  try {
+    if (!value) {
+      return '';
+    }
+    return new URL(value).hostname.replace(/^www\./, '').toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function getRegistrableDomain(host: string): string {
+  const cleaned = host.replace(/^www\./, '').toLowerCase();
+  const parts = cleaned.split('.').filter(Boolean);
+  if (parts.length <= 2) {
+    return cleaned;
+  }
+
+  const last = parts[parts.length - 1];
+  const secondLast = parts[parts.length - 2];
+  const useThreePartSuffix = last.length === 2 && secondLast.length <= 3;
+  return useThreePartSuffix
+    ? parts.slice(-3).join('.')
+    : parts.slice(-2).join('.');
+}
+
+function scoreContactEmail(email: string, website: string | undefined): number {
+  const normalized = (email || '').trim().toLowerCase();
+  if (!normalized || !normalized.includes('@')) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  const [local = '', domain = ''] = normalized.split('@');
+  const websiteHost = getHostname(website);
+  const websiteDomain = getRegistrableDomain(websiteHost);
+  const emailDomain = getRegistrableDomain(domain);
+  let score = 0;
+
+  if (websiteDomain && emailDomain === websiteDomain) {
+    score += 12;
+  } else if (websiteHost && (domain === websiteHost || websiteHost.endsWith(`.${domain}`) || domain.endsWith(`.${websiteHost}`))) {
+    score += 8;
+  }
+
+  for (const [prefix, weight] of Object.entries(EMAIL_ROLE_WEIGHTS)) {
+    if (local.startsWith(prefix)) {
+      score += weight;
+      break;
+    }
+  }
+
+  if (EMAIL_SOFT_PENALTIES.some((prefix) => local.startsWith(prefix))) {
+    score -= 6;
+  }
+
+  return score;
 }
 
 function toCompanyInput(row: CampaignRow): CompanyInput {
@@ -175,7 +250,11 @@ async function enrichRow(
     }
   }
 
-  const finalEmail = siteEmail || pgEmail || '';
+  const siteEmailScore = scoreContactEmail(siteEmail, websiteUsed || pgWebsite || inputWebsite);
+  const pgEmailScore = scoreContactEmail(pgEmail, pgWebsite || inputWebsite || websiteUsed);
+  const finalEmail = siteEmail && (!pgEmail || siteEmailScore >= pgEmailScore)
+    ? siteEmail
+    : pgEmail || '';
   const finalPec = sitePec || '';
   const contactSource = siteEmail || sitePec
     ? 'website'
