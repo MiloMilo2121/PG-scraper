@@ -13,6 +13,7 @@ import {
   getHostname,
   getRegistrableDomain,
   inferEmailFromDomain,
+  pickEmailDomainForConfirmedWebsite,
 } from '../src/enricher/utils/email_inference';
 
 type CampaignRow = Record<string, string>;
@@ -97,7 +98,7 @@ async function confirmGuessedWebsite(
   }
 
   return {
-    domain: match.domain,
+    domain: pickEmailDomainForConfirmedWebsite(match.selected_url, match.domain),
     url: match.selected_url,
     confidence: match.confidence,
   };

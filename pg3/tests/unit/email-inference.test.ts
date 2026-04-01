@@ -5,6 +5,7 @@ import {
     getRegistrableDomain,
     inferEmailFromDomain,
     isInferenceSafeDomain,
+    pickEmailDomainForConfirmedWebsite,
 } from '../../src/enricher/utils/email_inference';
 
 describe('email_inference', () => {
@@ -47,5 +48,11 @@ describe('email_inference', () => {
         );
 
         expect(result).toBeNull();
+    });
+
+    it('uses the final confirmed website domain when a guessed domain redirects elsewhere', () => {
+        expect(
+            pickEmailDomainForConfirmedWebsite('https://latorrehotel.it/', 'latorre.com'),
+        ).toBe('latorrehotel.it');
     });
 });

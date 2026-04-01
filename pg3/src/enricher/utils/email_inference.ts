@@ -76,6 +76,12 @@ export function isInferenceSafeDomain(domain: string): boolean {
     return !DOMAIN_DENYLIST.has(domain.toLowerCase());
 }
 
+export function pickEmailDomainForConfirmedWebsite(selectedUrl: string | undefined, fallbackDomain: string): string {
+    const selectedHost = getHostname(selectedUrl);
+    const selectedDomain = getRegistrableDomain(selectedHost);
+    return (selectedDomain || fallbackDomain || '').trim().toLowerCase();
+}
+
 export function normalizeCompanyName(value: string): string {
     return value
         .toLowerCase()
