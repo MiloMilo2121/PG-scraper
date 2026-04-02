@@ -30,9 +30,12 @@ const EnvSchema = z.object({
 
   // 🤖 AI / LLM
   OPENAI_API_KEY: CommaSeparatedString.optional(),
+  OPENROUTER_API_KEY: CommaSeparatedString.optional(),
   Z_AI_API_KEY: CommaSeparatedString.optional(),
   DEEPSEEK_API_KEY: CommaSeparatedString.optional(),
   KIMI_API_KEY: CommaSeparatedString.optional(),
+  EXA_API_KEY: CommaSeparatedString.optional(),
+  FIRECRAWL_API_KEY: CommaSeparatedString.optional(),
   LLM_MODEL: z.string().optional(),
   LLM_MODEL_FAST: z.string().optional(),
   LLM_MODEL_SMART: z.string().optional(),
@@ -219,6 +222,11 @@ export const config = {
   llm: {
     apiKey: env.OPENAI_API_KEY?.[0],
     apiKeys: env.OPENAI_API_KEY || [],
+    openrouter: {
+      apiKey: env.OPENROUTER_API_KEY?.[0],
+      apiKeys: env.OPENROUTER_API_KEY || [],
+      baseUrl: 'https://openrouter.ai/api/v1',
+    },
     z_ai: {
       apiKey: env.Z_AI_API_KEY?.[0],
       apiKeys: env.Z_AI_API_KEY || [],
@@ -262,6 +270,18 @@ export const config = {
       'kimi-k2-thinking': { inputPer1M: 0.60, outputPer1M: 2.50 },
       'moonshot-v1-8k': { inputPer1M: 0.20, outputPer1M: 2.00 }, // LEGACY — avoid
     } as Record<string, { inputPer1M: number; outputPer1M: number }>,
+  },
+  search: {
+    exa: {
+      apiKey: env.EXA_API_KEY?.[0],
+      apiKeys: env.EXA_API_KEY || [],
+      baseUrl: 'https://api.exa.ai',
+    },
+    firecrawl: {
+      apiKey: env.FIRECRAWL_API_KEY?.[0],
+      apiKeys: env.FIRECRAWL_API_KEY || [],
+      baseUrl: 'https://api.firecrawl.dev/v2',
+    },
   },
   google: {
     streetViewKey: env.GOOGLE_STREET_VIEW_KEY,

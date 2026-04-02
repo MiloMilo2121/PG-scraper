@@ -4,9 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const ORIGINAL_ENV = { ...process.env };
 const RESET_KEYS = [
   'OPENAI_API_KEY',
+  'OPENROUTER_API_KEY',
   'Z_AI_API_KEY',
   'DEEPSEEK_API_KEY',
   'KIMI_API_KEY',
+  'EXA_API_KEY',
+  'FIRECRAWL_API_KEY',
   'LLM_MODEL',
   'LLM_MODEL_FAST',
   'LLM_MODEL_SMART',
@@ -80,5 +83,18 @@ describe('config defaults', () => {
     expect(config.budget.maxCostPerCompanyEur).toBe(0.01);
     expect(config.costing.localBrowserNavCostEur).toBe(0);
     expect(config.costing.localOracleFetchCostEur).toBe(0);
+  });
+
+  it('surfaces optional provider credentials for exa, firecrawl and openrouter', async () => {
+    const config = await loadConfig({
+      OPENAI_API_KEY: 'test-openai-key',
+      OPENROUTER_API_KEY: 'sk-or-v1-test',
+      EXA_API_KEY: 'exa-test-key',
+      FIRECRAWL_API_KEY: 'fc-test-key',
+    });
+
+    expect(config.llm.openrouter.apiKey).toBe('sk-or-v1-test');
+    expect(config.search.exa.apiKey).toBe('exa-test-key');
+    expect(config.search.firecrawl.apiKey).toBe('fc-test-key');
   });
 });

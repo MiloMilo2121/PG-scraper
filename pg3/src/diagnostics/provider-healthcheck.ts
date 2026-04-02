@@ -10,6 +10,14 @@ interface ProviderTest {
     test: () => Promise<{ ok: boolean; detail: string }>;
 }
 
+function isMissingOrPlaceholder(raw: string | undefined): boolean {
+    if (!raw) return true;
+    const trimmed = raw.trim();
+    if (!trimmed) return true;
+    const placeholders = ['your-', 'xxx', 'placeholder', 'insert-', 'change-me', 'sk-your-'];
+    return placeholders.some((token) => trimmed.toLowerCase().includes(token));
+}
+
 // ═══════════════════════════════════════════
 // VALIDAZIONE PRE-VOLO DI OGNI SINGOLA KEY
 // ═══════════════════════════════════════════
@@ -170,6 +178,39 @@ const providers: ProviderTest[] = [
         }
     },
 
+    {
+        name: 'Exa Search',
+        tier: 2,
+        envKey: 'EXA_API_KEY',
+        test: async () => {
+            const key = process.env.EXA_API_KEY;
+            if (isMissingOrPlaceholder(key)) {
+                return { ok: false, detail: 'Key mancante o placeholder' };
+            }
+            try {
+                const res = await fetch('https://api.exa.ai/search', {
+                    method: 'POST',
+                    signal: AbortSignal.timeout(15000),
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': key!.trim(),
+                    },
+                    body: JSON.stringify({
+                        query: 'agenzie immobiliari milano',
+                        numResults: 2,
+                        type: 'keyword',
+                    }),
+                });
+                if (res.status === 401 || res.status === 403) return { ok: false, detail: `HTTP ${res.status}: Key invalida` };
+                if (res.status === 429) return { ok: true, detail: 'HTTP 429: Key valida ma rate-limited' };
+                const data = await res.json().catch(() => ({} as any));
+                return { ok: res.ok, detail: `HTTP ${res.status}, ${data.results?.length || 0} results` };
+            } catch (e: any) {
+                return { ok: false, detail: `Error: ${e.message}` };
+            }
+        }
+    },
+
     // ─── TIER 2: CHEAP API ───
     {
         name: 'Serper.dev',
@@ -280,6 +321,38 @@ const providers: ProviderTest[] = [
         }
     },
 
+    {
+        name: 'Firecrawl Search',
+        tier: 2,
+        envKey: 'FIRECRAWL_API_KEY',
+        test: async () => {
+            const key = process.env.FIRECRAWL_API_KEY;
+            if (isMissingOrPlaceholder(key)) {
+                return { ok: false, detail: 'Key mancante o placeholder' };
+            }
+            try {
+                const res = await fetch('https://api.firecrawl.dev/v2/search', {
+                    method: 'POST',
+                    signal: AbortSignal.timeout(15000),
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${key!.trim()}`,
+                    },
+                    body: JSON.stringify({
+                        query: 'agenzie immobiliari milano',
+                        limit: 2,
+                    }),
+                });
+                if (res.status === 401 || res.status === 403) return { ok: false, detail: `HTTP ${res.status}: Key invalida` };
+                if (res.status === 429) return { ok: true, detail: 'HTTP 429: Key valida ma rate-limited' };
+                const data = await res.json().catch(() => ({} as any));
+                return { ok: res.ok, detail: `HTTP ${res.status}, ${data.data?.length || data.results?.length || 0} results` };
+            } catch (e: any) {
+                return { ok: false, detail: `Error: ${e.message}` };
+            }
+        }
+    },
+
     // ─── TIER 3: EXPENSIVE ───
     {
         name: 'OpenAI (gpt-4o-mini)',
@@ -332,6 +405,29 @@ const providers: ProviderTest[] = [
             }
         }
     },
+    {
+        name: 'OpenRouter',
+        tier: 3,
+        envKey: 'OPENROUTER_API_KEY',
+        test: async () => {
+            const key = process.env.OPENROUTER_API_KEY;
+            if (isMissingOrPlaceholder(key)) {
+                return { ok: false, detail: 'Key mancante o placeholder' };
+            }
+            try {
+                const res = await fetch('https://openrouter.ai/api/v1/models', {
+                    signal: AbortSignal.timeout(15000),
+                    headers: { 'Authorization': `Bearer ${key!.trim()}` },
+                });
+                if (res.status === 401 || res.status === 403) return { ok: false, detail: `HTTP ${res.status}: Key invalida` };
+                if (res.status === 429) return { ok: true, detail: 'HTTP 429: Key valida ma rate-limited' };
+                const data = await res.json().catch(() => ({} as any));
+                return { ok: res.ok, detail: `HTTP ${res.status}, ${data.data?.length || 0} models` };
+            } catch (e: any) {
+                return { ok: false, detail: `Error: ${e.message}` };
+            }
+        }
+    },
 ];
 
 // ═══════════════════════════════════════════
@@ -345,7 +441,7 @@ function validateEnvKeys() {
 
     const keysToCheck = [
         'SERPER_API_KEY', 'BRAVE_SEARCH_API_KEY', 'TAVILY_API_KEY', 'JINA_API_KEY', 'DEEPSEEK_API_KEY', 'KIMI_API_KEY',
-        'OPENAI_API_KEY', 'PERPLEXITY_API_KEY', 'SCRAPE_DO_TOKEN',
+        'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'PERPLEXITY_API_KEY', 'EXA_API_KEY', 'FIRECRAWL_API_KEY', 'SCRAPE_DO_TOKEN',
     ];
 
     let issues = 0;
@@ -391,7 +487,6 @@ function validateEnvKeys() {
 
         if (problems.length > 0) {
             console.log(`  ⚠️  ${envKey}: ${problems.join(' | ')}`);
-            console.log(`     Valore raw: "${raw.substring(0, 30)}${raw.length > 30 ? '...' : ''}"`);
             issues++;
         } else {
             console.log(`  ✅ ${envKey}: Formato OK (${raw.trim().length} chars, no spazi, no placeholder)`);
