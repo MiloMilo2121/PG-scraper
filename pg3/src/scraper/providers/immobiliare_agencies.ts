@@ -1,6 +1,9 @@
 import { Browser, Page } from 'playwright';
 import { CompanyInput } from '../types';
 import { Logger } from '../utils/logger';
+import {
+    extractImmobiliareAgencyDetails,
+} from './immobiliare_agencies_selectors';
 
 const IMMOBILIARE_BASE_URL = 'https://www.immobiliare.it';
 const DEFAULT_MAX_PAGES = 80;
@@ -111,7 +114,7 @@ export class ImmobiliareAgenciesProvider {
 
                     seenUrls.add(item.immobiliare_url);
                     const normalizedAddress = normalizeAddressMatch(item.address);
-                    results.push({
+                    let record: CompanyInput = {
                         company_name: item.company_name,
                         address: normalizedAddress.address,
                         zip_code: normalizedAddress.zip_code,
@@ -126,7 +129,34 @@ export class ImmobiliareAgenciesProvider {
                         association_badge: item.association_badge,
                         listing_quality: item.listing_quality,
                         listings_in_area: item.listings_in_area,
-                    });
+                    };
+
+                    if (options.includeDetails !== false && item.immobiliare_url) {
+                        try {
+                            await page.goto(item.immobiliare_url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                            await page.waitForTimeout(NAVIGATION_DELAY_MS);
+
+                            const title = await page.title().catch(() => '');
+                            const bodyText = await page.locator('body').innerText().catch(() => '');
+                            const html = await page.content().catch(() => '');
+                            if (!detectImmobiliareChallenge(title, bodyText, html)) {
+                                const detailed = extractImmobiliareAgencyDetails(html, page.url(), record);
+                                record = {
+                                    ...record,
+                                    ...detailed,
+                                    company_name: detailed.company_name || record.company_name,
+                                    city: detailed.city || record.city,
+                                    province: detailed.province || record.province,
+                                    source: 'Immobiliare',
+                                    immobiliare_url: item.immobiliare_url,
+                                };
+                            }
+                        } catch (detailError) {
+                            Logger.warn(`[Immobiliare] Detail fetch failed for ${item.immobiliare_url}: ${(detailError as Error).message}`);
+                        }
+                    }
+
+                    results.push(record);
                 }
 
                 const totalPages = await this.extractTotalPages(page);
