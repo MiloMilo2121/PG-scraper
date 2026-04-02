@@ -13,6 +13,7 @@ describe('generate_campaign_v2 CLI', () => {
     expect(parsed.provinceCodes).toEqual(['MI', 'LO']);
     expect(parsed.limit).toBe(100);
     expect(parsed.resume).toBe(false);
+    expect(parsed.includeImmobiliare).toBe(false);
   });
 
   it('resolves full province names and keeps resume/checkpoint flags', () => {
@@ -27,6 +28,17 @@ describe('generate_campaign_v2 CLI', () => {
     expect(parsed.resume).toBe(true);
     expect(parsed.checkpointFile).toBe('/tmp/custom_checkpoint.csv');
     expect(parsed.limit).toBeUndefined();
+    expect(parsed.includeImmobiliare).toBe(false);
+  });
+
+  it('enables the optional immobiliare lane only when requested', () => {
+    const parsed = parseCLIArgs([
+      '--query=Agenzie immobiliari',
+      '--provinces=MI',
+      '--include-immobiliare',
+    ]);
+
+    expect(parsed.includeImmobiliare).toBe(true);
   });
 
   it('throws on invalid limit values', () => {

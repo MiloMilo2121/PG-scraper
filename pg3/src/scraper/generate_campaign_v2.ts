@@ -34,6 +34,7 @@ import { Mutex } from 'async-mutex';
 import { Deduplicator } from './utils/deduplicator';
 import { CompanyInput } from './types';
 import { MapsGridProvider } from './providers/maps_grid_provider';
+import { ImmobiliareAgencyProvider } from './providers/immobiliare_agencies';
 import { MunicipalitySplitter } from './ai/municipality_splitter';
 import { CategoryMatcher } from './ai/category_matcher';
 import { CaptchaSolver } from '../shared-runtime/security/CaptchaSolver';
@@ -211,6 +212,36 @@ function sanitizeCompanyBatch(companies: CompanyInput[]): CompanyInput[] {
     return sanitized;
 }
 
+const BASE_CAMPAIGN_HEADERS = [
+    { id: 'company_name', title: 'company_name' },
+    { id: 'city', title: 'city' },
+    { id: 'province', title: 'province' },
+    { id: 'zip_code', title: 'zip_code' },
+    { id: 'region', title: 'region' },
+    { id: 'address', title: 'address' },
+    { id: 'phone', title: 'phone' },
+    { id: 'website', title: 'website' },
+    { id: 'category', title: 'category' },
+    { id: 'source', title: 'source' },
+    { id: 'vat_code', title: 'vat_code' },
+    { id: 'pg_url', title: 'pg_url' },
+];
+
+const IMMOBILIARE_CAMPAIGN_HEADERS = [
+    { id: 'immobiliare_url', title: 'immobiliare_url' },
+    { id: 'portal_association', title: 'portal_association' },
+    { id: 'portal_years_on_immobiliare', title: 'portal_years_on_immobiliare' },
+    { id: 'portal_quality_score', title: 'portal_quality_score' },
+    { id: 'portal_announcements', title: 'portal_announcements' },
+    { id: 'portal_description', title: 'portal_description' },
+];
+
+function buildCampaignHeaders(includeImmobiliare: boolean) {
+    return includeImmobiliare
+        ? [...BASE_CAMPAIGN_HEADERS, ...IMMOBILIARE_CAMPAIGN_HEADERS]
+        : BASE_CAMPAIGN_HEADERS;
+}
+
 // ─── TYPES ───────────────────────────────────────────────────────────────────
 interface ScrapeTarget {
     category: string;
@@ -227,6 +258,7 @@ export interface CampaignCliOptions {
     resume: boolean;
     checkpointFile: string;
     limit?: number;
+    includeImmobiliare: boolean;
 }
 
 export function parseCLIArgs(args: string[]): CampaignCliOptions {
@@ -236,6 +268,7 @@ export function parseCLIArgs(args: string[]): CampaignCliOptions {
     const resume = args.includes('--resume');
     const checkpointArg = args.find(a => a.startsWith('--checkpoint-file='))?.split('=').slice(1).join('=');
     const limitArg = args.find(a => a.startsWith('--limit='))?.split('=').slice(1).join('=');
+    const includeImmobiliare = args.includes('--include-immobiliare');
 
     if (!queryArg || !provincesArg) {
         throw new Error('Missing required --query or --provinces argument');
@@ -267,14 +300,14 @@ export function parseCLIArgs(args: string[]): CampaignCliOptions {
 
     const checkpointFile = checkpointArg?.trim() || path.join(OUTPUT_DIR, 'campaign_INTERIM_CHECKPOINT.csv');
 
-    return { query: queryArg.trim(), provinceCodes, resume, checkpointFile, limit };
+    return { query: queryArg.trim(), provinceCodes, resume, checkpointFile, limit, includeImmobiliare };
 }
 
 function parseCLI(): CampaignCliOptions {
     try {
         return parseCLIArgs(process.argv.slice(2));
     } catch (error) {
-        console.error('Usage: npx ts-node src/scraper/generate_campaign_v2.ts --query="manifattura" --provinces="LO,MI,BS" [--limit=100] [--resume] [--checkpoint-file="output/campaigns/campaign_INTERIM_CHECKPOINT.csv"]');
+        console.error('Usage: npx ts-node src/scraper/generate_campaign_v2.ts --query="manifattura" --provinces="LO,MI,BS" [--limit=100] [--resume] [--checkpoint-file="output/campaigns/campaign_INTERIM_CHECKPOINT.csv"] [--include-immobiliare]');
         console.error(`Error: ${(error as Error).message}`);
         process.exit(1);
     }
@@ -397,7 +430,7 @@ async function closeSession(session: BrowserSession | null): Promise<void> {
     activeSessions = Math.max(0, activeSessions - 1);
 }
 
-async function flushInterimCheckpoint(interimFile: string, dedup: Deduplicator): Promise<void> {
+async function flushInterimCheckpoint(interimFile: string, dedup: Deduplicator, includeImmobiliare: boolean): Promise<void> {
     const interimList = dedup.getAll();
     if (interimList.length === 0) {
         return;
@@ -406,20 +439,7 @@ async function flushInterimCheckpoint(interimFile: string, dedup: Deduplicator):
     await checkpointMutex.runExclusive(async () => {
         const interimWriter = createObjectCsvWriter({
             path: interimFile,
-            header: [
-                { id: 'company_name', title: 'company_name' },
-                { id: 'city', title: 'city' },
-                { id: 'province', title: 'province' },
-                { id: 'zip_code', title: 'zip_code' },
-                { id: 'region', title: 'region' },
-                { id: 'address', title: 'address' },
-                { id: 'phone', title: 'phone' },
-                { id: 'website', title: 'website' },
-                { id: 'category', title: 'category' },
-                { id: 'source', title: 'source' },
-                { id: 'vat_code', title: 'vat_code' },
-                { id: 'pg_url', title: 'pg_url' },
-            ]
+            header: buildCampaignHeaders(includeImmobiliare)
         });
         await interimWriter.writeRecords(interimList);
         Logger.info(`💾 Interim Checkpoint: ${interimFile} (${interimList.length} companies)`);
@@ -807,10 +827,55 @@ async function scrapeMaps(
     return { newCount, mergedCount };
 }
 
+async function scrapeImmobiliareLane(
+    target: ScrapeTarget,
+    dedup: Deduplicator
+): Promise<{ newCount: number; mergedCount: number; skipped: boolean }> {
+    const provinceName = resolveProvinceName(target.province);
+
+    try {
+        const browser = await getBrowser();
+        const immobiliareResults = await ImmobiliareAgencyProvider.scrapeProvince(browser, provinceName, target.province, {
+            includeDetails: true,
+        });
+        const sanitized = sanitizeCompanyBatch(immobiliareResults);
+
+        if (sanitized.length === 0) {
+            Logger.warn(`[Immobiliare] ${provinceName}: source unavailable, empty, or challenged. Skipping lane.`);
+            return { newCount: 0, mergedCount: 0, skipped: true };
+        }
+
+        let newCount = 0;
+        let mergedCount = 0;
+
+        for (const company of sanitized) {
+            if (!company.province) {
+                company.province = target.province;
+            }
+
+            const existing = dedup.checkDuplicate(company);
+            if (existing) {
+                dedup.merge(existing, company);
+                mergedCount++;
+            } else {
+                dedup.add(company);
+                newCount++;
+            }
+        }
+
+        Logger.info(`[Immobiliare] ${provinceName}: ${sanitized.length} found → ${newCount} new, ${mergedCount} merged`);
+        return { newCount, mergedCount, skipped: false };
+    } catch (error) {
+        Logger.warn(`[Immobiliare] ${provinceName}: lane skipped (${(error as Error).message})`);
+        return { newCount: 0, mergedCount: 0, skipped: true };
+    }
+}
+
 // ─── MAIN ────────────────────────────────────────────────────────────────────
 async function main() {
-    const { query, provinceCodes, resume, checkpointFile, limit: maxCompanies } = parseCLI();
+    const { query, provinceCodes, resume, checkpointFile, limit: maxCompanies, includeImmobiliare } = parseCLI();
     const interimFile = checkpointFile;
+    const useImmobiliareLane = includeImmobiliare && /immobil/i.test(query.toLowerCase());
 
     Logger.info(`\n${'═'.repeat(60)}`);
     Logger.info(`🚀 CAMPAIGN GENERATOR V2 — INTELLIGENT MODE`);
@@ -818,6 +883,7 @@ async function main() {
     Logger.info(`📍 Provinces: [${provinceCodes.map(c => `${c} (${resolveProvinceName(c)})`).join(', ')}]`);
     if (typeof maxCompanies === 'number') Logger.info(`🎯 Limit Mode: max ${maxCompanies} companies`);
     if (resume) Logger.info(`🔄 Resume Mode: ACTIVE (Using ${checkpointFile} if available)`);
+    Logger.info(`🏢 Immobiliare lane: ${useImmobiliareLane ? 'ACTIVE' : includeImmobiliare ? 'requested but skipped for this query' : 'off'}`);
     Logger.info(`${'═'.repeat(60)}\n`);
 
     // PHASE 0: CATEGORY INTELLIGENCE
@@ -850,6 +916,7 @@ async function main() {
 
     const globalDedup = new Deduplicator();
     const allCompanies: CompanyInput[] = [];
+    const immobiliareProcessedProvinces = new Set<string>();
 
     // Load existing data if resuming
     if (resume) {
@@ -928,6 +995,15 @@ async function main() {
 
                 await delay(PG_LOCATION_DELAY_MS);
 
+                if (useImmobiliareLane && !immobiliareProcessedProvinces.has(target.province)) {
+                    immobiliareProcessedProvinces.add(target.province);
+                    const immobiliareResult = await scrapeImmobiliareLane(target, globalDedup);
+                    if (immobiliareResult.skipped) {
+                        Logger.info(`   🏢 Immobiliare: skipped for ${resolveProvinceName(target.province)}`);
+                    }
+                    await delay(1500);
+                }
+
                 const { newCount } = await scrapeMaps(session.page, target, globalDedup);
                 Logger.info(`└── DONE: ${pgResults.length} PG + ${newCount} new Maps | Running total: ${globalDedup.count}`);
             } catch (error) {
@@ -936,7 +1012,7 @@ async function main() {
                 await closeSession(session);
             }
 
-            await flushInterimCheckpoint(interimFile, globalDedup);
+            await flushInterimCheckpoint(interimFile, globalDedup, useImmobiliareLane);
         })));
 
         // PHASE 4: Final output + quality gate
@@ -994,20 +1070,7 @@ async function main() {
 
             const csvWriter = createObjectCsvWriter({
                 path: filepath,
-                header: [
-                    { id: 'company_name', title: 'company_name' },
-                    { id: 'city', title: 'city' },
-                    { id: 'province', title: 'province' },
-                    { id: 'zip_code', title: 'zip_code' },
-                    { id: 'region', title: 'region' },
-                    { id: 'address', title: 'address' },
-                    { id: 'phone', title: 'phone' },
-                    { id: 'website', title: 'website' },
-                    { id: 'category', title: 'category' },
-                    { id: 'source', title: 'source' },
-                    { id: 'vat_code', title: 'vat_code' },
-                    { id: 'pg_url', title: 'pg_url' },
-                ]
+                header: buildCampaignHeaders(useImmobiliareLane)
             });
 
             await csvWriter.writeRecords(companies);
@@ -1018,20 +1081,7 @@ async function main() {
         const combinedFile = path.join(OUTPUT_DIR, `campaign_COMBINED_${timestamp}.csv`);
         const combinedWriter = createObjectCsvWriter({
             path: combinedFile,
-            header: [
-                { id: 'company_name', title: 'company_name' },
-                { id: 'city', title: 'city' },
-                { id: 'province', title: 'province' },
-                { id: 'zip_code', title: 'zip_code' },
-                { id: 'region', title: 'region' },
-                { id: 'address', title: 'address' },
-                { id: 'phone', title: 'phone' },
-                { id: 'website', title: 'website' },
-                { id: 'category', title: 'category' },
-                { id: 'source', title: 'source' },
-                { id: 'vat_code', title: 'vat_code' },
-                { id: 'pg_url', title: 'pg_url' },
-            ]
+            header: buildCampaignHeaders(useImmobiliareLane)
         });
         await combinedWriter.writeRecords(finalList);
         Logger.info(`💾 Combined: ${combinedFile} (${finalList.length} companies)`);

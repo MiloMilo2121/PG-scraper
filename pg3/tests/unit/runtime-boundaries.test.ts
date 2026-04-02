@@ -72,6 +72,14 @@ describe('runtime boundaries', () => {
     expect(combined).not.toContain('allkeys-lru');
   });
 
+  it('wires the Lombardia Immobiliare mission through the campaign generator opt-in lane', () => {
+    const missionScript = readRepoFile('ops/mission_lombardia_immobiliare_it.sh');
+
+    expect(missionScript).toContain('generate_campaign_v2.ts');
+    expect(missionScript).toContain('--include-immobiliare');
+    expect(missionScript).toContain('campaign_COMBINED_lombardia_immobiliare.csv');
+  });
+
   it('keeps scraper-facing modules behind shared-runtime wrappers', () => {
     const categoryMatcherTs = readSource('scraper/ai/category_matcher.ts');
     const municipalitySplitterTs = readSource('scraper/ai/municipality_splitter.ts');
@@ -86,6 +94,8 @@ describe('runtime boundaries', () => {
     expect(generateCampaignTs).not.toContain('enricher/core/security/captcha_solver');
     expect(proxyManagerTs).toContain('shared-runtime/network/proxy_tier_v9');
     expect(proxyManagerTs).not.toContain('foundation/network/proxy_tier_v9');
+    expect(generateCampaignTs).toContain('ImmobiliareAgencyProvider');
+    expect(generateCampaignTs).toContain('--include-immobiliare');
   });
 
   it('keeps shared AI and config ownership out of enricher internals', () => {
