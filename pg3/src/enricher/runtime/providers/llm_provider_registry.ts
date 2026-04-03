@@ -57,6 +57,26 @@ function buildJsonResolverEntry(spec: LlmJsonResolverSpec): ProviderRegistryEntr
 export function buildLlmProviderEntries(): ProviderRegistryEntry[] {
     return [
         buildJsonResolverEntry({
+            providerId: 'OPENROUTER-FAST-2',
+            costPerRequest: 0.001,
+            tier: 2,
+            apiKeyEnv: 'OPENROUTER_API_KEY',
+            model: process.env.OPENROUTER_MODEL_FAST || 'openai/gpt-5-nano',
+            baseURL: 'https://openrouter.ai/api/v1',
+            systemPrompt: 'You are an Italian business domain expert. Return ONLY a raw JSON array.',
+            buildUserPrompt: (query) => `Company: "${query}"\n\nReturn URLs in JSON format: [{"title":"...","url":"...","snippet":"..."}]. Raw JSON only.`,
+        }),
+        buildJsonResolverEntry({
+            providerId: 'OPENROUTER-SMART-3',
+            costPerRequest: 0.003,
+            tier: 3,
+            apiKeyEnv: 'OPENROUTER_API_KEY',
+            model: process.env.OPENROUTER_MODEL_SMART || 'google/gemini-2.5-flash-lite',
+            baseURL: 'https://openrouter.ai/api/v1',
+            systemPrompt: 'You search the web and reason over Italian company identity. Return ONLY a raw JSON array.',
+            buildUserPrompt: (query) => `Find the official website for Italian company: "${query}". Return the top 3 results in this exact JSON format: [{"title":"...","url":"...","snippet":"..."}]. Raw JSON array only.`,
+        }),
+        buildJsonResolverEntry({
             providerId: 'OPENAI-1',
             costPerRequest: 0.005,
             tier: 3,

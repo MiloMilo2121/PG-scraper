@@ -78,7 +78,7 @@ function createRuntimePipeline(core: ReturnType<typeof createRuntimeCore>): Mast
         browserPool: core.pool,
         costRouter: core.router,
         postProcessor: new EnrichmentPostProcessor(core.pool),
-        pecHunter: new PecHunter(core.pool),
+        pecHunter: new PecHunter(core.pool, core.router),
     });
 }
 

@@ -421,6 +421,8 @@ export class CostRouter {
             'FIRECRAWL-SCRAPE-3': 'FIRECRAWL_API_KEY',
             'OPENAI-1': 'OPENAI_API_KEY',
             'OPENROUTER-2': 'OPENROUTER_API_KEY',
+            'OPENROUTER-FAST-2': 'OPENROUTER_API_KEY',
+            'OPENROUTER-SMART-3': 'OPENROUTER_API_KEY',
             'PERPLEXITY-1': 'PERPLEXITY_API_KEY',
             'DEEPSEEK-1': 'DEEPSEEK_API_KEY',
             'KIMI-1': 'KIMI_API_KEY',

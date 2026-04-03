@@ -38,6 +38,30 @@ describe('PecHunter', () => {
     expect(result.email).toBe('amministrazione@azienda.it');
     expect(navigateSafe).toHaveBeenCalledWith('https://www.azienda.it/contatti');
   });
+
+  it('falls back to routed fetch extraction when browser navigation finds no contacts', async () => {
+    const navigateSafe = vi.fn(async () => ({
+      status: 'OK',
+      html: '<html><body><p>Nessun contatto esposto</p></body></html>',
+      finalUrl: 'https://www.azienda.it',
+      blocked_resources: 0,
+      duration_ms: 10,
+      browser_id: 'browser-1',
+    }));
+    const route = vi.fn(async () => ({
+      data: {
+        data: '<html><body><a href="mailto:info@azienda.it">Contatti</a></body></html>',
+      },
+      provider: 'FIRECRAWL-SCRAPE-3',
+    }));
+
+    const hunter = new PecHunter({ navigateSafe } as any, { route } as any);
+    const result = await hunter.hunt('company-2', { company_name: 'Azienda Test' } as any, 'https://www.azienda.it');
+
+    expect(result.email).toBe('info@azienda.it');
+    expect(result.source).toBe('FIRECRAWL-SCRAPE-3');
+    expect(route).toHaveBeenCalled();
+  });
 });
 
 describe('EnrichmentPostProcessor', () => {

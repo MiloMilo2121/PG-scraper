@@ -1,9 +1,17 @@
 import { BrowserPool } from './BrowserPool';
 import { NormalizedInput } from './InputNormalizer';
 import { Logger } from '../enricher/utils/logger';
+import { CostRouter } from '../shared-runtime/routing/CostRouter';
+
+interface ContactSignals {
+    pec: string | null;
+    email: string | null;
+    source?: string | null;
+}
 
 export class PecHunter {
     private browserPool: BrowserPool;
+    private costRouter?: CostRouter;
     private static readonly standardEmailRegex = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/gi;
     private static readonly cloudflareEmailRegex = /data-cfemail="([0-9a-fA-F]+)"/g;
     private static readonly mailtoRegex = /mailto:([^"'?#\s>]+)/gi;
@@ -62,18 +70,20 @@ export class PecHunter {
     // Pattern to match common Italian PEC domains
     private static pecRegex = /[a-zA-Z0-9.\-_+]+@(?:pec|legalmail|cert|sicurezzapostale|telecompost|postecert)[a-zA-Z0-9.\-_]*\.[a-zA-Z]{2,}/gi;
 
-    constructor(browserPool: BrowserPool) {
+    constructor(browserPool: BrowserPool, costRouter?: CostRouter) {
         this.browserPool = browserPool;
+        this.costRouter = costRouter;
     }
 
     /**
      * Attempts to find a PEC email from the target website using the browser pool.
      * It scans the homepage first. If no PEC is found, it attempts to check /contatti and /privacy.
      */
-    public async hunt(companyId: string, input: NormalizedInput, discoveredUrl: string): Promise<{ pec: string | null, email: string | null }> {
+    public async hunt(companyId: string, input: NormalizedInput, discoveredUrl: string): Promise<ContactSignals> {
         Logger.info(`[PecHunter] 🕵️ Hunting for Contacts (PEC/Email) on: ${discoveredUrl}`);
         let pec: string | null = null;
         let email: string | null = null;
+        let source: string | null = null;
         const seen = new Set<string>();
 
         try {
@@ -90,23 +100,49 @@ export class PecHunter {
                 if (pageRes.email) {
                     email = PecHunter.prioritizeEmails([email, pageRes.email].filter(Boolean) as string[], discoveredUrl).email;
                 }
+                if ((pageRes.pec || pageRes.email) && pageRes.source) {
+                    source = pageRes.source;
+                }
                 if (pec && email) {
                     break;
+                }
+            }
+
+            if ((!pec || !email) && this.costRouter) {
+                for (const pageUrl of PecHunter.buildCandidateUrls(discoveredUrl)) {
+                    if (seen.has(`fallback:${pageUrl}`)) {
+                        continue;
+                    }
+                    seen.add(`fallback:${pageUrl}`);
+
+                    const pageRes = await this.scanPageViaFallback(pageUrl, companyId, discoveredUrl);
+                    if (pageRes.pec) {
+                        pec = PecHunter.prioritizeEmails([pec, pageRes.pec].filter(Boolean) as string[], discoveredUrl).pec;
+                    }
+                    if (pageRes.email) {
+                        email = PecHunter.prioritizeEmails([email, pageRes.email].filter(Boolean) as string[], discoveredUrl).email;
+                    }
+                    if ((pageRes.pec || pageRes.email) && pageRes.source) {
+                        source = pageRes.source;
+                    }
+                    if (pec || email) {
+                        break;
+                    }
                 }
             }
 
             if (!pec && !email) {
                 Logger.warn(`[PecHunter] ❌ No Contacts found for ${input.company_name}.`);
             }
-            return { pec, email };
+            return { pec, email, source };
 
         } catch (e: any) {
             Logger.warn(`[PecHunter] Error hunting Contacts for ${input.company_name}: ${e.message}`);
-            return { pec: null, email: null };
+            return { pec: null, email: null, source: null };
         }
     }
 
-    private async scanPage(url: string, rootUrl: string): Promise<{ pec: string | null, email: string | null }> {
+    private async scanPage(url: string, rootUrl: string): Promise<ContactSignals> {
         let pec: string | null = null;
         let email: string | null = null;
         try {
@@ -123,7 +159,42 @@ export class PecHunter {
         } catch (e) {
             // Silence sub-page loading errors (e.g., 404s on /contatti)
         }
-        return { pec, email };
+        return { pec, email, source: pec || email ? 'website_contact_scan' : null };
+    }
+
+    private async scanPageViaFallback(url: string, companyId: string, rootUrl: string): Promise<ContactSignals> {
+        if (!this.costRouter) {
+            return { pec: null, email: null, source: null };
+        }
+
+        try {
+            const response = await this.costRouter.route<{ data?: string }>('PROXY_FETCH', {
+                url,
+                options: { timeoutMs: 30000 },
+            }, {
+                companyId,
+                maxTier: 3,
+                skipCache: true,
+            });
+
+            const html = response.data?.data || '';
+            if (!html) {
+                return { pec: null, email: null, source: null };
+            }
+
+            const candidates = PecHunter.extractEmails(html);
+            const preferred = PecHunter.prioritizeEmails(candidates, rootUrl);
+            if (preferred.pec) Logger.info(`[PecHunter] ✅ FOUND PEC via ${response.provider} on ${url}: ${preferred.pec}`);
+            if (preferred.email) Logger.info(`[PecHunter] ✅ FOUND EMAIL via ${response.provider} on ${url}: ${preferred.email}`);
+
+            return {
+                pec: preferred.pec,
+                email: preferred.email,
+                source: preferred.pec || preferred.email ? response.provider : null,
+            };
+        } catch {
+            return { pec: null, email: null, source: null };
+        }
     }
 
     private static buildCandidateUrls(discoveredUrl: string): string[] {

@@ -40,7 +40,7 @@ export class ContactEnrichmentStage {
           detail: contacts.pec || contacts.email ? 'contact signals found' : 'no contact signals found',
           reason_code: contacts.pec || contacts.email ? 'CONTACTS_FOUND' : 'CONTACTS_NOT_FOUND',
           confidence: contacts.pec ? 0.95 : contacts.email ? 0.9 : 0,
-          provider: contacts.pec || contacts.email ? 'website_contact_scan' : undefined,
+          provider: contacts.pec || contacts.email ? contacts.source || 'website_contact_scan' : undefined,
           source_url: discoveredUrl,
           attempted_count: 1,
           evidence_count: [contacts.pec, contacts.email].filter(Boolean).length,
