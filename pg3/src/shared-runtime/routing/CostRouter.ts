@@ -90,6 +90,10 @@ class TokenBucketQueue {
         return this.tokens;
     }
 
+    public getMaxRpm(): number {
+        return this.maxRpm;
+    }
+
     public cleanup() {
         clearInterval(this.refillInterval);
     }
@@ -103,12 +107,12 @@ export class CostRouter {
     private providerCooldowns: Map<string, number> = new Map();
 
     private llmBuckets: Map<string, TokenBucketQueue> = new Map([
-        ['deepseek-chat', new TokenBucketQueue(40, 10)],
-        ['kimi-k2.5', new TokenBucketQueue(20, 5)],
-        ['glm-4.7-flash', new TokenBucketQueue(60, 15)],  // FREE tier — generous limits
-        ['glm-5', new TokenBucketQueue(20, 5)],
-        ['gpt-5-mini', new TokenBucketQueue(20, 5)],
-        ['gpt-4o-mini', new TokenBucketQueue(15, 3)],
+        ['OPENAI-1', new TokenBucketQueue(15, 3)],
+        ['OPENROUTER-2', new TokenBucketQueue(20, 5)],
+        ['PERPLEXITY-1', new TokenBucketQueue(10, 3)],
+        ['DEEPSEEK-1', new TokenBucketQueue(40, 10)],
+        ['KIMI-1', new TokenBucketQueue(20, 5)],
+        ['ZAI-1', new TokenBucketQueue(60, 15)],
     ]);
 
     // Credit tracking
@@ -137,17 +141,28 @@ export class CostRouter {
             };
         }
         return {
-            requests_per_minute: 40, // rough
+            requests_per_minute: bucket.getMaxRpm(),
             current_window_count: 0, // not strictly tracked since we use token bucket
             queue_depth: bucket.getQueueDepth(),
             is_throttled: bucket.getTokens() === 0
         };
     }
 
-    public isProviderHealthy(provider: string): boolean {
+    public async isProviderHealthy(provider: string): Promise<boolean> {
         const cooldownUntil = this.providerCooldowns.get(provider) ?? 0;
         if (cooldownUntil > Date.now()) {
             return false;
+        }
+
+        const recent = await this.getRecentProviderHealth(provider);
+        if (recent) {
+            if (recent.error_rate > 0.5) {
+                return false;
+            }
+            if (recent.avg_ms > 15000) {
+                return false;
+            }
+            return true;
         }
 
         const health = this.ledger.getProviderHealth(provider);
@@ -227,7 +242,7 @@ export class CostRouter {
                 failures.push({ provider: providerId, error: 'Exhausted/RateLimited' });
                 continue;
             }
-            if (!this.isProviderHealthy(providerId)) {
+            if (!(await this.isProviderHealthy(providerId))) {
                 failures.push({ provider: providerId, error: this.getCooldownRemainingMs(providerId) > 0 ? 'CoolingDown' : 'Unhealthy' });
                 continue;
             }
@@ -268,28 +283,13 @@ export class CostRouter {
                 }
 
                 // If API returns 400/402 (Not enough credits) or 401, mark exhausted
-                if (statusCode === 400 || statusCode === 402 || statusCode === 401) {
+                if ((statusCode === 400 || statusCode === 402 || statusCode === 401) && this.isDirectApiProvider(providerId, messageString)) {
                     this.credits.set(providerId, 0);
                 }
                 
                 // For 403/429, only exhaust if it's a direct API provider, NOT a proxy-scraping provider where 403 is just a target website block
-                if (statusCode === 403 || statusCode === 429) {
-                    const providerIdLower = providerId.toLowerCase();
-                    const isDirectApi = providerIdLower.includes('serper')
-                        || providerIdLower.includes('jina')
-                        || providerIdLower.includes('tavily')
-                        || providerIdLower.includes('brave-api')
-                        || providerIdLower.includes('exa')
-                        || providerIdLower.includes('k2')
-                        || providerIdLower.includes('glm')
-                        || providerIdLower.includes('gpt')
-                        || providerIdLower.includes('deepseek')
-                        || providerIdLower.includes('kimi')
-                        || providerIdLower.includes('perplexity')
-                        || messageString.includes('insufficient_quota');
-                    if (isDirectApi) {
+                if ((statusCode === 403 || statusCode === 429) && this.isDirectApiProvider(providerId, messageString)) {
                         this.credits.set(providerId, 0);
-                    }
                 }
 
                 failures.push({ provider: providerId, error: errorMsg || 'Unknown', status: statusCode });
@@ -465,5 +465,53 @@ export class CostRouter {
     private getCooldownRemainingMs(providerId: string): number {
         const cooldownUntil = this.providerCooldowns.get(providerId) ?? 0;
         return Math.max(0, cooldownUntil - Date.now());
+    }
+
+    private async getRecentProviderHealth(provider: string): Promise<{ error_rate: number; avg_ms: number } | null> {
+        const ledgerWithRecentEntries = this.ledger as CostLedger & {
+            getRecentEntries?: (n: number) => Promise<Array<{
+                provider: string;
+                success: boolean;
+                punitive?: boolean;
+                duration_ms: number;
+            }>>;
+        };
+
+        if (typeof ledgerWithRecentEntries.getRecentEntries !== 'function') {
+            return null;
+        }
+
+        const entries = (await ledgerWithRecentEntries.getRecentEntries(200))
+            .filter((entry) => entry.provider === provider)
+            .filter((entry) => entry.success || entry.punitive !== false);
+
+        if (entries.length < 5) {
+            return null;
+        }
+
+        const failures = entries.filter((entry) => !entry.success).length;
+        const totalDuration = entries.reduce((sum, entry) => sum + entry.duration_ms, 0);
+
+        return {
+            error_rate: failures / entries.length,
+            avg_ms: totalDuration / entries.length,
+        };
+    }
+
+    private isDirectApiProvider(providerId: string, messageString: string): boolean {
+        const providerIdLower = providerId.toLowerCase();
+        return providerIdLower.includes('serper')
+            || providerIdLower.includes('jina')
+            || providerIdLower.includes('tavily')
+            || providerIdLower.includes('brave-api')
+            || providerIdLower.includes('exa')
+            || providerIdLower.includes('openrouter')
+            || providerIdLower.includes('k2')
+            || providerIdLower.includes('glm')
+            || providerIdLower.includes('gpt')
+            || providerIdLower.includes('deepseek')
+            || providerIdLower.includes('kimi')
+            || providerIdLower.includes('perplexity')
+            || messageString.includes('insufficient_quota');
     }
 }
