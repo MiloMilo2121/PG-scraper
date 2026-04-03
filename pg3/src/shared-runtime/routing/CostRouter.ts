@@ -1,5 +1,6 @@
 import { MemoryFirstCache } from '../cache/MemoryFirstCache';
 import { CostLedger } from '../budget/CostLedger';
+import { config } from '../config/runtime_config';
 import { ProviderAdapter, ProviderOrderByFamily, ProviderTaskFamily } from './provider_adapter';
 
 export type TaskType = 'SERP' | 'LLM_CLASSIFY' | 'LLM_VISION' | 'PROXY_FETCH' | 'LLM_PARSE';
@@ -99,6 +100,7 @@ export class CostRouter {
     private ledger: CostLedger;
     private providers: Map<string, ProviderAdapter>;
     private providerOrderByFamily: ProviderOrderByFamily;
+    private providerCooldowns: Map<string, number> = new Map();
 
     private llmBuckets: Map<string, TokenBucketQueue> = new Map([
         ['deepseek-chat', new TokenBucketQueue(40, 10)],
@@ -143,6 +145,11 @@ export class CostRouter {
     }
 
     public isProviderHealthy(provider: string): boolean {
+        const cooldownUntil = this.providerCooldowns.get(provider) ?? 0;
+        if (cooldownUntil > Date.now()) {
+            return false;
+        }
+
         const health = this.ledger.getProviderHealth(provider);
         if (health.error_rate > 0.3) {
             return false;
@@ -212,12 +219,16 @@ export class CostRouter {
         const failures: { provider: string; error: string; status?: number }[] = [];
 
         for (const [providerId, adapter] of sortedProviders) {
+            if (!this.hasRequiredCredential(providerId)) {
+                failures.push({ provider: providerId, error: 'MissingCredential' });
+                continue;
+            }
             if (await this.isExhausted(providerId)) {
                 failures.push({ provider: providerId, error: 'Exhausted/RateLimited' });
                 continue;
             }
             if (!this.isProviderHealthy(providerId)) {
-                failures.push({ provider: providerId, error: 'Unhealthy' });
+                failures.push({ provider: providerId, error: this.getCooldownRemainingMs(providerId) > 0 ? 'CoolingDown' : 'Unhealthy' });
                 continue;
             }
 
@@ -305,6 +316,12 @@ export class CostRouter {
                 company_id: options?.companyId,
             });
 
+            if (!success) {
+                this.registerCooldown(providerId, classification);
+            } else {
+                this.providerCooldowns.delete(providerId);
+            }
+
             if (success && resultData !== undefined) {
                 if (!options?.skipCache) {
                     await this.cache.set('router_cache', cacheKey, resultData, 3600);
@@ -382,5 +399,68 @@ export class CostRouter {
             return { errorClass: 'transport', punitive: true };
         }
         return { errorClass: 'unknown', punitive: true };
+    }
+
+    private hasRequiredCredential(providerId: string): boolean {
+        const envKey = this.getRequiredCredentialEnvKey(providerId);
+        if (!envKey) {
+            return true;
+        }
+
+        const raw = process.env[envKey]?.trim() || '';
+        return raw.length > 0 && raw !== '...' && !raw.toLowerCase().includes('your-');
+    }
+
+    private getRequiredCredentialEnvKey(providerId: string): string | null {
+        const envMap: Record<string, string> = {
+            'SERPER-API-1': 'SERPER_API_KEY',
+            'EXA-API-2': 'EXA_API_KEY',
+            'BRAVE-API-1': 'BRAVE_SEARCH_API_KEY',
+            'TAVILY-API-2': 'TAVILY_API_KEY',
+            'PERPLEXITY-API-4': 'PERPLEXITY_API_KEY',
+            'FIRECRAWL-SCRAPE-3': 'FIRECRAWL_API_KEY',
+            'OPENAI-1': 'OPENAI_API_KEY',
+            'PERPLEXITY-1': 'PERPLEXITY_API_KEY',
+            'DEEPSEEK-1': 'DEEPSEEK_API_KEY',
+            'KIMI-1': 'KIMI_API_KEY',
+            'ZAI-1': 'Z_AI_API_KEY',
+        };
+
+        return envMap[providerId] || null;
+    }
+
+    private registerCooldown(
+        providerId: string,
+        classification: { errorClass: 'provider_auth' | 'provider_rate_limit' | 'provider_block' | 'semantic_empty' | 'transport' | 'unknown'; punitive: boolean },
+    ): void {
+        if (!classification.punitive) {
+            return;
+        }
+
+        const cooldownMs = this.getCooldownMs(classification.errorClass);
+        if (cooldownMs <= 0) {
+            return;
+        }
+
+        const until = Date.now() + cooldownMs;
+        const existing = this.providerCooldowns.get(providerId) ?? 0;
+        if (until > existing) {
+            this.providerCooldowns.set(providerId, until);
+        }
+    }
+
+    private getCooldownMs(errorClass: 'provider_auth' | 'provider_rate_limit' | 'provider_block' | 'semantic_empty' | 'transport' | 'unknown'): number {
+        if (errorClass === 'provider_block' || errorClass === 'provider_rate_limit') {
+            return config.proxy.failureCooldownMs;
+        }
+        if (errorClass === 'transport' || errorClass === 'unknown') {
+            return Math.max(15000, Math.floor(config.proxy.failureCooldownMs / 10));
+        }
+        return 0;
+    }
+
+    private getCooldownRemainingMs(providerId: string): number {
+        const cooldownUntil = this.providerCooldowns.get(providerId) ?? 0;
+        return Math.max(0, cooldownUntil - Date.now());
     }
 }

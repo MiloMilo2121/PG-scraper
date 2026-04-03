@@ -50,6 +50,16 @@ interface TavilySearchResponse {
     results?: TavilySearchItem[];
 }
 
+interface ExaSearchItem {
+    title?: string;
+    url?: string;
+    text?: string;
+}
+
+interface ExaSearchResponse {
+    results?: ExaSearchItem[];
+}
+
 /**
  * Compatibility shim for callers that still expect Google SERP access via Serper.
  * Recent provider cleanup removed this class, but multiple enrichment paths still import it.
@@ -208,6 +218,47 @@ export class TavilySearchProvider implements SearchProvider {
                 url: result.url!,
                 snippet: result.content || result.raw_content || '',
                 source: 'tavily_search',
+            } as SerpResult));
+    }
+}
+
+export class ExaSearchProvider implements SearchProvider {
+    @Retry({ attempts: 3, delay: 2000, backoff: 'fixed' })
+    async search(query: string): Promise<SerpResult[]> {
+        const apiKey = process.env.EXA_API_KEY?.trim();
+        if (!apiKey) {
+            Logger.warn('[ExaProvider] EXA_API_KEY not set.');
+            return [];
+        }
+
+        Logger.info(`[ExaProvider] Searching: "${query}"`);
+
+        const response = await fetch('https://api.exa.ai/search', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': apiKey,
+            },
+            body: JSON.stringify({
+                query,
+                numResults: 10,
+                type: 'keyword',
+                text: true,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Exa API error: ${response.status} ${response.statusText}`);
+        }
+
+        const data = (await response.json()) as ExaSearchResponse;
+        return (data.results || [])
+            .filter((result) => typeof result.url === 'string' && result.url.trim() !== '')
+            .map((result) => ({
+                title: result.title || '',
+                url: result.url!,
+                snippet: result.text || '',
+                source: 'exa_search',
             } as SerpResult));
     }
 }

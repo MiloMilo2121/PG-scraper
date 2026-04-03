@@ -38,6 +38,15 @@ export function buildSerpProviderEntries(): ProviderRegistryEntry[] {
                 return runSearchProvider<T>(() => import('../../core/discovery/search_provider'), 'SerperSearchProvider', query);
             },
         }],
+        ['EXA-API-2', {
+            family: 'SERP',
+            costPerRequest: 0.002,
+            tier: 2,
+            execute: async <T>(payload: any): Promise<T> => {
+                const query = typeof payload === 'string' ? payload : payload.query;
+                return runSearchProvider<T>(() => import('../../core/discovery/search_provider'), 'ExaSearchProvider', query);
+            },
+        }],
         ['BRAVE-API-1', {
             family: 'SERP',
             costPerRequest: 0.001,

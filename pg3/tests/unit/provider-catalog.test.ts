@@ -69,21 +69,26 @@ describe('provider catalog', () => {
 
     expect([...HTTP_PROVIDER_ORDER]).toEqual([
       'HTTP-DIRECT-1',
+      'FIRECRAWL-SCRAPE-3',
       'HTTP-BRIGHTDATA-4',
       'ORACLE-CRAWL4AI-5',
     ]);
 
     const direct = providers.get('HTTP-DIRECT-1');
+    const firecrawl = providers.get('FIRECRAWL-SCRAPE-3');
     const brightData = providers.get('HTTP-BRIGHTDATA-4');
     const oracle = providers.get('ORACLE-CRAWL4AI-5');
 
     expect(direct?.costPerRequest).toBe(0);
     expect(direct?.family).toBe('PROXY_FETCH');
+    expect(firecrawl?.family).toBe('PROXY_FETCH');
+    expect(firecrawl?.costPerRequest).toBeGreaterThan(0);
     expect(brightData?.costPerRequest).toBeLessThan(0.01);
     expect(brightData?.family).toBe('PROXY_FETCH');
     expect(oracle).toBeDefined();
     expect(oracle?.family).toBe('PROXY_FETCH');
     expect(providers.get('SERPER-API-1')?.family).toBe('SERP');
+    expect(providers.get('EXA-API-2')?.family).toBe('SERP');
     expect(providers.get('OPENAI-1')?.family).toBe('LLM');
   }, 120000);
 

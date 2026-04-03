@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BraveApiSearchProvider,
   DDGSearchProvider,
+  ExaSearchProvider,
   JinaSearchProvider,
   SerperSearchProvider,
   TavilySearchProvider,
@@ -21,20 +22,24 @@ describe('search_provider compatibility exports', () => {
     expect(new DDGSearchProvider()).toBeInstanceOf(DDGSearchProvider);
   });
 
-  it('exports official API providers for Brave and Tavily', () => {
+  it('exports official API providers for Brave, Tavily and Exa', () => {
     expect(new BraveApiSearchProvider()).toBeInstanceOf(BraveApiSearchProvider);
     expect(new TavilySearchProvider()).toBeInstanceOf(TavilySearchProvider);
+    expect(new ExaSearchProvider()).toBeInstanceOf(ExaSearchProvider);
   });
 
   it('routes SERP traffic through official APIs before HTML scraping', () => {
-    expect(SERP_PROVIDER_ORDER.slice(0, 3)).toEqual([
+    expect(SERP_PROVIDER_ORDER.slice(0, 5)).toEqual([
       'SERPER-API-1',
+      'EXA-API-2',
       'BRAVE-API-1',
       'TAVILY-API-2',
+      'ORACLE-SERP-1',
     ]);
 
     const providerMap = buildProviderMap();
     expect(providerMap.has('SERPER-API-1')).toBe(true);
+    expect(providerMap.has('EXA-API-2')).toBe(true);
     expect(providerMap.has('BRAVE-API-1')).toBe(true);
     expect(providerMap.has('TAVILY-API-2')).toBe(true);
     expect(providerMap.get('SERPER-API-1')?.family).toBe('SERP');
