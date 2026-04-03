@@ -40,9 +40,11 @@ describe('QuerySanitizer', () => {
     expect(linkedinVariants.some((variant) => variant.includes('site:linkedin.com/in'))).toBe(true);
     expect(linkedinVariants.some((variant) => variant.includes('Founder') || variant.includes('Owner'))).toBe(true);
     expect(linkedinVariants.some((variant) => variant.includes('"mail.acme.it"') || variant.includes('"acme.it"'))).toBe(true);
+    expect(linkedinVariants.some((variant) => variant.includes('Managing Director') || variant.includes('branch manager'))).toBe(true);
 
     expect(bilancioVariants.some((variant) => variant.includes('"12345678901"'))).toBe(true);
     expect(bilancioVariants.some((variant) => variant.includes('site:fatturatoitalia.it'))).toBe(true);
     expect(bilancioVariants.some((variant) => variant.includes('filetype:pdf'))).toBe(true);
+    expect(bilancioVariants.some((variant) => variant.includes('ricavi') || variant.includes('dipendenti'))).toBe(true);
   });
 });

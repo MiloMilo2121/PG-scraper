@@ -50,6 +50,7 @@ describe('provider catalog boundary', () => {
     expect(httpRegistry).toContain("family: 'PROXY_FETCH'");
     expect(llmRegistry).toContain('buildLlmProviderEntries');
     expect(llmRegistry).toContain("family: 'LLM'");
-    expect(llmRegistry).toContain("from 'openai'");
+    expect(llmRegistry).toContain("from '../../../shared-runtime/ai/LLMService'");
+    expect(llmRegistry).not.toContain("from 'openai'");
   });
 });

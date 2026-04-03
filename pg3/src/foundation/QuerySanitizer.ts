@@ -204,16 +204,17 @@ export class QuerySanitizer {
             const domainQuery = domainHints.length > 0
                 ? `(${domainHints.map((hint) => `"${hint}"`).join(' OR ')})`
                 : '';
+            const leadershipRoles = '(Titolare OR Founder OR CEO OR Amministratore OR Owner OR "Managing Director" OR Presidente)';
 
             this.pushUniqueVariant(
                 variants,
                 seen,
-                `site:linkedin.com/in "${primaryName}" ${locationQuery} (Titolare OR Founder OR CEO OR Amministratore)`
+                `site:linkedin.com/in "${primaryName}" ${locationQuery} ${leadershipRoles}`
             );
             this.pushUniqueVariant(
                 variants,
                 seen,
-                `site:linkedin.com/in "${primaryName}" ${locationQuery} ("Owner" OR "Managing Director" OR "Presidente")`
+                `site:linkedin.com/in "${primaryName}" ${locationQuery} ("branch manager" OR "responsabile" OR "direttore" OR "co-founder")`
             );
 
             if (domainQuery) {
@@ -222,13 +223,18 @@ export class QuerySanitizer {
                     seen,
                     `site:linkedin.com/in "${primaryName}" ${locationQuery} ${domainQuery}`
                 );
+                this.pushUniqueVariant(
+                    variants,
+                    seen,
+                    `site:linkedin.com/in ${domainQuery} ${locationQuery} ${leadershipRoles}`
+                );
             }
 
             for (const candidateName of sanitizedVariants.slice(1, 3)) {
                 this.pushUniqueVariant(
                     variants,
                     seen,
-                    `site:linkedin.com/in "${candidateName}" ${locationQuery} (Titolare OR Founder OR CEO)`
+                    `site:linkedin.com/in "${candidateName}" ${locationQuery} ${leadershipRoles}`
                 );
             }
         } else if (target === 'registry') {
@@ -255,6 +261,11 @@ export class QuerySanitizer {
             this.pushUniqueVariant(
                 variants,
                 seen,
+                `"${primaryName}" ${locationQuery} ("fatturato" OR "ricavi" OR dipendenti OR EBITDA)`
+            );
+            this.pushUniqueVariant(
+                variants,
+                seen,
                 `site:fatturatoitalia.it "${primaryName}" ${locationQuery}`
             );
             this.pushUniqueVariant(
@@ -262,6 +273,16 @@ export class QuerySanitizer {
                 seen,
                 `site:registroimprese.it "${primaryName}" ${locationQuery} bilancio`
             );
+            if (input.website || input.email_domain) {
+                const domainHints = this.buildDomainHintTokens(input);
+                for (const hint of domainHints.slice(0, 2)) {
+                    this.pushUniqueVariant(
+                        variants,
+                        seen,
+                        `"${primaryName}" "${hint}" ${locationQuery} (bilancio OR fatturato OR dipendenti)`
+                    );
+                }
+            }
         }
 
         return variants.slice(0, target === 'company' ? 12 : target === 'linkedin' ? 5 : 4);

@@ -39,6 +39,29 @@ describe('search result selectors', () => {
     }));
   });
 
+  it('penalizes former or weak linkedin matches against active company leadership hints', () => {
+    const current = {
+      url: 'https://www.linkedin.com/in/anna-verdi',
+      title: 'Anna Verdi - Branch Manager - ACME SRL | LinkedIn',
+      snippet: 'Branch manager presso ACME SRL a Milano',
+    };
+    const former = {
+      url: 'https://www.linkedin.com/in/mario-rossi',
+      title: 'Mario Rossi - Former Owner - ACME SRL | LinkedIn',
+      snippet: 'Former owner presso ACME SRL a Milano',
+    };
+
+    expect(scoreLinkedInProfileResult(current, {
+      companyTokens: ['acme'],
+      locationTokens: ['milano'],
+      roleTokens: ['owner', 'manager'],
+    })).toBeGreaterThan(scoreLinkedInProfileResult(former, {
+      companyTokens: ['acme'],
+      locationTokens: ['milano'],
+      roleTokens: ['owner', 'manager'],
+    }));
+  });
+
   it('prefers strong financial sources and documents', () => {
     const results = [
       {
@@ -65,6 +88,29 @@ describe('search result selectors', () => {
       locationTokens: ['milano'],
       vat: '12345678901',
     })).toBeGreaterThan(scoreFinancialSearchResult(results[0], {
+      companyTokens: ['acme'],
+      locationTokens: ['milano'],
+      vat: '12345678901',
+    }));
+  });
+
+  it('penalizes low-trust financial templates and sample hosts', () => {
+    const trusted = {
+      url: 'https://www.ufficiocamerale.it/acme-srl-bilancio',
+      title: 'ACME SRL fatturato e bilancio',
+      snippet: 'Bilancio ACME SRL Milano 12345678901',
+    };
+    const noisy = {
+      url: 'https://www.slideshare.net/example/fac-simile-bilancio',
+      title: 'Fac simile bilancio aziendale',
+      snippet: 'modello fac simile bilancio',
+    };
+
+    expect(scoreFinancialSearchResult(trusted, {
+      companyTokens: ['acme'],
+      locationTokens: ['milano'],
+      vat: '12345678901',
+    })).toBeGreaterThan(scoreFinancialSearchResult(noisy, {
       companyTokens: ['acme'],
       locationTokens: ['milano'],
       vat: '12345678901',

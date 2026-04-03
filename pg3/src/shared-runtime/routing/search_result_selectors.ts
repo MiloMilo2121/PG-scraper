@@ -63,6 +63,17 @@ function looksLikeFinancialDocument(result: SearchResultLike): boolean {
         || haystack.includes('stato patrimoniale');
 }
 
+function looksLikeLowTrustFinancialResult(result: SearchResultLike): boolean {
+    const haystack = `${result.title || ''} ${result.snippet || ''}`.toLowerCase();
+    const hostname = getHostname(result.url);
+    return haystack.includes('fac simile')
+        || haystack.includes('modello')
+        || haystack.includes('sample')
+        || hostname.includes('slideshare')
+        || hostname.includes('scribd')
+        || hostname.includes('studocu');
+}
+
 export function scoreLinkedInProfileResult(result: SearchResultLike, context?: SearchSelectionContext): number {
     if (!isLinkedInProfileUrl(result.url)) {
         return Number.NEGATIVE_INFINITY;
@@ -80,6 +91,12 @@ export function scoreLinkedInProfileResult(result: SearchResultLike, context?: S
     }
     if (haystack.includes('student') || haystack.includes('intern')) {
         score -= 2;
+    }
+    if (haystack.includes('former') || haystack.includes('ex ') || haystack.includes('freelance')) {
+        score -= 2.5;
+    }
+    if (haystack.includes('branch manager') || haystack.includes('responsabile')) {
+        score += 1.5;
     }
 
     return score;
@@ -117,7 +134,11 @@ export function scoreFinancialSearchResult(result: SearchResultLike, context?: S
         score += 3;
     }
 
-    if (haystack.includes('fac simile') || haystack.includes('modello')) {
+    if (hostname.includes('ufficiocamerale.it') || hostname.includes('reportaziende.it')) {
+        score += 2;
+    }
+
+    if (looksLikeLowTrustFinancialResult(result)) {
         score -= 3;
     }
 

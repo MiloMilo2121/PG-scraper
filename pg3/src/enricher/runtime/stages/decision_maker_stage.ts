@@ -12,36 +12,40 @@ export class DecisionMakerStage {
 
   public async run(companyId: string, input: NormalizedInput, discoveredUrl: string | null): Promise<DecisionMakerStageResult> {
     const startedAt = Date.now();
+    const effectiveWebsite = discoveredUrl || input.website || null;
 
-    if (!discoveredUrl) {
+    if (!effectiveWebsite) {
       return {
         decisionMaker: null,
         outcome: {
           stage: 'decision_maker',
           status: 'skipped',
           duration_ms: Date.now() - startedAt,
-          detail: 'website discovery required before decision-maker search',
+          detail: 'website discovery or input website required before decision-maker search',
           reason_code: 'DM_SKIPPED_NO_WEBSITE',
         },
       };
     }
 
     try {
-      const decisionMaker = await this.linkedinSniper.snipe(companyId, input, discoveredUrl);
+      const result = await this.linkedinSniper.snipeDetailed(companyId, input, effectiveWebsite);
+      const decisionMaker = result.decisionMaker;
       return {
         decisionMaker,
         outcome: {
           stage: 'decision_maker',
           status: decisionMaker ? 'success' : 'not_found',
           duration_ms: Date.now() - startedAt,
-          detail: decisionMaker ? 'linkedin candidate found' : 'no linkedin candidate found',
-          reason_code: decisionMaker ? 'DM_SOURCE_FOUND' : 'DM_NOT_FOUND',
+          detail: decisionMaker ? result.detail : result.detail,
+          reason_code: decisionMaker
+            ? (decisionMaker.source_kind === 'company_site' ? 'DM_WEBSITE_SOURCE_FOUND' : 'DM_SOURCE_FOUND')
+            : 'DM_NOT_FOUND',
           confidence: decisionMaker?.confidence,
-          provider: decisionMaker?.source,
+          provider: decisionMaker?.providers?.join(',') || decisionMaker?.source || result.providers.join(',') || undefined,
           source_url: decisionMaker?.linkedin_url,
-          attempted_count: 1,
-          evidence_count: decisionMaker ? 1 : 0,
-          entity_match_status: decisionMaker ? 'matched' : 'unknown',
+          attempted_count: result.attempted_count,
+          evidence_count: result.evidence_count,
+          entity_match_status: decisionMaker?.entity_match_status || result.entity_match_status,
         },
       };
     } catch (error) {

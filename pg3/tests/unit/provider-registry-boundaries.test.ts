@@ -56,7 +56,8 @@ describe('provider registry boundaries', () => {
     expect(httpRegistry).toContain("family: 'PROXY_FETCH'");
     expect(httpRegistry).toContain("from './provider_registry_helpers'");
     expect(llmRegistry).toContain("family: 'LLM'");
-    expect(llmRegistry).toContain("from 'openai'");
+    expect(llmRegistry).toContain("from '../../../shared-runtime/ai/LLMService'");
+    expect(llmRegistry).not.toContain("from 'openai'");
     expect(registryHelpers).toContain("import('../../utils/");
     expect(runtimeComposition).toContain("from '../../shared-runtime/routing/provider_catalog'");
     expect(runtimeComposition).toContain('SERP: SERP_PROVIDER_ORDER');
