@@ -34,7 +34,8 @@ export class LLMService {
     private static getClientForModel(model: string): { client: OpenAI, apiKey: string, providerKey: string } {
         let providerKey = 'openai';
 
-        if (model.startsWith('glm-')) providerKey = 'z_ai';
+        if (model.includes('/')) providerKey = 'openrouter';
+        else if (model.startsWith('glm-')) providerKey = 'z_ai';
         else if (model.startsWith('deepseek-')) providerKey = 'deepseek';
         else if (model.startsWith('moonshot-') || model.startsWith('kimi-')) providerKey = 'kimi';
         else providerKey = 'openai';
@@ -43,6 +44,10 @@ export class LLMService {
         let baseUrl: string | undefined;
 
         switch (providerKey) {
+            case 'openrouter':
+                keys = config.llm.openrouter.apiKeys;
+                baseUrl = config.llm.openrouter.baseUrl;
+                break;
             case 'z_ai':
                 keys = config.llm.z_ai.apiKeys;
                 baseUrl = config.llm.z_ai.baseUrl;
@@ -114,6 +119,7 @@ export class LLMService {
         if (config.llm.z_ai.apiKeys.length) return this.getClientForModel('glm-4.7-flash').client;
         if (config.llm.deepseek.apiKeys.length) return this.getClientForModel('deepseek-chat').client;
         if (config.llm.kimi.apiKeys.length) return this.getClientForModel('kimi-k2.5').client;
+        if (config.llm.openrouter.apiKeys.length) return this.getClientForModel(config.llm.openrouter.fastModel).client;
         return this.getClientForModel('gpt-5-mini').client;
     }
 

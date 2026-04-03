@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const ORIGINAL_ENV = { ...process.env };
 const RESET_KEYS = [
   'OPENAI_API_KEY',
+  'OPENROUTER_API_KEY',
   'Z_AI_API_KEY',
   'DEEPSEEK_API_KEY',
   'KIMI_API_KEY',
@@ -90,6 +91,7 @@ describe('provider catalog', () => {
     expect(providers.get('SERPER-API-1')?.family).toBe('SERP');
     expect(providers.get('EXA-API-2')?.family).toBe('SERP');
     expect(providers.get('OPENAI-1')?.family).toBe('LLM');
+    expect(providers.get('OPENROUTER-2')?.family).toBe('LLM');
   }, 120000);
 
   it('threads configurable local Oracle cost into the provider map', async () => {

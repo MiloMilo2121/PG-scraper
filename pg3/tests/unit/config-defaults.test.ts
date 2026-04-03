@@ -5,6 +5,8 @@ const ORIGINAL_ENV = { ...process.env };
 const RESET_KEYS = [
   'OPENAI_API_KEY',
   'OPENROUTER_API_KEY',
+  'OPENROUTER_MODEL_FAST',
+  'OPENROUTER_MODEL_SMART',
   'Z_AI_API_KEY',
   'DEEPSEEK_API_KEY',
   'KIMI_API_KEY',
@@ -89,11 +91,15 @@ describe('config defaults', () => {
     const config = await loadConfig({
       OPENAI_API_KEY: 'test-openai-key',
       OPENROUTER_API_KEY: 'sk-or-v1-test',
+      OPENROUTER_MODEL_FAST: 'openai/gpt-5-nano',
+      OPENROUTER_MODEL_SMART: 'google/gemini-2.5-flash-lite',
       EXA_API_KEY: 'exa-test-key',
       FIRECRAWL_API_KEY: 'fc-test-key',
     });
 
     expect(config.llm.openrouter.apiKey).toBe('sk-or-v1-test');
+    expect(config.llm.openrouter.fastModel).toBe('openai/gpt-5-nano');
+    expect(config.llm.openrouter.smartModel).toBe('google/gemini-2.5-flash-lite');
     expect(config.search.exa.apiKey).toBe('exa-test-key');
     expect(config.search.firecrawl.apiKey).toBe('fc-test-key');
   });

@@ -1,5 +1,6 @@
 import { OpenAI } from 'openai';
 import { ProviderRegistryEntry, parseJsonPayload } from './provider_registry_helpers';
+import { config } from '../../../shared-runtime/config/runtime_config';
 
 interface LlmJsonResolverSpec {
     providerId: string;
@@ -66,6 +67,21 @@ export function buildLlmProviderEntries(): ProviderRegistryEntry[] {
             validateApiKey: (apiKey) => {
                 if (!apiKey || apiKey.includes('your-')) {
                     throw new Error('OPENAI_API_KEY missing');
+                }
+            },
+        }),
+        buildJsonResolverEntry({
+            providerId: 'OPENROUTER-2',
+            costPerRequest: 0.001,
+            tier: 4,
+            apiKeyEnv: 'OPENROUTER_API_KEY',
+            model: config.llm.openrouter.fastModel,
+            baseURL: config.llm.openrouter.baseUrl,
+            systemPrompt: 'You are an Italian business domain expert. Return a JSON array of likely official websites only.',
+            buildUserPrompt: (query) => `Company: "${query}"\n\nReturn the top 3 most likely official website URLs in JSON format: [{"title":"...","url":"...","snippet":"..."}]. Raw JSON only.`,
+            validateApiKey: (apiKey) => {
+                if (!apiKey || apiKey.includes('your-')) {
+                    throw new Error('OPENROUTER_API_KEY missing');
                 }
             },
         }),

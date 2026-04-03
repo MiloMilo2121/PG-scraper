@@ -31,6 +31,8 @@ const EnvSchema = z.object({
   // 🤖 AI / LLM
   OPENAI_API_KEY: CommaSeparatedString.optional(),
   OPENROUTER_API_KEY: CommaSeparatedString.optional(),
+  OPENROUTER_MODEL_FAST: z.string().optional(),
+  OPENROUTER_MODEL_SMART: z.string().optional(),
   Z_AI_API_KEY: CommaSeparatedString.optional(),
   DEEPSEEK_API_KEY: CommaSeparatedString.optional(),
   KIMI_API_KEY: CommaSeparatedString.optional(),
@@ -226,6 +228,8 @@ export const config = {
       apiKey: env.OPENROUTER_API_KEY?.[0],
       apiKeys: env.OPENROUTER_API_KEY || [],
       baseUrl: 'https://openrouter.ai/api/v1',
+      fastModel: env.OPENROUTER_MODEL_FAST || 'openai/gpt-5-nano',
+      smartModel: env.OPENROUTER_MODEL_SMART || 'google/gemini-2.5-flash-lite',
     },
     z_ai: {
       apiKey: env.Z_AI_API_KEY?.[0],
@@ -258,8 +262,10 @@ export const config = {
       'glm-4.5': { inputPer1M: 0.60, outputPer1M: 2.20 },
       // OpenAI
       'gpt-5-mini': { inputPer1M: 0.10, outputPer1M: 0.40 },
+      'openai/gpt-5-nano': { inputPer1M: 0.05, outputPer1M: 0.40 },
       'gpt-4o-mini': { inputPer1M: 0.15, outputPer1M: 0.60 },
       'gpt-4o': { inputPer1M: 2.50, outputPer1M: 10.00 },
+      'google/gemini-2.5-flash-lite': { inputPer1M: 0.10, outputPer1M: 0.40 },
       'o3-mini': { inputPer1M: 1.10, outputPer1M: 4.40 },
       // DeepSeek
       'deepseek-chat': { inputPer1M: 0.14, outputPer1M: 0.28 },
