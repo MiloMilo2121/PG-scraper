@@ -32,12 +32,13 @@ export class LLMService {
      * Round-Robins through healthy API keys for the chosen provider.
      */
     private static getClientForModel(model: string): { client: OpenAI, apiKey: string, providerKey: string } {
+        const resolvedModel = this.resolveModelAlias(model);
         let providerKey = 'openai';
 
-        if (model.includes('/')) providerKey = 'openrouter';
-        else if (model.startsWith('glm-')) providerKey = 'z_ai';
-        else if (model.startsWith('deepseek-')) providerKey = 'deepseek';
-        else if (model.startsWith('moonshot-') || model.startsWith('kimi-')) providerKey = 'kimi';
+        if (resolvedModel.includes('/')) providerKey = 'openrouter';
+        else if (resolvedModel.startsWith('glm-')) providerKey = 'z_ai';
+        else if (resolvedModel.startsWith('deepseek-')) providerKey = 'deepseek';
+        else if (resolvedModel.startsWith('moonshot-') || resolvedModel.startsWith('kimi-')) providerKey = 'kimi';
         else providerKey = 'openai';
 
         let keys: string[] = [];
@@ -109,6 +110,17 @@ export class LLMService {
         return { client: this.clients.get(selectedKey)!, apiKey: selectedKey, providerKey };
     }
 
+    private static resolveModelAlias(model: string): string {
+        switch (model) {
+            case 'openrouter:fast':
+                return config.llm.openrouter.fastModel;
+            case 'openrouter:smart':
+                return config.llm.openrouter.smartModel;
+            default:
+                return model;
+        }
+    }
+
     /**
      * @deprecated Use specific methods which handle client selection automatically.
      * Returns the default client (usually Z.ai or OpenAI fallback).
@@ -119,7 +131,7 @@ export class LLMService {
         if (config.llm.z_ai.apiKeys.length) return this.getClientForModel('glm-4.7-flash').client;
         if (config.llm.deepseek.apiKeys.length) return this.getClientForModel('deepseek-chat').client;
         if (config.llm.kimi.apiKeys.length) return this.getClientForModel('kimi-k2.5').client;
-        if (config.llm.openrouter.apiKeys.length) return this.getClientForModel(config.llm.openrouter.fastModel).client;
+        if (config.llm.openrouter.apiKeys.length) return this.getClientForModel('openrouter:fast').client;
         return this.getClientForModel('gpt-5-mini').client;
     }
 
@@ -244,8 +256,9 @@ export class LLMService {
      * - Everything else: config default (0.1)
      */
     private static getTemperature(model: string): number {
-        if (model.includes('thinking') || model.includes('reasoner')) return 1.0;
-        if (model.startsWith('kimi-k2')) return 0.6;
+        const resolvedModel = this.resolveModelAlias(model);
+        if (resolvedModel.includes('thinking') || resolvedModel.includes('reasoner')) return 1.0;
+        if (resolvedModel.startsWith('kimi-k2')) return 0.6;
         return config.llm.temperature;
     }
 
@@ -253,12 +266,13 @@ export class LLMService {
      * Maps internal identifiers to the actual provider API engine names.
      */
     private static getApiEngineName(model: string): string {
-        switch (model) {
+        const resolvedModel = this.resolveModelAlias(model);
+        switch (resolvedModel) {
             case 'kimi-k2.5': return 'moonshot-v1-8k';
             case 'glm-5': return 'glm-4-plus';
             case 'glm-4.7-flash': return 'glm-4-flash';
             case 'gpt-5-mini': return 'gpt-5-mini';
-            default: return model;
+            default: return resolvedModel;
         }
     }
 
@@ -275,7 +289,10 @@ export class LLMService {
         const modelsToTry = [model, ...(fallbackModels || [])];
 
         for (let mi = 0; mi < modelsToTry.length; mi++) {
-            const currentModel = modelsToTry[mi];
+            const requestedModel = modelsToTry[mi];
+            const currentModel = this.resolveModelAlias(requestedModel);
+            const nextRequestedModel = modelsToTry[mi + 1];
+            const nextModel = nextRequestedModel ? this.resolveModelAlias(nextRequestedModel) : undefined;
             const isLastModel = mi === modelsToTry.length - 1;
 
             if (this.isModelDisabled(currentModel)) {
@@ -322,7 +339,7 @@ export class LLMService {
 
                     if (!isLastModel) {
                         // Move to next fallback model regardless of whether it's retryable or we exhausted attempts
-                        Logger.info(`[LLM] 🔄 Falling back from ${currentModel} to ${modelsToTry[mi + 1]}`);
+                        Logger.info(`[LLM] 🔄 Falling back from ${currentModel} to ${nextModel}`);
                         break;
                     }
 
@@ -350,7 +367,10 @@ export class LLMService {
         const normalizedSchema = this.normalizeStructuredSchema(schema);
 
         for (let mi = 0; mi < modelsToTry.length; mi++) {
-            const currentModel = modelsToTry[mi];
+            const requestedModel = modelsToTry[mi];
+            const currentModel = this.resolveModelAlias(requestedModel);
+            const nextRequestedModel = modelsToTry[mi + 1];
+            const nextModel = nextRequestedModel ? this.resolveModelAlias(nextRequestedModel) : undefined;
             const isLastModel = mi === modelsToTry.length - 1;
 
             if (this.isModelDisabled(currentModel)) {
@@ -418,7 +438,7 @@ export class LLMService {
                     }
 
                     if (!isLastModel) {
-                        Logger.info(`[LLM] 🔄 Structured: falling back from ${currentModel} to ${modelsToTry[mi + 1]}`);
+                        Logger.info(`[LLM] 🔄 Structured: falling back from ${currentModel} to ${nextModel}`);
                         break;
                     }
 
@@ -428,7 +448,7 @@ export class LLMService {
                         const legacyRes = await this.complete(
                             prompt + "\n\nResponse MUST be valid JSON matching the schema.",
                             currentModel,
-                            isLastModel ? undefined : modelsToTry.slice(mi + 1)
+                            isLastModel ? undefined : modelsToTry.slice(mi + 1).map((candidate) => this.resolveModelAlias(candidate))
                         );
                         const cleanLegacy = legacyRes.replace(/```json/g, '').replace(/```/g, '').trim();
                         return JSON.parse(cleanLegacy) as T;
@@ -442,6 +462,74 @@ export class LLMService {
 
         Logger.error(`[LLM] All models exhausted for completeStructured(): ${modelsToTry.join(' -> ')}`);
         return null;
+    }
+
+    /**
+     * Raw OpenAI-compatible chat completion with the same provider routing,
+     * cooldown handling, and model alias support used by complete().
+     */
+    public static async chatCompletion<T = OpenAI.Chat.Completions.ChatCompletion>(
+        payload: Record<string, unknown>,
+        model: string = typeof payload?.model === 'string' ? String(payload.model) : config.llm.model,
+        fallbackModels?: string[],
+    ): Promise<T> {
+        const modelsToTry = [model, ...(fallbackModels || [])];
+        const { model: _ignoredModel, ...payloadWithoutModel } = payload;
+
+        for (let mi = 0; mi < modelsToTry.length; mi++) {
+            const requestedModel = modelsToTry[mi];
+            const currentModel = this.resolveModelAlias(requestedModel);
+            const nextRequestedModel = modelsToTry[mi + 1];
+            const nextModel = nextRequestedModel ? this.resolveModelAlias(nextRequestedModel) : undefined;
+            const isLastModel = mi === modelsToTry.length - 1;
+
+            if (this.isModelDisabled(currentModel)) {
+                Logger.info(`[LLM] ⏭️ Skipping disabled model ${currentModel}`);
+                continue;
+            }
+
+            for (let attempt = 0; attempt < 3; attempt++) {
+                let currentApiKey = '';
+                try {
+                    const { client, apiKey } = this.getClientForModel(currentModel);
+                    currentApiKey = apiKey;
+
+                    const response = await this.llmLimit(() => client.chat.completions.create({
+                        ...payloadWithoutModel,
+                        model: this.getApiEngineName(currentModel),
+                    } as OpenAI.Chat.Completions.ChatCompletionCreateParams));
+
+                    this.trackUsage((response as OpenAI.Chat.Completions.ChatCompletion).usage, currentModel);
+                    return response as T;
+                } catch (error) {
+                    const retryable = this.isRetryableError(error);
+                    Logger.warn(`[LLM] chatCompletion() failed with ${currentModel} (attempt ${attempt + 1}, retryable: ${retryable})`, { error: error as Error });
+
+                    if (!retryable && this.shouldDisableModel(error)) {
+                        this.disableModel(currentModel, error);
+                    }
+
+                    if (retryable) {
+                        Logger.warn(`🚨 [Hydra Router] 429 detected! Jailing key ${currentApiKey.substring(0, 6)}... for 60s.`);
+                        this.keyCooldowns.set(currentApiKey, Date.now() + 60000);
+                    }
+
+                    if (retryable && attempt < 2) {
+                        await this.backoff(attempt);
+                        continue;
+                    }
+
+                    if (!isLastModel) {
+                        Logger.info(`[LLM] 🔄 ChatCompletion: falling back from ${currentModel} to ${nextModel}`);
+                        break;
+                    }
+
+                    throw error;
+                }
+            }
+        }
+
+        throw new Error(`[LLM] All models exhausted for chatCompletion(): ${modelsToTry.map((candidate) => this.resolveModelAlias(candidate)).join(' -> ')}`);
     }
 
     /**
@@ -459,6 +547,7 @@ export class LLMService {
         imageBase64: string,
         model: string = config.llm.model
     ): Promise<string | null> {
+        model = this.resolveModelAlias(model);
         // Guard: DeepSeek Chat (V3) does NOT support vision. DeepSeek VL does but via different API usually?
         // For now assume assume only GLM-4v/5 and GPT-4o support vision.
         if (model.includes('deepseek') || model.includes('moonshot') || model.includes('kimi-')) {

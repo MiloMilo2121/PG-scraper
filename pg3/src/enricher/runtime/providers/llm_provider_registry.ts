@@ -1,6 +1,6 @@
-import { OpenAI } from 'openai';
 import { ProviderRegistryEntry, parseJsonPayload } from './provider_registry_helpers';
 import { config } from '../../../shared-runtime/config/runtime_config';
+import { LLMService } from '../../../shared-runtime/ai/LLMService';
 
 interface LlmJsonResolverSpec {
     providerId: string;
@@ -23,22 +23,18 @@ function buildJsonResolverEntry(spec: LlmJsonResolverSpec): ProviderRegistryEntr
             const apiKey = process.env[spec.apiKeyEnv] || '';
             spec.validateApiKey?.(apiKey);
 
-            const openai = new OpenAI({
-                apiKey,
-                ...(spec.baseURL ? { baseURL: spec.baseURL } : {}),
-            });
-
             if (typeof payload === 'string' || !!payload.query) {
                 const query = typeof payload === 'string' ? payload : payload.query;
-                const completion = await openai.chat.completions.create({
-                    model: spec.model,
+                const completion = await LLMService.chatCompletion<{
+                    choices?: Array<{ message?: { content?: string | null } }>;
+                }>({
                     messages: [
                         { role: 'system', content: spec.systemPrompt },
                         { role: 'user', content: spec.buildUserPrompt(query) },
                     ],
                     temperature: 0.1,
-                });
-                const content = completion.choices[0].message.content || '[]';
+                }, spec.model);
+                const content = completion.choices?.[0]?.message?.content || '[]';
                 try {
                     return parseJsonPayload<T>(content);
                 } catch {
@@ -46,10 +42,9 @@ function buildJsonResolverEntry(spec: LlmJsonResolverSpec): ProviderRegistryEntr
                 }
             }
 
-            return (await openai.chat.completions.create({
+            return await LLMService.chatCompletion<T>({
                 ...payload,
-                model: spec.model,
-            })) as unknown as T;
+            }, spec.model);
         },
     }];
 }
@@ -61,8 +56,8 @@ export function buildLlmProviderEntries(): ProviderRegistryEntry[] {
             costPerRequest: 0.001,
             tier: 2,
             apiKeyEnv: 'OPENROUTER_API_KEY',
-            model: process.env.OPENROUTER_MODEL_FAST || 'openai/gpt-5-nano',
-            baseURL: 'https://openrouter.ai/api/v1',
+            model: 'openrouter:fast',
+            baseURL: config.llm.openrouter.baseUrl,
             systemPrompt: 'You are an Italian business domain expert. Return ONLY a raw JSON array.',
             buildUserPrompt: (query) => `Company: "${query}"\n\nReturn URLs in JSON format: [{"title":"...","url":"...","snippet":"..."}]. Raw JSON only.`,
         }),
@@ -71,8 +66,8 @@ export function buildLlmProviderEntries(): ProviderRegistryEntry[] {
             costPerRequest: 0.003,
             tier: 3,
             apiKeyEnv: 'OPENROUTER_API_KEY',
-            model: process.env.OPENROUTER_MODEL_SMART || 'google/gemini-2.5-flash-lite',
-            baseURL: 'https://openrouter.ai/api/v1',
+            model: 'openrouter:smart',
+            baseURL: config.llm.openrouter.baseUrl,
             systemPrompt: 'You search the web and reason over Italian company identity. Return ONLY a raw JSON array.',
             buildUserPrompt: (query) => `Find the official website for Italian company: "${query}". Return the top 3 results in this exact JSON format: [{"title":"...","url":"...","snippet":"..."}]. Raw JSON array only.`,
         }),
@@ -95,7 +90,7 @@ export function buildLlmProviderEntries(): ProviderRegistryEntry[] {
             costPerRequest: 0.001,
             tier: 4,
             apiKeyEnv: 'OPENROUTER_API_KEY',
-            model: config.llm.openrouter.fastModel,
+            model: 'openrouter:fast',
             baseURL: config.llm.openrouter.baseUrl,
             systemPrompt: 'You are an Italian business domain expert. Return a JSON array of likely official websites only.',
             buildUserPrompt: (query) => `Company: "${query}"\n\nReturn the top 3 most likely official website URLs in JSON format: [{"title":"...","url":"...","snippet":"..."}]. Raw JSON only.`,
