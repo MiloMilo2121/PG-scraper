@@ -21,29 +21,58 @@ export class ContactEnrichmentStage {
     return domain.includes('pec') || domain.includes('legalmail') || domain.includes('cert');
   }
 
+  private buildConfirmedContactResult(
+    input: NormalizedInput,
+    startedAt: number,
+    mode: 'direct' | 'fallback',
+    discoveredUrl?: string | null,
+  ): ContactStageResult {
+    const confirmedPec = this.isLikelyPec(input.email) ? input.email! : null;
+    const confirmedEmail = confirmedPec ? null : input.email!;
+    const fromPagineGialle = input.email_source === 'paginegialle';
+    const isFallback = mode === 'fallback';
+
+    const reasonCode = fromPagineGialle
+      ? (confirmedPec
+        ? (isFallback ? 'CONTACTS_FALLBACK_PG_PEC' : 'CONTACTS_CONFIRMED_PG_PEC')
+        : (isFallback ? 'CONTACTS_FALLBACK_PG_EMAIL' : 'CONTACTS_CONFIRMED_PG_EMAIL'))
+      : (confirmedPec
+        ? (isFallback ? 'CONTACTS_FALLBACK_INPUT_PEC' : 'CONTACTS_CONFIRMED_INPUT_PEC')
+        : (isFallback ? 'CONTACTS_FALLBACK_INPUT_EMAIL' : 'CONTACTS_CONFIRMED_INPUT_EMAIL'));
+
+    const detail = isFallback
+      ? (fromPagineGialle
+        ? 'website scan found no contacts; reusing confirmed paginegialle contact'
+        : 'website scan found no contacts; reusing confirmed input contact')
+      : (fromPagineGialle
+        ? 'reused confirmed contact from paginegialle without website scan'
+        : 'reused confirmed contact from input without website scan');
+
+    return {
+      pec: confirmedPec,
+      email: confirmedEmail,
+      outcome: {
+        stage: 'contacts',
+        status: 'success',
+        duration_ms: Date.now() - startedAt,
+        detail,
+        reason_code: reasonCode,
+        confidence: confirmedPec ? 0.98 : (fromPagineGialle ? 0.92 : 0.95),
+        provider: fromPagineGialle ? 'paginegialle_contact' : 'input_contact',
+        source_url: isFallback ? (discoveredUrl || undefined) : undefined,
+        attempted_count: isFallback ? 1 : 0,
+        evidence_count: 1,
+        entity_match_status: 'matched',
+      },
+    };
+  }
+
   public async run(companyId: string, input: NormalizedInput, discoveredUrl: string | null): Promise<ContactStageResult> {
     const startedAt = Date.now();
 
     if (!discoveredUrl) {
       if (input.email) {
-        const confirmedPec = this.isLikelyPec(input.email) ? input.email : null;
-        const confirmedEmail = confirmedPec ? null : input.email;
-        return {
-          pec: confirmedPec,
-          email: confirmedEmail,
-          outcome: {
-            stage: 'contacts',
-            status: 'success',
-            duration_ms: Date.now() - startedAt,
-            detail: 'reused confirmed contact from input without website scan',
-            reason_code: confirmedPec ? 'CONTACTS_CONFIRMED_INPUT_PEC' : 'CONTACTS_CONFIRMED_INPUT_EMAIL',
-            confidence: confirmedPec ? 0.98 : 0.95,
-            provider: 'input_contact',
-            attempted_count: 0,
-            evidence_count: 1,
-            entity_match_status: 'matched',
-          },
-        };
+        return this.buildConfirmedContactResult(input, startedAt, 'direct');
       }
 
       return {
@@ -61,6 +90,9 @@ export class ContactEnrichmentStage {
 
     try {
       const contacts = await this.pecHunter.hunt(companyId, input, discoveredUrl);
+      if (!(contacts.pec || contacts.email) && input.email) {
+        return this.buildConfirmedContactResult(input, startedAt, 'fallback', discoveredUrl);
+      }
       return {
         pec: contacts.pec || null,
         email: contacts.email || null,
@@ -79,6 +111,10 @@ export class ContactEnrichmentStage {
         },
       };
     } catch (error) {
+      if (input.email) {
+        return this.buildConfirmedContactResult(input, startedAt, 'fallback', discoveredUrl);
+      }
+
       return {
         pec: null,
         email: null,

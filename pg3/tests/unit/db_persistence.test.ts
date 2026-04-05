@@ -152,7 +152,6 @@ describe('DB persistence', () => {
 
     const stats = dbModule.getStats();
     expect(stats.enriched).toBe(3);
-    expect(stats.pending).toBe(0);
 
     const csvPath = path.join(tempDir, 'enriched.csv');
     dbModule.exportEnrichedToCSV(csvPath);
@@ -164,6 +163,41 @@ describe('DB persistence', () => {
     expect(gammaRows.length).toBe(1);
     expect(gammaRows[0]).toContain('"20"');
     expect(gammaRows[0]).toContain('"FOUND_COMPLETE"');
+  });
+
+  it('clears stale website and discovery metadata when a rerun ends enrichment-only', () => {
+    dbModule.insertCompany({
+      id: 'cmp-enrichment-only',
+      company_name: 'Zeta',
+      city: 'Torino',
+    });
+
+    dbModule.insertEnrichmentResult({
+      id: 'res-zeta-1',
+      company_id: 'cmp-enrichment-only',
+      email: 'info@zeta.it',
+      website_validated: 'https://zeta.it',
+      discovery_method: 'PG_PHONE_SEMANTIC',
+      discovery_confidence: 0.91,
+      is_estimated_employees: false,
+      data_source: 'omega_worker',
+      reason_code: 'FOUND_COMPLETE',
+    });
+
+    dbModule.insertEnrichmentResult({
+      id: 'res-zeta-2',
+      company_id: 'cmp-enrichment-only',
+      email: 'info@zeta.it',
+      is_estimated_employees: false,
+      data_source: 'omega_worker',
+      reason_code: 'ENRICHMENT_ONLY_NO_WEBSITE',
+    });
+
+    const persisted = dbModule.getEnrichmentResult('cmp-enrichment-only');
+    expect(persisted?.reason_code).toBe('ENRICHMENT_ONLY_NO_WEBSITE');
+    expect(persisted?.website_validated).toBeNull();
+    expect(persisted?.discovery_method).toBeNull();
+    expect(persisted?.discovery_confidence).toBeNull();
   });
 
   it('merges runtime-discovered fields without dropping non-empty values', () => {
@@ -214,6 +248,20 @@ describe('DB persistence', () => {
     expect(persisted?.employees).toBe('10-50');
     expect(persisted?.is_estimated_employees).toBe(true);
     expect(persisted?.website_validated).toBe('https://www.epsilon.it');
+  });
+
+  it('counts completed not-found jobs as processed instead of pending', () => {
+    dbModule.insertCompany({
+      id: 'cmp-pending-fix',
+      company_name: 'Theta',
+      city: 'Parma',
+    });
+
+    const before = dbModule.getStats();
+    dbModule.logJobResult('cmp-pending-fix', 'SUCCESS', 250, 1, undefined, undefined, 'NOT_FOUND');
+
+    const after = dbModule.getStats();
+    expect(after.pending).toBe(before.pending - 1);
   });
 
   it('enforces at most one active enrichment row per company at schema level', () => {

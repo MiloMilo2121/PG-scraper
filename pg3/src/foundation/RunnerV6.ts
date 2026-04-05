@@ -138,6 +138,7 @@ async function run() {
     // We no longer store the entire results array in memory to save RAM on 29k iterations
     let memFound = 0;
     let memNotFound = 0;
+    let memEnrichmentOnly = 0;
     let memErrors = 0;
 
     for (let i = startIndex; i < records.length; i += BATCH_SIZE) {
@@ -189,6 +190,7 @@ async function run() {
         // Update RAM-safe stats
         for (const r of batchResults) {
             if (r.status === 'FOUND_COMPLETE') memFound++;
+            else if (r.status === 'ENRICHMENT_ONLY_NO_WEBSITE') memEnrichmentOnly++;
             else if (r.status === 'NOT_FOUND') memNotFound++;
             else memErrors++;
         }
@@ -200,9 +202,9 @@ async function run() {
     console.log('[RunnerV6] Extraction Complete.');
 
     const ledgerSummary = await ledger.getSummary();
-    const totalProcessed = memFound + memNotFound + memErrors;
+    const totalProcessed = memFound + memEnrichmentOnly + memNotFound + memErrors;
     console.log(`\n📊 FINAL REPORT:`);
-    console.log(`   Total (Session): ${totalProcessed} | ✅ Found: ${memFound} | ❌ Not Found: ${memNotFound} | 💀 Errors: ${memErrors}`);
+    console.log(`   Total (Session): ${totalProcessed} | ✅ Found: ${memFound} | 🟡 Enrichment-only: ${memEnrichmentOnly} | ❌ Not Found: ${memNotFound} | 💀 Errors: ${memErrors}`);
     console.log(`   💰 Total Cost: €${ledgerSummary.total_cost_eur.toFixed(4)} | API Calls: ${ledgerSummary.total_calls} | Success Rate: ${(ledgerSummary.success_rate * 100).toFixed(1)}%`);
     console.log(`   💰 Cost/Company: €${totalProcessed > 0 ? (ledgerSummary.total_cost_eur / totalProcessed).toFixed(4) : 0.0000}`);
 

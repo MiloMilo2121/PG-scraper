@@ -30,7 +30,8 @@ async function runTest() {
         bleedingMode: false
     });
 
-    let successCount = 0;
+    let websiteSuccessCount = 0;
+    let enrichmentOnlyCount = 0;
     const failures: string[] = [];
 
     console.log("🏁 Inizio MasterPipeline Test...");
@@ -59,7 +60,10 @@ async function runTest() {
 
             if (result.status === 'FOUND_COMPLETE') {
                 console.log(`   ✅ PIPELINE TROVATO: ${result.discovered_url} (Layer: ${result.discovery_layer})`);
-                successCount++;
+                websiteSuccessCount++;
+            } else if (result.status === 'ENRICHMENT_ONLY_NO_WEBSITE') {
+                console.log(`   🟡 ENRICHMENT ONLY: email=${result.email || '-'} pec=${result.pec || '-'} vat=${result.vat || '-'}`);
+                enrichmentOnlyCount++;
             } else {
                 console.log(`   ❌ NON TROVATO (Status: ${result.status})`);
                 failures.push(input.company_name);
@@ -75,8 +79,9 @@ async function runTest() {
     console.log(`🏆 RISULTATI SPRINT 1 (MASTER PIPELINE)`);
     console.log(`=========================================`);
     console.log(`Totale analizzati: ${targetCompanies.length}`);
-    console.log(`Successi: ${successCount}`);
-    console.log(`Tasso di Successo: ${((successCount / targetCompanies.length) * 100).toFixed(1)}%`);
+    console.log(`Successi website: ${websiteSuccessCount}`);
+    console.log(`Successi enrichment-only: ${enrichmentOnlyCount}`);
+    console.log(`Copertura totale utile: ${(((websiteSuccessCount + enrichmentOnlyCount) / targetCompanies.length) * 100).toFixed(1)}%`);
     console.log(`Tempo totale: ${duration} secondi`);
 
     // Shutdown logic usually handled elsewhere or omit

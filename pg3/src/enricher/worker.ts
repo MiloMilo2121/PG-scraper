@@ -54,10 +54,16 @@ function mapJobResult(job: EnrichmentJobData, pipelineResult: any): JobResult {
     const vat = pipelineResult.vat || job.vat_code;
     const revenue = pipelineResult.financial?.fatturato_current || pipelineResult.financial?.revenue;
     const employees = pipelineResult.employees || pipelineResult.financial?.employees;
+    const hasFinancialSignal = Boolean(
+        pipelineResult.financial?.fatturato_current
+        || pipelineResult.financial?.fatturato_previous
+        || pipelineResult.financial?.utile_netto
+        || pipelineResult.financial?.revenue
+    );
     const hasAnySignal = Boolean(
         websiteUrl
         || vat
-        || revenue
+        || hasFinancialSignal
         || employees
         || pipelineResult.pec
         || pipelineResult.email

@@ -6,6 +6,7 @@ export interface NormalizedInput {
     address?: string;
     phone?: string;
     email?: string;
+    email_source?: 'input' | 'paginegialle';
     email_domain?: string;
     website?: string;
     vat_code?: string;
@@ -180,6 +181,7 @@ export class InputNormalizer {
             address: address || undefined,
             phone: phone || undefined,
             email: email || undefined,
+            email_source: email ? 'input' : undefined,
             email_domain: emailDomain,
             website,
             vat_code: vatCode,

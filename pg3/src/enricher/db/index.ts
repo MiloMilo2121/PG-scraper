@@ -371,15 +371,24 @@ function initializeStatements(): void {
             END,
             pec = COALESCE(NULLIF(excluded.pec, ''), enrichment_results.pec),
             email = COALESCE(NULLIF(excluded.email, ''), enrichment_results.email),
-            website_validated = COALESCE(NULLIF(excluded.website_validated, ''), enrichment_results.website_validated),
+            website_validated = CASE
+                WHEN excluded.reason_code = 'ENRICHMENT_ONLY_NO_WEBSITE' THEN NULL
+                ELSE COALESCE(NULLIF(excluded.website_validated, ''), enrichment_results.website_validated)
+            END,
             decision_maker_name = COALESCE(NULLIF(excluded.decision_maker_name, ''), enrichment_results.decision_maker_name),
             decision_maker_role = COALESCE(NULLIF(excluded.decision_maker_role, ''), enrichment_results.decision_maker_role),
             decision_maker_linkedin_url = COALESCE(NULLIF(excluded.decision_maker_linkedin_url, ''), enrichment_results.decision_maker_linkedin_url),
             decision_maker_confidence = COALESCE(excluded.decision_maker_confidence, enrichment_results.decision_maker_confidence),
             lead_score = COALESCE(excluded.lead_score, enrichment_results.lead_score),
             data_source = COALESCE(NULLIF(excluded.data_source, ''), enrichment_results.data_source),
-            discovery_method = COALESCE(NULLIF(excluded.discovery_method, ''), enrichment_results.discovery_method),
-            discovery_confidence = COALESCE(excluded.discovery_confidence, enrichment_results.discovery_confidence),
+            discovery_method = CASE
+                WHEN excluded.reason_code = 'ENRICHMENT_ONLY_NO_WEBSITE' THEN NULL
+                ELSE COALESCE(NULLIF(excluded.discovery_method, ''), enrichment_results.discovery_method)
+            END,
+            discovery_confidence = CASE
+                WHEN excluded.reason_code = 'ENRICHMENT_ONLY_NO_WEBSITE' THEN NULL
+                ELSE COALESCE(excluded.discovery_confidence, enrichment_results.discovery_confidence)
+            END,
             reason_code = COALESCE(NULLIF(excluded.reason_code, ''), enrichment_results.reason_code),
             stage_outcomes_json = COALESCE(NULLIF(excluded.stage_outcomes_json, ''), enrichment_results.stage_outcomes_json),
             deleted_at = NULL,
@@ -568,11 +577,16 @@ export function getStats(): { total: number; enriched: number; pending: number; 
     ensureReady();
     const total = (db.prepare('SELECT COUNT(*) as count FROM companies WHERE deleted_at IS NULL').get() as { count: number }).count;
     const enriched = (db.prepare('SELECT COUNT(DISTINCT company_id) as count FROM enrichment_results WHERE deleted_at IS NULL').get() as { count: number }).count;
+    const processed = (db.prepare(`
+        SELECT COUNT(DISTINCT company_id) as count
+        FROM job_log
+        WHERE status IN ('SUCCESS', 'FAILED')
+    `).get() as { count: number }).count;
     const failed = (db.prepare('SELECT COUNT(DISTINCT company_id) as count FROM job_log WHERE status = ?').get('FAILED') as { count: number }).count;
     return {
         total,
         enriched,
-        pending: Math.max(total - enriched, 0),
+        pending: Math.max(total - processed, 0),
         failed,
     };
 }

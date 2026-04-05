@@ -140,6 +140,27 @@ describe('MasterPipeline phone/entity lane', () => {
     expect(result.reason_code).toBe('PHONE_ENTITY_DIRECTORY_ONLY');
   });
 
+  it('returns enrichment-only status when PG yields a confirmed email but no website', async () => {
+    mocks.harvestByPhone.mockResolvedValue({
+      pgUrl: 'https://www.paginegialle.it/acme-srl',
+      email: 'info@acme.it',
+      matchedBy: 'phone',
+    });
+
+    const { pipeline } = createPipeline();
+    const result = await pipeline.processCompany({
+      company_name: 'ACME S.R.L.',
+      city: 'Milano',
+      phone: '02 123456',
+    }, 0);
+
+    expect(result.status).toBe('ENRICHMENT_ONLY_NO_WEBSITE');
+    expect(result.reason_code).toBe('ENRICHMENT_ONLY_NO_WEBSITE');
+    expect(result.email).toBe('info@acme.it');
+    expect(result.website).toBeUndefined();
+    expect(result.meta.stage_outcomes.contacts.reason_code).toBe('CONTACTS_CONFIRMED_PG_EMAIL');
+  });
+
   it('returns a dedicated reason when the exact phone/entity website cannot be verified strictly', async () => {
     mocks.harvestByPhone.mockResolvedValue({
       pgUrl: 'https://www.paginegialle.it/acme-srl',

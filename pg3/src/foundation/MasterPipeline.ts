@@ -37,6 +37,10 @@ export class MasterPipeline {
     private pecHunter: PecHunter;
     private postDiscoveryEnrichment: PostDiscoveryEnrichmentStage;
 
+    private static readonly PUBLIC_EMAIL_PROVIDERS = new Set([
+        'gmail.com', 'yahoo.com', 'hotmail.com', 'libero.it', 'alice.it', 'tim.it', 'tiscali.it', 'virgilio.it', 'pec.it'
+    ]);
+
     constructor(deps: {
         normalizer: InputNormalizer,
         registry: ShadowRegistry,
@@ -461,6 +465,19 @@ export class MasterPipeline {
                     }
                 }
 
+                if (harvest?.email && !input.email) {
+                    const pgEmail = harvest.email.trim().toLowerCase();
+                    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(pgEmail)) {
+                        input.email = pgEmail;
+                        input.email_source = 'paginegialle';
+                        const domain = pgEmail.split('@')[1] || '';
+                        const isPec = domain.includes('pec') || domain.includes('legalmail') || domain.includes('cert');
+                        if (domain && !isPec && !MasterPipeline.PUBLIC_EMAIL_PROVIDERS.has(domain)) {
+                            input.email_domain = domain;
+                        }
+                    }
+                }
+
                 if (harvest?.officialWebsite) {
                     const assessedWebsite = InputWebsiteCandidate.assess(harvest.officialWebsite);
 
@@ -726,12 +743,28 @@ export class MasterPipeline {
                 piva = enrichment.vat;
             }
 
-            const status = discoveredUrl ? 'FOUND_COMPLETE' : 'NOT_FOUND';
+            const hasEnrichmentSignals = Boolean(
+                piva
+                || financial?.fatturato_current
+                || financial?.fatturato_previous
+                || financial?.utile_netto
+                || employees
+                || pec
+                || email
+                || decisionMaker?.name
+            );
+            const status = discoveredUrl
+                ? 'FOUND_COMPLETE'
+                : hasEnrichmentSignals
+                    ? 'ENRICHMENT_ONLY_NO_WEBSITE'
+                    : 'NOT_FOUND';
             const didAttemptSerp = layersAttempted.includes('STAGE_4_SERP_COMPANY') || layersAttempted.includes('STAGE_5_SERP_REGISTRY') || layersAttempted.includes('STAGE_6_LLM_ORACLE');
             const laneReasonCode = phoneEntityReasonCode || inputWebsiteReasonCode;
 
             const reasonCode = discoveredUrl
                 ? 'FOUND_COMPLETE'
+                : hasEnrichmentSignals
+                    ? 'ENRICHMENT_ONLY_NO_WEBSITE'
                 : laneReasonCode
                     ? laneReasonCode
                     : didAttemptSerp
