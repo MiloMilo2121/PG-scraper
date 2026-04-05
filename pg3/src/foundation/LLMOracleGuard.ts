@@ -23,8 +23,13 @@ export class LLMOracleGuard {
     }
 
     public async evaluate(companyId: string, conditions: GuardConditions): Promise<GuardResult> {
-        // [C-A] All deterministic layers returned 0 candidates OR all confidence < 0.40.
-        if (conditions.candidates_count > 0 && conditions.highest_confidence >= 0.40) {
+        // Stage 6 is only coherent when there are real weak candidates to adjudicate.
+        if (conditions.candidates_count <= 0) {
+            return 'ORACLE_SKIPPED';
+        }
+
+        // Deterministic layers already surfaced a materially strong candidate.
+        if (conditions.highest_confidence >= 0.40) {
             return 'ORACLE_SKIPPED';
         }
 

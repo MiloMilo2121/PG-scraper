@@ -120,6 +120,8 @@ export class MasterPipeline {
             // THE BEST LOSER TRACKER
             let bestLoser: { url: string; layer: string; score: number } | null = null;
             const checkedCandidateUrls = new Set<string>();
+            const oracleSeedConfidenceByCanonical = new Map<string, { confidence: number; sources: Set<string> }>();
+            const oracleSeedConfidenceByVariant = new Map<string, number>();
             const locationSignals = [input.city, input.provincia]
                 .filter(Boolean)
                 .map((value) => (value || '').toLowerCase());
@@ -135,6 +137,88 @@ export class MasterPipeline {
                 discoveredUrl = url;
                 discoveryLayer = layer;
                 return true;
+            };
+
+            const normalizeOracleConfidence = (value: number): number =>
+                Number(Math.max(0, Math.min(1, value)).toFixed(2));
+
+            const recordOracleSeedCandidate = (rawCandidate: string | undefined, confidence: number, source: string): void => {
+                const assessedCandidate = InputWebsiteCandidate.assess(rawCandidate);
+                if (assessedCandidate.classification !== 'VALID') {
+                    return;
+                }
+
+                const canonicalUrl = assessedCandidate.normalizedUrl || assessedCandidate.candidates[0];
+                if (!canonicalUrl) {
+                    return;
+                }
+
+                const normalizedConfidence = normalizeOracleConfidence(confidence);
+                const existingCanonical = oracleSeedConfidenceByCanonical.get(canonicalUrl);
+                if (existingCanonical) {
+                    existingCanonical.confidence = Math.max(existingCanonical.confidence, normalizedConfidence);
+                    existingCanonical.sources.add(source);
+                } else {
+                    oracleSeedConfidenceByCanonical.set(canonicalUrl, {
+                        confidence: normalizedConfidence,
+                        sources: new Set([source]),
+                    });
+                }
+
+                for (const candidateUrl of assessedCandidate.candidates.slice(0, 6)) {
+                    const existingConfidence = oracleSeedConfidenceByVariant.get(candidateUrl) ?? 0;
+                    if (normalizedConfidence > existingConfidence) {
+                        oracleSeedConfidenceByVariant.set(candidateUrl, normalizedConfidence);
+                    }
+                }
+            };
+
+            const estimateOracleSeedConfidence = (
+                source: 'SERP_COMPANY' | 'SERP_PIVA_SNIPPET' | 'REGISTRY_EXTRACT',
+                rank: number,
+                title?: string,
+                snippet?: string,
+            ): number => {
+                const haystack = `${title || ''} ${snippet || ''}`.toLowerCase();
+                let score = source === 'SERP_PIVA_SNIPPET'
+                    ? 0.42
+                    : source === 'REGISTRY_EXTRACT'
+                        ? 0.30
+                        : 0.26;
+
+                score -= rank * 0.04;
+
+                if (/(contatti|chi siamo|azienda|about|privacy|partita iva|p\.?\s*iva|sito ufficiale)/i.test(haystack)) {
+                    score += 0.05;
+                }
+
+                return normalizeOracleConfidence(score);
+            };
+
+            const getOracleSeedStats = (): { candidatesCount: number; highestConfidence: number } => {
+                let highestConfidence = 0;
+                for (const seed of oracleSeedConfidenceByCanonical.values()) {
+                    highestConfidence = Math.max(highestConfidence, seed.confidence);
+                }
+
+                return {
+                    candidatesCount: oracleSeedConfidenceByCanonical.size,
+                    highestConfidence: normalizeOracleConfidence(highestConfidence),
+                };
+            };
+
+            const getOracleCorroborationConfidence = (rawCandidate: string | undefined): number | null => {
+                const assessedCandidate = InputWebsiteCandidate.assess(rawCandidate);
+                if (assessedCandidate.classification !== 'VALID') {
+                    return null;
+                }
+
+                let bestConfidence = 0;
+                for (const candidateUrl of assessedCandidate.candidates.slice(0, 6)) {
+                    bestConfidence = Math.max(bestConfidence, oracleSeedConfidenceByVariant.get(candidateUrl) ?? 0);
+                }
+
+                return bestConfidence > 0 ? normalizeOracleConfidence(bestConfidence) : null;
             };
 
             // In a perfect system, if Registry returns URL, we take it. 
@@ -453,6 +537,13 @@ export class MasterPipeline {
                                 timeoutMs: 12000,
                                 maxCandidates: 5,
                             });
+                            if (!outcome.matched) {
+                                recordOracleSeedCandidate(
+                                    cand.url,
+                                    estimateOracleSeedConfidence('SERP_PIVA_SNIPPET', 0, cand.title, cand.snippet),
+                                    'SERP_PIVA_SNIPPET',
+                                );
+                            }
                             if (outcome.matched) break;
                         }
                     }
@@ -461,11 +552,18 @@ export class MasterPipeline {
                 // Check a slightly wider top set now that results are ranked and deduped more aggressively.
                 if (!discoveredUrl) {
                     const topCandidates = serpRes.results.slice(0, 5);
-                    for (const cand of topCandidates) {
+                    for (const [index, cand] of topCandidates.entries()) {
                         const outcome = await checkCandidateVariants(cand.url, 'SERP_COMPANY', {
                             timeoutMs: 12000,
                             maxCandidates: 5,
                         });
+                        if (!outcome.matched) {
+                            recordOracleSeedCandidate(
+                                cand.url,
+                                estimateOracleSeedConfidence('SERP_COMPANY', index, cand.title, cand.snippet),
+                                'SERP_COMPANY',
+                            );
+                        }
                         if (outcome.matched) break;
                     }
                 }
@@ -501,7 +599,7 @@ export class MasterPipeline {
                     layersAttempted.push('STAGE_5_SERP_REGISTRY');
                     const regSerpRes = await this.dedup.search(companyId, input, 'registry', { maxTier: 2 });
                     if (regSerpRes.results.length > 0) {
-                        for (const regResult of regSerpRes.results.slice(0, 3)) {
+                        for (const [index, regResult] of regSerpRes.results.slice(0, 3).entries()) {
                             const extractedCandidates = MasterPipeline.extractWebsiteCandidatesFromText(
                                 `${regResult.title || ''} ${regResult.snippet || ''}`
                             );
@@ -511,6 +609,13 @@ export class MasterPipeline {
                                     timeoutMs: 12000,
                                     maxCandidates: 5,
                                 });
+                                if (!outcome.matched) {
+                                    recordOracleSeedCandidate(
+                                        extractedCandidate,
+                                        estimateOracleSeedConfidence('REGISTRY_EXTRACT', index, regResult.title, regResult.snippet),
+                                        'REGISTRY_EXTRACT',
+                                    );
+                                }
                                 if (outcome.matched) break;
                             }
 
@@ -546,13 +651,14 @@ export class MasterPipeline {
             // If SERP found candidates but regex PIVA/Semantic matching failed,
             // ask an LLM to semantically verify the best URL candidate.
             if (!discoveredUrl && !isBleeding) {
+                const oracleSeedStats = getOracleSeedStats();
                 const guardResult = await this.oracleGuard.evaluate(companyId, {
-                    candidates_count: 0,  // 0 = deterministic layers found nothing
-                    highest_confidence: 0,
+                    candidates_count: oracleSeedStats.candidatesCount,
+                    highest_confidence: oracleSeedStats.highestConfidence,
                     has_piva: !!piva,
-                    has_rs: true,
-                    has_address: !!input.city,
-                    has_phone: !!rawInput['phone'],
+                    has_rs: !!input.company_name,
+                    has_address: !!(input.city || input.address),
+                    has_phone: !!(rawInput['phone'] || input.phone),
                     bleeding_mode: isBleeding
                 });
 
@@ -560,7 +666,12 @@ export class MasterPipeline {
                     layersAttempted.push('STAGE_6_LLM_ORACLE');
                     try {
                         // Ask CostRouter to use LLM (Tier 3-8) to search for this company
-                        const searchQuery = `${input.company_name} ${input.city || ''} sito web ufficiale`;
+                        const searchQuery = [
+                            input.company_name,
+                            input.city || '',
+                            piva ? `P.IVA ${piva}` : '',
+                            'sito web ufficiale',
+                        ].filter(Boolean).join(' ');
                         const llmResult = await this.costRouter.route<Array<{ title: string; url: string; snippet: string }>>(
                             'SERP',
                             { query: searchQuery },
@@ -571,18 +682,28 @@ export class MasterPipeline {
                             console.log(`[LLM_ORACLE] Provider ${llmResult.provider} returned ${llmResult.data.length} candidates for "${input.company_name}"`);
                             for (const llmCand of llmResult.data) {
                                 if (llmCand.url) {
+                                    const corroboratedConfidence = getOracleCorroborationConfidence(llmCand.url);
+                                    if (corroboratedConfidence === null) {
+                                        console.log(`[LLM_ORACLE] Skipping non-corroborated candidate: ${llmCand.url}`);
+                                        continue;
+                                    }
+
                                     const found = await checkCandidateVariants(llmCand.url, 'LLM_ORACLE', {
                                         timeoutMs: 12000,
                                         maxCandidates: 5,
                                     });
                                     if (found.matched) break;
-                                    // If Gate fails but we trust the LLM (Tier 3+), accept with lower confidence
-                                    if (!discoveredUrl && llmResult.tier >= 3) {
+
+                                    // Only accept semantic Oracle candidates when they corroborate an already-observed
+                                    // deterministic seed; provider tier alone is not enough evidence.
+                                    if (!discoveredUrl && corroboratedConfidence >= 0.28) {
                                         const assessedCandidate = InputWebsiteCandidate.assess(llmCand.url);
-                                        discoveredUrl = assessedCandidate.normalizedUrl || llmCand.url;
-                                        discoveryLayer = 'LLM_ORACLE_SEMANTIC';
-                                        console.log(`[LLM_ORACLE] Semantic accept: ${discoveredUrl} for "${input.company_name}" (provider: ${llmResult.provider})`);
-                                        break;
+                                        if (assessedCandidate.classification === 'VALID') {
+                                            discoveredUrl = assessedCandidate.normalizedUrl || llmCand.url;
+                                            discoveryLayer = 'LLM_ORACLE_SEMANTIC';
+                                            console.log(`[LLM_ORACLE] Corroborated semantic accept: ${discoveredUrl} for "${input.company_name}" (provider: ${llmResult.provider}, seed_confidence: ${corroboratedConfidence})`);
+                                            break;
+                                        }
                                     }
                                 }
                             }

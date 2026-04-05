@@ -218,13 +218,21 @@ function buildScenario(index: number, lane: MockLane): MockScenario {
     rootDomain,
     lane: 'llm_oracle',
     rawInput: baseInput,
-    expectedUrl: `https://${rootDomain}`,
+    expectedUrl: `https://${rootDomain}/`,
     expectedLayer: 'LLM_ORACLE_SEMANTIC',
-    gateSuccessUrls: [`https://${rootDomain}`],
+    gateSuccessUrls: [],
+    companyResults: [{
+      title: `${companyName} Contatti`,
+      snippet: `Contatti ufficiali ${companyName}`,
+      url: `https://shop.${rootDomain}/landing`,
+      source: 'ddg',
+      normalized_url: `https://shop.${rootDomain}/landing`,
+      domain: `shop.${rootDomain}`,
+    }],
     llmResults: [{
       title: `${companyName} Official Site`,
       snippet: `Sito ufficiale ${companyName}`,
-      url: `https://shop.${rootDomain}/landing`,
+      url: `https://${rootDomain}`,
     }],
   };
 }
@@ -419,7 +427,7 @@ describe('MasterPipeline 30-company mock batch', () => {
     expect(dedup.search).toHaveBeenCalled();
     expect(costRouter.route).toHaveBeenCalledTimes(1);
     expect(mocks.harvestByPhone).toHaveBeenCalledTimes(4);
-    expect(mocks.rdapCheckDomainOwnership).toHaveBeenCalledTimes(2);
+    expect(mocks.rdapCheckDomainOwnership).toHaveBeenCalledTimes(5);
 
     console.log('[Mock30] Website discovery summary', JSON.stringify({
       total: results.length,
