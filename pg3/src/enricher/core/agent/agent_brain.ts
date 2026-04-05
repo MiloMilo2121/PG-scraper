@@ -2,9 +2,8 @@
 import { LLMService } from '../ai/llm_service';
 import { DOMSnapshot } from './dom_distiller';
 import { Logger } from '../../utils/logger';
-import { config } from '../../config';
 import { AGENT_NAVIGATION_PROMPT } from '../ai/prompt_templates';
-import { ModelRouter, TaskDifficulty } from '../ai/model_router';
+import { ModelRouter } from '../ai/model_router';
 
 /**
  * 🧠 AGENT BRAIN (The Decision Maker)
@@ -21,6 +20,7 @@ export interface AgentDecision {
 }
 
 export class AgentBrain {
+    private static TASK_PROFILE = 'agent_navigation' as const;
 
     /**
      * Decides the next step to achieve the goal on the current page.
@@ -44,9 +44,7 @@ export class AgentBrain {
         });
 
         try {
-            // Use MODERATE tier so Agent uses fast/cheap/free models (glm-4.7-flash, deepseek-chat)
-            // instead of burning expensive GLM-5 calls. Modern flash models are smart enough for this agent.
-            const modelChain = ModelRouter.selectModelChain(TaskDifficulty.MODERATE);
+            const modelChain = ModelRouter.selectTaskChain(this.TASK_PROFILE, { strictJson: true });
             const decision = await LLMService.completeStructured<AgentDecision>(
                 prompt,
                 AGENT_NAVIGATION_PROMPT.schema as Record<string, unknown>,
@@ -54,8 +52,7 @@ export class AgentBrain {
                 modelChain.slice(1)
             );
 
-            // Log selection
-            ModelRouter.logSelection('AgentDecision', TaskDifficulty.MODERATE);
+            ModelRouter.logTaskSelection(this.TASK_PROFILE, { strictJson: true });
 
             if (!decision) {
                 return {
@@ -64,7 +61,7 @@ export class AgentBrain {
                 };
             }
 
-            return decision;
+            return this.validateDecision(decision);
 
         } catch (error) {
             Logger.error('[AgentBrain] Decision failed', { error: error as Error });
@@ -73,5 +70,38 @@ export class AgentBrain {
                 action: 'FAIL'
             };
         }
+    }
+
+    private static validateDecision(decision: AgentDecision): AgentDecision {
+        switch (decision.action) {
+            case 'CLICK':
+                if (!decision.target_id) {
+                    return {
+                        thought: 'Invalid CLICK decision: missing target_id',
+                        action: 'FAIL'
+                    };
+                }
+                break;
+            case 'TYPE':
+                if (!decision.target_id || !decision.text_value) {
+                    return {
+                        thought: 'Invalid TYPE decision: missing target_id or text_value',
+                        action: 'FAIL'
+                    };
+                }
+                break;
+            case 'EXTRACT':
+                if (!decision.extraction_key) {
+                    return {
+                        thought: 'Invalid EXTRACT decision: missing extraction_key',
+                        action: 'FAIL'
+                    };
+                }
+                break;
+            default:
+                break;
+        }
+
+        return decision;
     }
 }

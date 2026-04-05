@@ -1,9 +1,8 @@
 
 import { Page } from 'playwright';
 import { AgentBrain, AgentDecision } from './agent_brain';
-import { DOMDistiller, InteractiveElement } from './dom_distiller';
+import { DOMDistiller, DOMSnapshot, InteractiveElement } from './dom_distiller';
 import { Logger } from '../../utils/logger';
-import { LLMService } from '../ai/llm_service';
 
 /**
  * 🏃 AGENT RUNNER (The Executor)
@@ -13,6 +12,9 @@ import { LLMService } from '../ai/llm_service';
 export class AgentRunner {
     private static MAX_STEPS = 10; // Capped for cost safety (~$0.005 max per session with 4o-mini)
     private static TIMEOUT_MS = 45000; // 45s for fallback is enough
+    private static SETTLE_MS = 2000;
+    private static MAX_IDENTICAL_DECISIONS_PER_PAGE = 2;
+    private static MAX_SCROLL_ATTEMPTS_PER_PAGE = 3;
 
     /**
      * Run the autonomous Agent to achieve a specific goal on the page.
@@ -25,6 +27,10 @@ export class AgentRunner {
         const history: string[] = [];
         let steps = 0;
         let finalResult: string | null = null;
+        let extractedKey: string | null = null;
+        const decisionFingerprintCounts = new Map<string, number>();
+        const scrollAttemptsByPage = new Map<string, number>();
+        const recentFingerprints: string[] = [];
 
         // Timeout handling
         const timeoutPromise = new Promise<null>((_, reject) =>
@@ -39,10 +45,22 @@ export class AgentRunner {
 
                         // 1. OBSERVE
                         const snapshot = await DOMDistiller.capture(page);
+                        const pageSignature = this.buildPageSignature(snapshot);
 
                         // 2. DECIDE
                         const decision = await AgentBrain.decide(snapshot, goal, history);
                         Logger.info(`[AgentRunner] Step ${steps}: ${decision.thought} -> ${decision.action}`);
+
+                        const decisionFingerprint = this.buildDecisionFingerprint(pageSignature, decision);
+                        if (this.shouldAbortForLoop(decision, decisionFingerprint, decisionFingerprintCounts, recentFingerprints)) {
+                            Logger.warn(`[AgentRunner] Loop guard triggered at step ${steps}: ${decisionFingerprint}`);
+                            break;
+                        }
+
+                        if (this.shouldAbortForScroll(decision, pageSignature, scrollAttemptsByPage)) {
+                            Logger.warn(`[AgentRunner] Scroll guard triggered at step ${steps} on page signature ${pageSignature}`);
+                            break;
+                        }
 
                         // 3. ACT
                         const actionResult = await this.executeAction(page, decision, snapshot.interactive);
@@ -50,12 +68,12 @@ export class AgentRunner {
                         // Record history
                         history.push(`Step ${steps}: ${decision.action} ${decision.target_id || ''} -> ${actionResult}`);
 
-                        if (decision.action === 'DONE') {
-                            finalResult = "Goal Achieved";
-                            break;
-                        }
                         if (decision.action === 'EXTRACT') {
-                            finalResult = decision.text_value || "Extracted Data";
+                            extractedKey = decision.extraction_key || extractedKey;
+                            continue;
+                        }
+                        if (decision.action === 'DONE') {
+                            finalResult = extractedKey || 'Goal Achieved';
                             break;
                         }
                         if (decision.action === 'FAIL') {
@@ -64,7 +82,7 @@ export class AgentRunner {
                         }
 
                         // Wait a bit for page to settle
-                        await new Promise(r => setTimeout(r, 2000));
+                        await new Promise(r => setTimeout(r, this.SETTLE_MS));
                     }
                 })(),
                 timeoutPromise
@@ -75,6 +93,69 @@ export class AgentRunner {
 
         Logger.info(`[AgentRunner] Mission End. Steps: ${steps}. Result: ${finalResult ? 'SUCCESS' : 'FAILURE'}`);
         return finalResult;
+    }
+
+    private static buildPageSignature(snapshot: DOMSnapshot): string {
+        return [
+            snapshot.url.trim(),
+            snapshot.title.trim(),
+            snapshot.summary.replace(/\s+/g, ' ').trim().slice(0, 500),
+        ].join('|');
+    }
+
+    private static buildDecisionFingerprint(pageSignature: string, decision: AgentDecision): string {
+        return [
+            pageSignature,
+            decision.action,
+            decision.target_id || '',
+            decision.text_value || '',
+            decision.extraction_key || '',
+        ].join('|');
+    }
+
+    private static shouldAbortForLoop(
+        decision: AgentDecision,
+        fingerprint: string,
+        counts: Map<string, number>,
+        recentFingerprints: string[]
+    ): boolean {
+        if (decision.action === 'DONE' || decision.action === 'FAIL' || decision.action === 'SCROLL') {
+            return false;
+        }
+
+        const nextCount = (counts.get(fingerprint) || 0) + 1;
+        counts.set(fingerprint, nextCount);
+        recentFingerprints.push(fingerprint);
+        if (recentFingerprints.length > 4) {
+            recentFingerprints.shift();
+        }
+
+        if (nextCount > this.MAX_IDENTICAL_DECISIONS_PER_PAGE) {
+            return true;
+        }
+
+        if (recentFingerprints.length === 4) {
+            const [a, b, c, d] = recentFingerprints;
+            if (a === c && b === d) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static shouldAbortForScroll(
+        decision: AgentDecision,
+        pageSignature: string,
+        scrollAttemptsByPage: Map<string, number>
+    ): boolean {
+        if (decision.action !== 'SCROLL') {
+            return false;
+        }
+
+        const nextCount = (scrollAttemptsByPage.get(pageSignature) || 0) + 1;
+        scrollAttemptsByPage.set(pageSignature, nextCount);
+        return nextCount > this.MAX_SCROLL_ATTEMPTS_PER_PAGE;
     }
 
     private static async executeAction(
@@ -119,7 +200,8 @@ export class AgentRunner {
                     return "Scrolled Down";
 
                 case 'EXTRACT':
-                    return "Extracted";
+                    if (!decision.extraction_key) return 'Error: No extraction_key for EXTRACT';
+                    return `Extracted ${decision.extraction_key}`;
 
                 case 'DONE':
                 case 'FAIL':

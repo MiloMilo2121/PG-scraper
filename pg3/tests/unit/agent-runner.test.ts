@@ -1,5 +1,5 @@
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { AgentRunner } from '../../src/enricher/core/agent/agent_runner';
 import { AgentBrain } from '../../src/enricher/core/agent/agent_brain';
 import { DOMDistiller, DOMSnapshot } from '../../src/enricher/core/agent/dom_distiller';
@@ -19,6 +19,10 @@ describe('AgentRunner', () => {
             type: vi.fn(),
             click: vi.fn(),
         };
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
     });
 
     it('terminates successfully when DONE action is returned', async () => {
@@ -101,5 +105,71 @@ describe('AgentRunner', () => {
 
         const result = await AgentRunner.run(mockPage, 'Goal');
         expect(result).toBeNull();
+    });
+
+    it('returns the extraction key only after EXTRACT followed by DONE', async () => {
+        const mockSnapshot: DOMSnapshot = {
+            title: 'Test',
+            url: 'http',
+            summary: 'VAT 123 visible',
+            interactive: []
+        };
+        vi.mocked(DOMDistiller.capture).mockResolvedValue(mockSnapshot);
+
+        vi.mocked(AgentBrain.decide)
+            .mockResolvedValueOnce({ thought: 'Capture the VAT marker', action: 'EXTRACT', extraction_key: 'vat_number' })
+            .mockResolvedValueOnce({ thought: 'Done', action: 'DONE' });
+
+        const result = await AgentRunner.run(mockPage, 'Goal');
+        expect(result).toBe('vat_number');
+        expect(AgentBrain.decide).toHaveBeenCalledTimes(2);
+    });
+
+    it('aborts deterministic loops when the same action repeats on the same page', async () => {
+        vi.useFakeTimers();
+
+        const mockSnapshot: DOMSnapshot = {
+            title: 'Test',
+            url: 'http://same-page',
+            summary: 'same summary',
+            interactive: [{ id: '1', tagName: 'button', text: 'Click Me', attributes: {}, xpath: '//button' }]
+        };
+        vi.mocked(DOMDistiller.capture).mockResolvedValue(mockSnapshot);
+        vi.mocked(AgentBrain.decide).mockResolvedValue({
+            thought: 'Click again',
+            action: 'CLICK',
+            target_id: '1'
+        });
+        mockPage.evaluate.mockResolvedValue(true);
+
+        const runPromise = AgentRunner.run(mockPage, 'Goal');
+        await vi.advanceTimersByTimeAsync(5000);
+        const result = await runPromise;
+
+        expect(result).toBeNull();
+        expect(AgentBrain.decide).toHaveBeenCalledTimes(3);
+    });
+
+    it('stops after too many scroll attempts on the same page state', async () => {
+        vi.useFakeTimers();
+
+        const mockSnapshot: DOMSnapshot = {
+            title: 'Infinite Scroll',
+            url: 'http://same-page',
+            summary: 'unchanged summary',
+            interactive: []
+        };
+        vi.mocked(DOMDistiller.capture).mockResolvedValue(mockSnapshot);
+        vi.mocked(AgentBrain.decide).mockResolvedValue({
+            thought: 'Need more content',
+            action: 'SCROLL'
+        });
+
+        const runPromise = AgentRunner.run(mockPage, 'Goal');
+        await vi.advanceTimersByTimeAsync(7000);
+        const result = await runPromise;
+
+        expect(result).toBeNull();
+        expect(AgentBrain.decide).toHaveBeenCalledTimes(4);
     });
 });
