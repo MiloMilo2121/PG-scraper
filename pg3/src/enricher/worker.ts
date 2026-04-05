@@ -72,10 +72,16 @@ function mapJobResult(job: EnrichmentJobData, pipelineResult: any): JobResult {
     const reasonCode = !websiteUrl && hasAnySignal
         ? 'ENRICHMENT_ONLY_NO_WEBSITE'
         : (pipelineResult.reason_code || pipelineResult.status);
+    const businessStatus = websiteUrl
+        ? 'FOUND_COMPLETE'
+        : hasAnySignal
+            ? 'ENRICHMENT_ONLY_NO_WEBSITE'
+            : 'NOT_FOUND';
 
     return {
         success: hasAnySignal,
         company_id: job.company_id,
+        business_status: businessStatus,
         vat,
         revenue,
         employees: employees ? String(employees) : undefined,
@@ -137,8 +143,13 @@ function persistSuccess(job: EnrichmentJobData, pipelineResult: any, durationMs:
         undefined,
         persistedReasonCode,
         stageOutcomes,
-        job.run_id
+        job.run_id,
+        result.business_status
     );
+
+    if (result.business_status) {
+        MetricsServer.recordBusinessOutcome(result.business_status);
+    }
 
     return result;
 }
@@ -166,8 +177,13 @@ async function processJob(job: Job<EnrichmentJobData>, runtime: OmegaRuntime): P
             Logger.categorizeError(err),
             'WORKER_EXCEPTION',
             undefined,
-            job.data.run_id
+            job.data.run_id,
+            status === 'FAILED' ? 'WORKER_EXCEPTION' : undefined
         );
+
+        if (status === 'FAILED') {
+            MetricsServer.recordTechnicalFailure();
+        }
 
         throw err;
     }

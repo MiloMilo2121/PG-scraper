@@ -94,10 +94,12 @@ describe('DB legacy migration', () => {
     const rawDb = dbModule.default as any;
     const enrichmentColumns = rawDb.prepare('PRAGMA table_info(enrichment_results)').all() as Array<{ name: string }>;
     const companyColumns = rawDb.prepare('PRAGMA table_info(companies)').all() as Array<{ name: string }>;
+    const jobLogColumns = rawDb.prepare('PRAGMA table_info(job_log)').all() as Array<{ name: string }>;
 
     expect(enrichmentColumns.map((column) => column.name)).toContain('updated_at');
     expect(enrichmentColumns.map((column) => column.name)).toContain('deleted_at');
     expect(companyColumns.map((column) => column.name)).toContain('deleted_at');
+    expect(jobLogColumns.map((column) => column.name)).toContain('business_status');
 
     dbModule.insertCompany({
       id: 'legacy-1',

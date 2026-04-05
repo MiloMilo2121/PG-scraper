@@ -10,6 +10,9 @@ import { Logger } from '../utils/logger';
 export class MetricsServer {
     private app = express();
     private port: number;
+    private static processedCount = 0;
+    private static usefulOutcomeCount = 0;
+    private static consecutiveFailureCount = 0;
 
     // Task 32: Success Rate
     static validationYield = new Gauge({
@@ -25,6 +28,27 @@ export class MetricsServer {
     static successfulFinds = new Counter({
         name: 'pulse_successful_finds_total',
         help: 'Total number of websites successfully found'
+    });
+
+    static enrichmentOnlyFinds = new Counter({
+        name: 'pulse_enrichment_only_total',
+        help: 'Total number of successful enrichment-only outcomes without validated website'
+    });
+
+    static notFoundOutcomes = new Counter({
+        name: 'pulse_not_found_total',
+        help: 'Total number of processed companies with no useful enrichment outcome'
+    });
+
+    static technicalFailures = new Counter({
+        name: 'pulse_worker_failures_total',
+        help: 'Total number of terminal worker failures'
+    });
+
+    static businessOutcomes = new Counter({
+        name: 'pulse_business_outcomes_total',
+        help: 'Terminal business outcomes observed by the worker',
+        labelNames: ['outcome'] as const,
     });
 
     // Task 33: Event Loop Lag
@@ -86,9 +110,37 @@ export class MetricsServer {
      * Updates the yield gauge based on counters
      */
     static updateYield() {
-        // We can't easily read back counters in prom-client without async logic usually,
-        // so we might need to track local variables or just trust the raw counters for Grafana to calculate.
-        // However, user asked to track 'yield' specifically.
-        // We will calculate it locally to set the Gauge.
+        const yieldPercent = MetricsServer.processedCount === 0
+            ? 0
+            : (MetricsServer.usefulOutcomeCount / MetricsServer.processedCount) * 100;
+        MetricsServer.validationYield.set(yieldPercent);
+    }
+
+    static recordBusinessOutcome(outcome: 'FOUND_COMPLETE' | 'ENRICHMENT_ONLY_NO_WEBSITE' | 'NOT_FOUND'): void {
+        MetricsServer.companiesProcessed.inc();
+        MetricsServer.processedCount += 1;
+        MetricsServer.businessOutcomes.inc({ outcome });
+
+        if (outcome === 'FOUND_COMPLETE') {
+            MetricsServer.successfulFinds.inc();
+            MetricsServer.usefulOutcomeCount += 1;
+            MetricsServer.consecutiveFailureCount = 0;
+        } else if (outcome === 'ENRICHMENT_ONLY_NO_WEBSITE') {
+            MetricsServer.enrichmentOnlyFinds.inc();
+            MetricsServer.usefulOutcomeCount += 1;
+            MetricsServer.consecutiveFailureCount = 0;
+        } else {
+            MetricsServer.notFoundOutcomes.inc();
+            MetricsServer.consecutiveFailureCount += 1;
+        }
+
+        MetricsServer.consecutiveFailures.set(MetricsServer.consecutiveFailureCount);
+        MetricsServer.updateYield();
+    }
+
+    static recordTechnicalFailure(): void {
+        MetricsServer.technicalFailures.inc();
+        MetricsServer.consecutiveFailureCount += 1;
+        MetricsServer.consecutiveFailures.set(MetricsServer.consecutiveFailureCount);
     }
 }

@@ -142,6 +142,7 @@ export function initializeDatabase(): void {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             company_id TEXT NOT NULL,
             status TEXT NOT NULL,
+            business_status TEXT,
             error_message TEXT,
             error_category TEXT,
             reason_code TEXT,
@@ -249,9 +250,18 @@ export function initializeDatabase(): void {
     }
 
     const jobLogColumns = getTableColumns('job_log');
+    addColumnIfMissing('job_log', jobLogColumns, 'business_status', `ALTER TABLE job_log ADD COLUMN business_status TEXT`);
     addColumnIfMissing('job_log', jobLogColumns, 'reason_code', `ALTER TABLE job_log ADD COLUMN reason_code TEXT`);
     addColumnIfMissing('job_log', jobLogColumns, 'stage_outcomes_json', `ALTER TABLE job_log ADD COLUMN stage_outcomes_json TEXT`);
     addColumnIfMissing('job_log', jobLogColumns, 'run_id', `ALTER TABLE job_log ADD COLUMN run_id TEXT`);
+    if (jobLogColumns.has('business_status')) {
+        runMigrationStep('job_log.business_status_index', () => {
+            db.exec(`
+                CREATE INDEX IF NOT EXISTS idx_job_log_business_status
+                ON job_log(business_status)
+            `);
+        });
+    }
 
     schemaInitialized = true;
     initializeStatements();
@@ -405,8 +415,8 @@ function initializeStatements(): void {
     `);
 
     insertJobLogStmt = db.prepare(`
-        INSERT INTO job_log (company_id, status, error_message, error_category, reason_code, stage_outcomes_json, run_id, duration_ms, attempt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO job_log (company_id, status, business_status, error_message, error_category, reason_code, stage_outcomes_json, run_id, duration_ms, attempt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     insertFieldEvidenceStmt = db.prepare(`
@@ -557,12 +567,14 @@ export function logJobResult(
     errorCategory?: string,
     reasonCode?: string,
     stageOutcomes?: Record<string, unknown>,
-    runId?: string
+    runId?: string,
+    businessStatus?: 'FOUND_COMPLETE' | 'ENRICHMENT_ONLY_NO_WEBSITE' | 'NOT_FOUND' | 'WORKER_EXCEPTION'
 ): void {
     ensureReady();
     insertJobLogStmt.run(
         companyId,
         status,
+        businessStatus || null,
         errorMessage,
         errorCategory,
         reasonCode,
@@ -573,7 +585,16 @@ export function logJobResult(
     );
 }
 
-export function getStats(): { total: number; enriched: number; pending: number; failed: number } {
+export function getStats(): {
+    total: number;
+    enriched: number;
+    processed: number;
+    pending: number;
+    failed: number;
+    found_complete: number;
+    enrichment_only: number;
+    not_found: number;
+} {
     ensureReady();
     const total = (db.prepare('SELECT COUNT(*) as count FROM companies WHERE deleted_at IS NULL').get() as { count: number }).count;
     const enriched = (db.prepare('SELECT COUNT(DISTINCT company_id) as count FROM enrichment_results WHERE deleted_at IS NULL').get() as { count: number }).count;
@@ -583,11 +604,30 @@ export function getStats(): { total: number; enriched: number; pending: number; 
         WHERE status IN ('SUCCESS', 'FAILED')
     `).get() as { count: number }).count;
     const failed = (db.prepare('SELECT COUNT(DISTINCT company_id) as count FROM job_log WHERE status = ?').get('FAILED') as { count: number }).count;
+    const foundComplete = (db.prepare(`
+        SELECT COUNT(DISTINCT company_id) as count
+        FROM job_log
+        WHERE status = 'SUCCESS' AND business_status = 'FOUND_COMPLETE'
+    `).get() as { count: number }).count;
+    const enrichmentOnly = (db.prepare(`
+        SELECT COUNT(DISTINCT company_id) as count
+        FROM job_log
+        WHERE status = 'SUCCESS' AND business_status = 'ENRICHMENT_ONLY_NO_WEBSITE'
+    `).get() as { count: number }).count;
+    const notFound = (db.prepare(`
+        SELECT COUNT(DISTINCT company_id) as count
+        FROM job_log
+        WHERE status = 'SUCCESS' AND business_status = 'NOT_FOUND'
+    `).get() as { count: number }).count;
     return {
         total,
         enriched,
+        processed,
         pending: Math.max(total - processed, 0),
         failed,
+        found_complete: foundComplete,
+        enrichment_only: enrichmentOnly,
+        not_found: notFound,
     };
 }
 

@@ -258,10 +258,42 @@ describe('DB persistence', () => {
     });
 
     const before = dbModule.getStats();
-    dbModule.logJobResult('cmp-pending-fix', 'SUCCESS', 250, 1, undefined, undefined, 'NOT_FOUND');
+    dbModule.logJobResult('cmp-pending-fix', 'SUCCESS', 250, 1, undefined, undefined, 'NOT_FOUND', undefined, undefined, 'NOT_FOUND');
 
     const after = dbModule.getStats();
     expect(after.pending).toBe(before.pending - 1);
+    expect(after.processed).toBe(before.processed + 1);
+    expect(after.not_found).toBeGreaterThanOrEqual(1);
+  });
+
+  it('persists business_status separately from technical status in job_log', () => {
+    dbModule.insertCompany({
+      id: 'cmp-job-log',
+      company_name: 'Iota',
+      city: 'Bologna',
+    });
+
+    dbModule.logJobResult(
+      'cmp-job-log',
+      'SUCCESS',
+      180,
+      1,
+      undefined,
+      undefined,
+      'ENRICHMENT_ONLY_NO_WEBSITE',
+      { contacts: { status: 'success' } },
+      'run-1',
+      'ENRICHMENT_ONLY_NO_WEBSITE',
+    );
+
+    const rawDb = dbModule.default as any;
+    const row = rawDb
+      .prepare('SELECT status, business_status, reason_code FROM job_log WHERE company_id = ? ORDER BY id DESC LIMIT 1')
+      .get('cmp-job-log');
+
+    expect(row.status).toBe('SUCCESS');
+    expect(row.business_status).toBe('ENRICHMENT_ONLY_NO_WEBSITE');
+    expect(row.reason_code).toBe('ENRICHMENT_ONLY_NO_WEBSITE');
   });
 
   it('enforces at most one active enrichment row per company at schema level', () => {

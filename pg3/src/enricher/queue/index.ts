@@ -75,6 +75,7 @@ export interface EnrichmentJobData {
 export interface JobResult {
     success: boolean;
     company_id: string;
+    business_status?: 'FOUND_COMPLETE' | 'ENRICHMENT_ONLY_NO_WEBSITE' | 'NOT_FOUND';
     vat?: string;
     revenue?: string;
     employees?: string;
