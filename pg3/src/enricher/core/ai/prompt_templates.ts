@@ -14,6 +14,13 @@ import { CompanyInput } from '../../types';
  * **Law 506: Prompt Versioning** — All prompts are code.
  */
 
+const NULLABLE_STRING_SCHEMA = {
+    anyOf: [
+        { type: 'string' as const },
+        { type: 'null' as const },
+    ],
+} as const;
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEMPLATE 1: COMPANY VALIDATION
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -28,7 +35,12 @@ export interface ValidationPromptVars {
 }
 
 export const VALIDATE_COMPANY_PROMPT = {
-    system: `You are an expert business validation AI. Your task is to determine if a webpage belongs to a specific Italian company by analyzing the content and comparing it to known company details.`,
+    system: `You are an expert Italian company-identity validator.
+Your job is entity resolution, not generic summarization.
+Be conservative: do not accept directories, social profiles, marketplace pages, review pages, PDFs, or news articles as the official company website.
+Only accept a page as official when the evidence points to the target legal entity itself.
+If evidence conflicts, prefer reject/manual review over false positives.
+Return only the structured fields requested.`,
 
     template: (vars: ValidationPromptVars) => `
 ╔══════════════════════════════════════════════════════════════╗
@@ -94,20 +106,35 @@ DECISION CRITERIA:
 1. ✅ STRONG MATCH (confidence ≥ 0.9):
    - Exact VAT number match on a non-directory page
    - Exact phone number match + company name match
+   - Legal footer/contact page showing the same company identity
 
-2. ✅ GOOD MATCH (confidence 0.6-0.8):
+2. ✅ GOOD MATCH (confidence 0.65-0.79):
    - Company name + city match on official business site
    - Address match + company name on dedicated page
+   - Domain clearly branded for the company and page content describes its services
 
-3. ❌ REJECT (confidence < 0.5):
+3. ❌ REJECT (confidence < 0.55):
    - No company name found
    - Directory/aggregator site (e.g., PagineGialle, Infobel)
    - Social media profile page only
    - Generic "About Us" template with different company
+   - Franchise/global portal page without local agency/entity confirmation
+   - Job posts, supplier pages, review pages, article pages, press releases
 
-4. ⚠️ UNCERTAIN (confidence 0.5-0.6):
+4. ⚠️ UNCERTAIN (confidence 0.55-0.64):
    - Name match but no location confirmation
    - Similar company name (possible typo/variation)
+   - Shared brand / franchise / network page where branch ownership is unclear
+
+SIGNAL PRIORITY:
+- Strongest: VAT, phone, exact address, legal entity wording, footer/legal/privacy identity blocks
+- Medium: city/province, service descriptions, branded domain, contact page consistency
+- Weak: raw name-only mention, testimonials, news mentions, boilerplate references
+
+DO NOT OVERWEIGHT:
+- Generic domain similarity alone
+- A single name mention without locality/legal corroboration
+- Directory snippets copied from third parties
 
 ENTITY CLASSIFICATION:
 - "official_site" → Company's own website
@@ -116,8 +143,8 @@ ENTITY CLASSIFICATION:
 - "uncertain" → Cannot determine with confidence
 
 NEXT ACTION:
-- "accept" → High confidence (≥ 0.8), official site, use this data
-- "crawl_contact" → Medium confidence (0.6-0.7), extract contacts for verification
+- "accept" → High confidence (≥ 0.7), official site, use this data
+- "crawl_contact" → Medium confidence (0.55-0.69), extract contacts for verification
 - "reject" → Low confidence or directory/social page
 - "manual_review" → Uncertain cases
 
@@ -174,7 +201,11 @@ export interface ContactExtractionVars {
 }
 
 export const EXTRACT_CONTACTS_PROMPT = {
-    system: `You are an expert data extraction AI specialized in Italian business contact information. Extract VAT numbers, PEC emails, phone numbers, and decision makers from webpage content.`,
+    system: `You are an expert Italian business contact extraction engine.
+Extract only contacts that are actually present or strongly implied by the provided webpage content and deterministic candidates.
+Prefer company-owned contacts over third-party/vendor/platform contacts.
+Do not hallucinate fields. If uncertain, return null.
+Return only the structured fields requested.`,
 
     template: (vars: ContactExtractionVars) => `
 ╔══════════════════════════════════════════════════════════════╗
@@ -217,8 +248,21 @@ EXTRACTION RULES:
 
 5️⃣ EMAIL (Generic):
    - Standard email addresses (not PEC)
-   - Prefer personal/CEO emails over info@/contact@
+   - Prefer company-owned domain emails over public mailbox providers
+   - Prefer local/branch/company-owned emails over privacy/DPO/webmaster/hosting/vendor addresses
    - Example: mario.rossi@azienda.it
+
+6️⃣ HARD REJECTIONS:
+   - Do not return emails belonging to website builders, registrars, CDNs, privacy vendors, cookie vendors, or DPO services
+   - Do not return generic platform addresses if the page belongs to a franchise/portal and the email is clearly corporate-central but not the local company
+   - Ignore contacts that appear only in legal/vendor boilerplate unless they clearly belong to the target company
+
+OUTPUT PRIORITY:
+1. PEC belonging to the company
+2. Company-domain email
+3. Verified phone
+4. VAT
+5. CEO/owner name only if explicitly stated by the page
 
 OUTPUT SCHEMA:
 \`\`\`json
@@ -238,14 +282,14 @@ If a field is not found, return null. Confidence reflects how certain you are ab
     schema: {
         type: 'object' as const,
         properties: {
-            vat: { type: ['string', 'null'] as any },
-            pec: { type: ['string', 'null'] as any },
-            ceo_name: { type: ['string', 'null'] as any },
-            phone: { type: ['string', 'null'] as any },
-            email: { type: ['string', 'null'] as any },
+            vat: NULLABLE_STRING_SCHEMA,
+            pec: NULLABLE_STRING_SCHEMA,
+            ceo_name: NULLABLE_STRING_SCHEMA,
+            phone: NULLABLE_STRING_SCHEMA,
+            email: NULLABLE_STRING_SCHEMA,
             confidence: { type: 'number' as const },
         },
-        required: ['confidence'] as const,
+        required: ['vat', 'pec', 'ceo_name', 'phone', 'email', 'confidence'] as const,
         additionalProperties: false as const,
     }
 };
@@ -358,7 +402,11 @@ export interface SerpSelectionVars {
 }
 
 export const SELECT_BEST_URL_PROMPT = {
-    system: `You are an expert web analyst. Given search results for an Italian company, identify the URL most likely to be their official website (not directories, social media, or reviews).`,
+    system: `You are an expert Italian company website selector.
+Your task is to pick the official company website from SERP results, or return null if none is credible.
+Be strict: never choose a directory, social profile, review page, marketplace, app store page, listing page, or article page as the official website.
+Return null instead of a weak guess.
+Return only the structured fields requested.`,
 
     template: (vars: SerpSelectionVars) => `
 ╔══════════════════════════════════════════════════════════════╗
@@ -415,17 +463,30 @@ DECISION RULES:
 - Title contains exact company name
 - Snippet describes company services/products
 - .com/.it/.eu domain (business domain)
+- Result looks like a homepage/contact/about page, not a profile/listing/article
+- City/location or legal identity matches the target
 
 ❌ REJECT (confidence < 0.3):
 - Directories: paginegialle.it, infobel.it, kompass.com
 - Reviews: tripadvisor, trustpilot, yelp
 - Social: facebook.com, linkedin.com, instagram.com
 - E-commerce platforms: amazon, ebay
+- Maps/listing portals, franchise directory pages, aggregator cards, or portal subprofiles
+- URLs with clear article/news/blog/job/listing patterns unless they are on the official company domain and clearly the company page
 
 ⚠️ UNCERTAIN (confidence 0.3-0.7):
 - Generic business portals
 - Industry-specific directories
 - News articles about the company
+- Branded domains without location/entity confirmation
+- Franchise brand domains when branch ownership is ambiguous
+
+SELECTION POLICY:
+- Prefer returning null over a directory/social false positive
+- Never choose a result only because it is first
+- Penalize obvious directories/social/review/news results heavily
+- Penalize deep paths that look like listings, jobs, classifieds, posts, or article pages
+- If two candidates are plausible, choose the one with stronger entity + locality evidence; otherwise return null
 
 OUTPUT SCHEMA:
 \`\`\`json
@@ -441,7 +502,7 @@ OUTPUT SCHEMA:
     schema: {
         type: 'object' as const,
         properties: {
-            bestUrl: { type: ['string', 'null'] as any },
+            bestUrl: NULLABLE_STRING_SCHEMA,
             confidence: { type: 'number' as const },
             reasoning: { type: 'string' as const },
             signals: {
@@ -499,6 +560,7 @@ DECISION RULES:
 - If you see a promising link (e.g., "Contatti", "Chi Siamo") → CLICK it
 - If a cookie banner blocks the page → CLICK the accept/close button
 - Do NOT repeat actions from recent history
+- If the same CLICK/TYPE/EXTRACT on the same target was already tried on the same page state → choose FAIL or a different action
 - If stuck after 3 SCROLL attempts → FAIL
 
 OUTPUT SCHEMA:

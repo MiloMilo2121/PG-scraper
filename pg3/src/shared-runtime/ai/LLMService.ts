@@ -276,6 +276,15 @@ export class LLMService {
         }
     }
 
+    private static buildChatMessages(prompt: string, systemPrompt?: string): Array<{ role: 'system' | 'user'; content: string }> {
+        const messages: Array<{ role: 'system' | 'user'; content: string }> = [];
+        if (systemPrompt && systemPrompt.trim()) {
+            messages.push({ role: 'system', content: systemPrompt.trim() });
+        }
+        messages.push({ role: 'user', content: prompt });
+        return messages;
+    }
+
     // ─────────────────────────────────────────────
     // COMPLETIONS
     // ─────────────────────────────────────────────
@@ -285,7 +294,12 @@ export class LLMService {
      * Uses the configured smart model by default.
      * On 429/5xx, retries once with backoff, then tries fallback models.
      */
-    public static async complete(prompt: string, model: string = config.llm.model, fallbackModels?: string[]): Promise<string> {
+    public static async complete(
+        prompt: string,
+        model: string = config.llm.model,
+        fallbackModels?: string[],
+        systemPrompt?: string,
+    ): Promise<string> {
         const modelsToTry = [model, ...(fallbackModels || [])];
 
         for (let mi = 0; mi < modelsToTry.length; mi++) {
@@ -309,7 +323,7 @@ export class LLMService {
 
                     const response = await this.llmLimit(() => client.chat.completions.create({
                         model: this.getApiEngineName(currentModel),
-                        messages: [{ role: 'user', content: prompt }],
+                        messages: this.buildChatMessages(prompt, systemPrompt),
                         temperature: this.getTemperature(currentModel),
                         max_tokens: config.llm.maxTokens,
                     }));
@@ -361,7 +375,8 @@ export class LLMService {
         prompt: string,
         schema: Record<string, unknown>,
         model: string = config.llm.model,
-        fallbackModels?: string[]
+        fallbackModels?: string[],
+        systemPrompt?: string,
     ): Promise<T | null> {
         const modelsToTry = [model, ...(fallbackModels || [])];
         const normalizedSchema = this.normalizeStructuredSchema(schema);
@@ -400,7 +415,7 @@ export class LLMService {
 
                     const response = await this.llmLimit(() => client.chat.completions.create({
                         model: this.getApiEngineName(currentModel),
-                        messages: [{ role: 'user', content: prompt }],
+                        messages: this.buildChatMessages(prompt, systemPrompt),
                         temperature: this.getTemperature(currentModel),
                         max_tokens: config.llm.maxTokens,
                         response_format: responseFormat as any,
@@ -448,7 +463,8 @@ export class LLMService {
                         const legacyRes = await this.complete(
                             prompt + "\n\nResponse MUST be valid JSON matching the schema.",
                             currentModel,
-                            isLastModel ? undefined : modelsToTry.slice(mi + 1).map((candidate) => this.resolveModelAlias(candidate))
+                            isLastModel ? undefined : modelsToTry.slice(mi + 1).map((candidate) => this.resolveModelAlias(candidate)),
+                            systemPrompt,
                         );
                         const cleanLegacy = legacyRes.replace(/```json/g, '').replace(/```/g, '').trim();
                         return JSON.parse(cleanLegacy) as T;
@@ -598,8 +614,8 @@ export class LLMService {
      * @deprecated Use completeStructured<T>() instead.
      * Legacy JSON completion with brittle regex stripping.
      */
-    public static async completeJSON<T>(prompt: string): Promise<T | null> {
-        const response = await this.complete(prompt + '\nRespond strictly in JSON.');
+    public static async completeJSON<T>(prompt: string, systemPrompt?: string): Promise<T | null> {
+        const response = await this.complete(prompt + '\nRespond strictly in JSON.', config.llm.model, undefined, systemPrompt);
         try {
             const jsonStr = response.replace(/```json/g, '').replace(/```/g, '').trim();
             return JSON.parse(jsonStr) as T;

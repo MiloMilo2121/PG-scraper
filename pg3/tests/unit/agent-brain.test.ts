@@ -3,6 +3,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { AgentBrain } from '../../src/enricher/core/agent/agent_brain';
 import { LLMService } from '../../src/enricher/core/ai/llm_service';
 import { ModelRouter } from '../../src/enricher/core/ai/model_router';
+import { AGENT_NAVIGATION_PROMPT } from '../../src/enricher/core/ai/prompt_templates';
 import { DOMSnapshot } from '../../src/enricher/core/agent/dom_distiller';
 
 // Mock LLMService
@@ -44,7 +45,8 @@ describe('AgentBrain', () => {
             expect.any(String),
             expect.any(Object),
             'agent-primary',
-            ['agent-fallback']
+            ['agent-fallback'],
+            AGENT_NAVIGATION_PROMPT.system,
         );
         expect(logTaskSelectionSpy).toHaveBeenCalledWith('agent_navigation', { strictJson: true });
         expect(decision).toEqual(mockDecision);

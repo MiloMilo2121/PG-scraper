@@ -28,6 +28,7 @@ export class AgentRunner {
         let steps = 0;
         let finalResult: string | null = null;
         let extractedKey: string | null = null;
+        let extractedValue: string | null = null;
         const decisionFingerprintCounts = new Map<string, number>();
         const scrollAttemptsByPage = new Map<string, number>();
         const recentFingerprints: string[] = [];
@@ -70,10 +71,13 @@ export class AgentRunner {
 
                         if (decision.action === 'EXTRACT') {
                             extractedKey = decision.extraction_key || extractedKey;
+                            if (actionResult.startsWith('EXTRACTED:')) {
+                                extractedValue = actionResult.slice('EXTRACTED:'.length).trim() || extractedValue;
+                            }
                             continue;
                         }
                         if (decision.action === 'DONE') {
-                            finalResult = extractedKey || 'Goal Achieved';
+                            finalResult = extractedValue || extractedKey || 'Goal Achieved';
                             break;
                         }
                         if (decision.action === 'FAIL') {
@@ -201,7 +205,7 @@ export class AgentRunner {
 
                 case 'EXTRACT':
                     if (!decision.extraction_key) return 'Error: No extraction_key for EXTRACT';
-                    return `Extracted ${decision.extraction_key}`;
+                    return await this.extractVisibleData(page, decision.extraction_key);
 
                 case 'DONE':
                 case 'FAIL':
@@ -213,5 +217,30 @@ export class AgentRunner {
         } catch (e) {
             return `Action Error: ${(e as Error).message}`;
         }
+    }
+
+    private static async extractVisibleData(page: Page, extractionKey: string): Promise<string> {
+        const bodyText = await page.evaluate(() => document.body?.innerText || '');
+        const normalizedKey = extractionKey.toLowerCase();
+
+        const emailMatch = bodyText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+        const vatMatch =
+            bodyText.match(/\b(?:P\.?\s*IVA|Partita\s*IVA|VAT)\D{0,8}(\d{11})\b/i) ||
+            bodyText.match(/\b\d{11}\b/);
+        const phoneMatch = bodyText.match(/(?:\+39\s*)?(?:\(?\d{2,4}\)?[\s./-]*){2,5}\d{2,4}/);
+
+        if (normalizedKey.includes('email') || normalizedKey.includes('mail')) {
+            return `EXTRACTED:${emailMatch?.[0] || ''}`;
+        }
+
+        if (normalizedKey.includes('vat') || normalizedKey.includes('piva')) {
+            return `EXTRACTED:${vatMatch?.[1] || vatMatch?.[0] || ''}`;
+        }
+
+        if (normalizedKey.includes('phone') || normalizedKey.includes('tel')) {
+            return `EXTRACTED:${phoneMatch?.[0] || ''}`;
+        }
+
+        return `EXTRACTED:${emailMatch?.[0] || vatMatch?.[1] || vatMatch?.[0] || phoneMatch?.[0] || ''}`;
     }
 }

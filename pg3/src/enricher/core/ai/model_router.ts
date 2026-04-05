@@ -36,23 +36,23 @@ export class ModelRouter {
             switch (task) {
                 case 'company_validation':
                     return strictJson
-                        ? ['deepseek-chat', 'glm-4.7-flash', 'gpt-4o-mini', 'kimi-k2.5']
-                        : ['glm-4.7-flash', 'deepseek-chat', 'gpt-4o-mini'];
+                        ? ['openrouter:smart', 'gpt-4o-mini', 'deepseek-chat', 'glm-5', 'glm-4.7-flash']
+                        : ['openrouter:smart', 'gpt-4o-mini', 'deepseek-chat', 'glm-4.7-flash'];
                 case 'contact_extraction':
                     return strictJson
-                        ? ['deepseek-chat', 'glm-4.7-flash', 'gpt-4o-mini']
-                        : ['glm-4.7-flash', 'deepseek-chat', 'gpt-4o-mini'];
+                        ? ['openrouter:fast', 'gpt-4o-mini', 'deepseek-chat', 'glm-4.7-flash']
+                        : ['openrouter:fast', 'glm-4.7-flash', 'deepseek-chat', 'gpt-4o-mini'];
                 case 'business_classification':
-                    return ['glm-4.7-flash', 'deepseek-chat', 'gpt-4o-mini', 'kimi-k2.5'];
+                    return ['openrouter:fast', 'glm-4.7-flash', 'deepseek-chat', 'gpt-4o-mini', 'kimi-k2.5'];
                 case 'serp_url_selection':
                     return strictJson
-                        ? ['deepseek-chat', 'gpt-4o-mini', 'glm-4.7-flash']
-                        : ['glm-4.7-flash', 'deepseek-chat', 'gpt-4o-mini'];
+                        ? ['openrouter:smart', 'gpt-4o-mini', 'deepseek-chat', 'glm-5', 'glm-4.7-flash']
+                        : ['openrouter:smart', 'gpt-4o-mini', 'deepseek-chat', 'glm-4.7-flash'];
                 case 'agent_navigation':
-                    return ['kimi-k2.5', 'deepseek-reasoner', 'glm-5', 'gpt-4o'];
+                    return ['openrouter:smart', 'kimi-k2.5', 'deepseek-reasoner', 'glm-5', 'gpt-4o'];
                 case 'deep_reasoning':
                 default:
-                    return ['deepseek-reasoner', 'kimi-k2.5', 'glm-5', 'gpt-4o'];
+                    return ['openrouter:smart', 'deepseek-reasoner', 'kimi-k2.5', 'glm-5', 'gpt-4o'];
             }
         })();
 
@@ -111,6 +111,7 @@ export class ModelRouter {
     }
 
     private static isModelAvailable(model: string): boolean {
+        if (model.startsWith('openrouter:')) return config.llm.openrouter.apiKeys.length > 0;
         if (model.startsWith('glm-')) return config.llm.z_ai.apiKeys.length > 0;
         if (model.startsWith('deepseek-')) return config.llm.deepseek.apiKeys.length > 0;
         if (model.startsWith('moonshot-') || model.startsWith('kimi-')) return config.llm.kimi.apiKeys.length > 0;

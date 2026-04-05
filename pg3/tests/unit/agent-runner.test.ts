@@ -107,7 +107,7 @@ describe('AgentRunner', () => {
         expect(result).toBeNull();
     });
 
-    it('returns the extraction key only after EXTRACT followed by DONE', async () => {
+    it('returns the extracted value after EXTRACT followed by DONE', async () => {
         const mockSnapshot: DOMSnapshot = {
             title: 'Test',
             url: 'http',
@@ -115,13 +115,14 @@ describe('AgentRunner', () => {
             interactive: []
         };
         vi.mocked(DOMDistiller.capture).mockResolvedValue(mockSnapshot);
+        mockPage.evaluate.mockResolvedValue('P.IVA 12345678901');
 
         vi.mocked(AgentBrain.decide)
             .mockResolvedValueOnce({ thought: 'Capture the VAT marker', action: 'EXTRACT', extraction_key: 'vat_number' })
             .mockResolvedValueOnce({ thought: 'Done', action: 'DONE' });
 
         const result = await AgentRunner.run(mockPage, 'Goal');
-        expect(result).toBe('vat_number');
+        expect(result).toBe('12345678901');
         expect(AgentBrain.decide).toHaveBeenCalledTimes(2);
     });
 

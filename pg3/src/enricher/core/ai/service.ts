@@ -10,6 +10,7 @@ import * as crypto from 'crypto';
 import { Logger } from '../../utils/logger';
 import { config } from '../../config';
 import { LLMService } from './llm_service';
+import { ModelRouter } from './model_router';
 import { HTMLCleaner } from '../../utils/html_cleaner';
 import { EXTRACT_CONTACTS_PROMPT, CLASSIFY_BUSINESS_PROMPT } from './prompt_templates';
 
@@ -94,8 +95,8 @@ export class AIService {
     /**
      * Task 27: Generate cache key from input
      */
-    private getCacheKey(prompt: string, model: string): string {
-        return crypto.createHash('md5').update(`${model}:${prompt}`).digest('hex');
+    private getCacheKey(prompt: string, model: string, systemPrompt?: string): string {
+        return crypto.createHash('md5').update(`${model}:${systemPrompt || ''}:${prompt}`).digest('hex');
     }
 
     /**
@@ -120,10 +121,11 @@ export class AIService {
     private async call(
         prompt: string,
         taskType: 'extract' | 'classify' | 'search',
-        forceSmartModel: boolean = false
+        forceSmartModel: boolean = false,
+        systemPrompt?: string,
     ): Promise<string> {
         const model = forceSmartModel ? this.smartModel : this.selectModel(taskType);
-        const cacheKey = this.getCacheKey(prompt, model);
+        const cacheKey = this.getCacheKey(prompt, model, systemPrompt);
 
         // Check cache
         const cached = getFromCache(cacheKey);
@@ -134,7 +136,7 @@ export class AIService {
         }
 
         try {
-            const response = (await LLMService.complete(prompt, model)).trim();
+            const response = (await LLMService.complete(prompt, model, undefined, systemPrompt)).trim();
 
             // Cache response
             setCache(cacheKey, {
@@ -152,6 +154,26 @@ export class AIService {
             Logger.logError('AI call failed', error as Error);
             throw error;
         }
+    }
+
+    private async callStructured<T>(
+        prompt: string,
+        schema: Record<string, unknown>,
+        taskProfile: 'contact_extraction' | 'business_classification',
+        systemPrompt: string,
+        forceSmartModel: boolean = false,
+    ): Promise<T | null> {
+        const chain = forceSmartModel
+            ? [this.smartModel, ...ModelRouter.selectTaskChain(taskProfile, { strictJson: true }).filter((model) => model !== this.smartModel)]
+            : ModelRouter.selectTaskChain(taskProfile, { strictJson: true });
+
+        return LLMService.completeStructured<T>(
+            prompt,
+            schema,
+            chain[0],
+            chain.slice(1),
+            systemPrompt,
+        );
     }
 
     /**
@@ -173,9 +195,15 @@ export class AIService {
         });
 
         try {
-            const response = await this.call(prompt, 'extract');
-            const cleanJson = response.replace(/```json/g, '').replace(/```/g, '').trim();
-            const result = JSON.parse(cleanJson) as AIExtractionResult;
+            const result = await this.callStructured<AIExtractionResult>(
+                prompt,
+                EXTRACT_CONTACTS_PROMPT.schema as Record<string, unknown>,
+                'contact_extraction',
+                EXTRACT_CONTACTS_PROMPT.system,
+            );
+            if (!result) {
+                throw new Error('Structured contact extraction returned null');
+            }
             const mergedResult = {
                 ...deterministicFallback,
                 ...result,
@@ -188,9 +216,16 @@ export class AIService {
             // FALLBACK STRATEGY (Law 505): If confidence is low, escalate to Smart Model (GLM-5)
             if (!mergedResult.confidence || mergedResult.confidence < 0.6) {
                 Logger.info(`[AIService] Low confidence (${mergedResult.confidence}) in contact extraction. Retrying with GLM-5...`);
-                const smartResponse = await this.call(prompt, 'extract', true);
-                const smartJson = smartResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-                const smartResult = JSON.parse(smartJson) as AIExtractionResult;
+                const smartResult = await this.callStructured<AIExtractionResult>(
+                    prompt,
+                    EXTRACT_CONTACTS_PROMPT.schema as Record<string, unknown>,
+                    'contact_extraction',
+                    EXTRACT_CONTACTS_PROMPT.system,
+                    true,
+                );
+                if (!smartResult) {
+                    throw new Error('Structured contact extraction returned null on smart retry');
+                }
                 return {
                     ...deterministicFallback,
                     ...smartResult,
@@ -205,9 +240,16 @@ export class AIService {
         } catch (error) {
             Logger.warn('[AIService] Contact extraction failed (Fast Model). Retrying with Smart Model...', { error: error as Error });
             try {
-                const smartResponse = await this.call(prompt, 'extract', true);
-                const smartJson = smartResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-                const smartResult = JSON.parse(smartJson) as AIExtractionResult;
+                const smartResult = await this.callStructured<AIExtractionResult>(
+                    prompt,
+                    EXTRACT_CONTACTS_PROMPT.schema as Record<string, unknown>,
+                    'contact_extraction',
+                    EXTRACT_CONTACTS_PROMPT.system,
+                    true,
+                );
+                if (!smartResult) {
+                    throw new Error('Structured contact extraction returned null on smart fallback');
+                }
                 return {
                     ...deterministicFallback,
                     ...smartResult,
@@ -247,14 +289,14 @@ export class AIService {
         });
 
         try {
-            const response = await this.call(prompt, 'classify');
+            const response = await this.call(prompt, 'classify', false, CLASSIFY_BUSINESS_PROMPT.system);
             const cleanJson = response.replace(/```json/g, '').replace(/```/g, '').trim();
             let parsed = JSON.parse(cleanJson);
 
             // FALLBACK STRATEGY (Law 505): If confidence is low, escalate to Smart Model (GLM-5)
             if (!parsed.confidence || parsed.confidence < 0.6) {
                 Logger.info(`[AIService] Low confidence (${parsed.confidence}) in classification. Retrying with GLM-5...`);
-                const smartResponse = await this.call(prompt, 'classify', true);
+                const smartResponse = await this.call(prompt, 'classify', true, CLASSIFY_BUSINESS_PROMPT.system);
                 const smartJson = smartResponse.replace(/```json/g, '').replace(/```/g, '').trim();
                 parsed = JSON.parse(smartJson);
             }
@@ -279,7 +321,7 @@ export class AIService {
         } catch (error) {
             Logger.warn(`[AIService] Classification failed (Fast Model) for ${companyName}. Retrying with Smart Model...`, { error: error as Error });
             try {
-                const smartResponse = await this.call(prompt, 'classify', true);
+                const smartResponse = await this.call(prompt, 'classify', true, CLASSIFY_BUSINESS_PROMPT.system);
                 const smartJson = smartResponse.replace(/```json/g, '').replace(/```/g, '').trim();
                 const parsed = JSON.parse(smartJson);
 

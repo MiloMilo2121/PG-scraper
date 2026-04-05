@@ -49,7 +49,8 @@ export class AgentBrain {
                 prompt,
                 AGENT_NAVIGATION_PROMPT.schema as Record<string, unknown>,
                 modelChain[0],
-                modelChain.slice(1)
+                modelChain.slice(1),
+                AGENT_NAVIGATION_PROMPT.system,
             );
 
             ModelRouter.logTaskSelection(this.TASK_PROFILE, { strictJson: true });
