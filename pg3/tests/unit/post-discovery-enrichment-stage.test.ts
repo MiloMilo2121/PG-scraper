@@ -11,7 +11,7 @@ describe('PostDiscoveryEnrichmentStage', () => {
     vi.spyOn(FatturatoItaliaHarvester, 'harvest').mockResolvedValue(null as any);
 
     const bilancioHunter = { hunt: vi.fn().mockResolvedValue(null) };
-    const linkedinSniper = { snipe: vi.fn() };
+    const linkedinSniper = { snipeDetailed: vi.fn() };
     const postProcessor = { estimateEmployees: vi.fn() };
     const pecHunter = { hunt: vi.fn() };
 
@@ -33,7 +33,7 @@ describe('PostDiscoveryEnrichmentStage', () => {
     expect(result.stageOutcomes.decision_maker.status).toBe('skipped');
     expect(result.stageOutcomes.employee_estimation.status).toBe('skipped');
     expect(result.stageOutcomes.contacts.status).toBe('skipped');
-    expect(linkedinSniper.snipe).not.toHaveBeenCalled();
+    expect(linkedinSniper.snipeDetailed).not.toHaveBeenCalled();
     expect(postProcessor.estimateEmployees).not.toHaveBeenCalled();
     expect(pecHunter.hunt).not.toHaveBeenCalled();
   });
@@ -42,7 +42,16 @@ describe('PostDiscoveryEnrichmentStage', () => {
     vi.spyOn(FatturatoItaliaHarvester, 'harvest').mockResolvedValue(null as any);
 
     const bilancioHunter = { hunt: vi.fn().mockResolvedValue({ fatturato_current: 100000, year: 2024 }) };
-    const linkedinSniper = { snipe: vi.fn().mockResolvedValue({ name: 'Mario Rossi', confidence: 0.85 }) };
+    const linkedinSniper = {
+      snipeDetailed: vi.fn().mockResolvedValue({
+        decisionMaker: { name: 'Mario Rossi', confidence: 0.85 },
+        attempted_count: 1,
+        evidence_count: 1,
+        entity_match_status: 'matched',
+        providers: ['SERPER-API-1'],
+        detail: 'decision maker found from linkedin search results',
+      }),
+    };
     const postProcessor = { estimateEmployees: vi.fn().mockResolvedValue('10-50') };
     const pecHunter = { hunt: vi.fn().mockResolvedValue({ pec: 'info@pec.example.it', email: 'info@example.it' }) };
 
@@ -66,7 +75,7 @@ describe('PostDiscoveryEnrichmentStage', () => {
     expect(result.stageOutcomes.employee_estimation.status).toBe('success');
     expect(result.stageOutcomes.contacts.status).toBe('success');
     expect(bilancioHunter.hunt).toHaveBeenCalledOnce();
-    expect(linkedinSniper.snipe).toHaveBeenCalledOnce();
+    expect(linkedinSniper.snipeDetailed).toHaveBeenCalledOnce();
     expect(postProcessor.estimateEmployees).toHaveBeenCalledOnce();
     expect(pecHunter.hunt).toHaveBeenCalledOnce();
   });

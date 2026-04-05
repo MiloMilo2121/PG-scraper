@@ -11,10 +11,41 @@ export interface ContactStageResult {
 export class ContactEnrichmentStage {
   constructor(private readonly pecHunter: PecHunter) {}
 
+  private isLikelyPec(email?: string | null): boolean {
+    const normalized = (email || '').toLowerCase();
+    if (!normalized.includes('@')) {
+      return false;
+    }
+
+    const domain = normalized.split('@')[1] || '';
+    return domain.includes('pec') || domain.includes('legalmail') || domain.includes('cert');
+  }
+
   public async run(companyId: string, input: NormalizedInput, discoveredUrl: string | null): Promise<ContactStageResult> {
     const startedAt = Date.now();
 
     if (!discoveredUrl) {
+      if (input.email) {
+        const confirmedPec = this.isLikelyPec(input.email) ? input.email : null;
+        const confirmedEmail = confirmedPec ? null : input.email;
+        return {
+          pec: confirmedPec,
+          email: confirmedEmail,
+          outcome: {
+            stage: 'contacts',
+            status: 'success',
+            duration_ms: Date.now() - startedAt,
+            detail: 'reused confirmed contact from input without website scan',
+            reason_code: confirmedPec ? 'CONTACTS_CONFIRMED_INPUT_PEC' : 'CONTACTS_CONFIRMED_INPUT_EMAIL',
+            confidence: confirmedPec ? 0.98 : 0.95,
+            provider: 'input_contact',
+            attempted_count: 0,
+            evidence_count: 1,
+            entity_match_status: 'matched',
+          },
+        };
+      }
+
       return {
         pec: null,
         email: null,

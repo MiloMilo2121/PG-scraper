@@ -10,19 +10,26 @@ export interface DecisionMakerStageResult {
 export class DecisionMakerStage {
   constructor(private readonly linkedinSniper: LinkedInSniper) {}
 
+  private hasStrongCompanyIdentity(input: NormalizedInput): boolean {
+    const hasCompanyName = Boolean(input.company_name?.trim());
+    const hasLocation = Boolean(input.city?.trim() || input.provincia?.trim());
+    return hasCompanyName && hasLocation;
+  }
+
   public async run(companyId: string, input: NormalizedInput, discoveredUrl: string | null): Promise<DecisionMakerStageResult> {
     const startedAt = Date.now();
     const effectiveWebsite = discoveredUrl || input.website || null;
+    const strongIdentity = this.hasStrongCompanyIdentity(input);
 
-    if (!effectiveWebsite) {
+    if (!effectiveWebsite && !strongIdentity) {
       return {
         decisionMaker: null,
         outcome: {
           stage: 'decision_maker',
           status: 'skipped',
           duration_ms: Date.now() - startedAt,
-          detail: 'website discovery or input website required before decision-maker search',
-          reason_code: 'DM_SKIPPED_NO_WEBSITE',
+          detail: 'website discovery or strong company identity required before decision-maker search',
+          reason_code: 'DM_SKIPPED_WEAK_IDENTITY',
         },
       };
     }

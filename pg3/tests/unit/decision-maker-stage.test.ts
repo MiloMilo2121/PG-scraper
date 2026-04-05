@@ -72,4 +72,60 @@ describe('DecisionMakerStage', () => {
     expect(result.outcome.provider).toBe('SERPER-API-1');
     expect(result.outcome.detail).toContain('no credible person candidate');
   });
+
+  it('allows decision-maker search without website when company name and location are present', async () => {
+    const sniper = {
+      snipeDetailed: vi.fn().mockResolvedValue({
+        decisionMaker: {
+          name: 'Mario Rossi',
+          role: 'Titolare',
+          linkedin_url: 'https://www.linkedin.com/in/mario-rossi',
+          source: 'SERPER-API-1',
+          source_kind: 'linkedin_profile',
+          confidence: 0.82,
+          entity_match_status: 'semantic',
+          providers: ['SERPER-API-1'],
+        },
+        attempted_count: 4,
+        evidence_count: 2,
+        entity_match_status: 'semantic',
+        providers: ['SERPER-API-1'],
+        detail: 'decision maker found from linkedin search results',
+      }),
+    };
+
+    const stage = new DecisionMakerStage(sniper as any);
+    const input = {
+      company_name: 'ACME Immobiliare',
+      company_name_variants: ['ACME Immobiliare'],
+      city: 'Milano',
+      provincia: 'MI',
+      quality_score: 0.9,
+    } as any;
+
+    const result = await stage.run('cmp-3', input, null);
+
+    expect(sniper.snipeDetailed).toHaveBeenCalledWith('cmp-3', input, null);
+    expect(result.outcome.status).toBe('success');
+    expect(result.outcome.reason_code).toBe('DM_SOURCE_FOUND');
+  });
+
+  it('still skips decision-maker search when website is missing and identity is weak', async () => {
+    const sniper = {
+      snipeDetailed: vi.fn(),
+    };
+
+    const stage = new DecisionMakerStage(sniper as any);
+    const input = {
+      company_name: 'ACME Immobiliare',
+      company_name_variants: ['ACME Immobiliare'],
+      quality_score: 0.9,
+    } as any;
+
+    const result = await stage.run('cmp-4', input, null);
+
+    expect(sniper.snipeDetailed).not.toHaveBeenCalled();
+    expect(result.outcome.status).toBe('skipped');
+    expect(result.outcome.reason_code).toBe('DM_SKIPPED_WEAK_IDENTITY');
+  });
 });
