@@ -34,6 +34,18 @@ import {
     insertEnrichmentResult,
     logJobResult,
 } from './db';
+import {
+    companiesProcessed,
+    discoveryLaneTotal,
+    enrichmentFieldFound,
+    stageDuration,
+    stageOutcome,
+    companyProcessingDuration,
+    normalizeDiscoveryLane,
+    determineBusinessOutcome,
+    startRuntimeMonitoring,
+} from './observability/telemetry';
+import { getActiveRunSummary } from './observability/run_summary';
 
 // 🔧 Initialize Services
 const financialService = new FinancialService();
@@ -86,6 +98,12 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
                 correlation_id,
                 duration_ms: duration,
             });
+            // Already enriched – classify outcome from cached result
+            const cachedOutcome = determineBusinessOutcome(
+                existing.website_validated || undefined,
+                !!(existing.vat || existing.pec || existing.revenue || existing.employees),
+                false
+            );
             logJobResult(
                 company_id,
                 'SUCCESS',
@@ -94,8 +112,12 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
                 undefined,
                 undefined,
                 'OK_ALREADY_ENRICHED',
-                run_id
+                run_id,
+                cachedOutcome
             );
+            companiesProcessed.inc({ outcome: cachedOutcome });
+            companyProcessingDuration.observe(duration / 1000);
+            getActiveRunSummary()?.recordOutcome(cachedOutcome);
             return {
                 success: true,
                 company_id,
@@ -129,6 +151,10 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
         let discoveryConfidence: number | undefined;
         let discoveryReasonCode: string | undefined;
 
+        // ── STEP 1: WEBSITE DISCOVERY with stage timing ─────────────────────────
+        const discoveryTimer = stageDuration.startTimer({ stage: 'website_discovery' });
+        let discoveryStageStatus: 'success' | 'not_found' | 'failed' = 'not_found';
+
         // 1A) If a website is provided, we still verify it before trusting/storing it.
         if (website && website.trim() !== '' && website !== 'null') {
             Logger.info(`[Worker] 🔎 Pre-validating provided website for "${company_name}": ${website}`);
@@ -140,6 +166,7 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
                 discoveryMethod = 'pre_validated_input';
                 discoveryConfidence = confidence;
                 discoveryReasonCode = verification?.reason_code || 'OK_CONFIRMED_INPUT_WEBSITE';
+                discoveryStageStatus = 'success';
                 Logger.info(`[Worker] ✅ Provided website verified (${confidence.toFixed(2)}): ${company_name} -> ${website}`);
             } else {
                 Logger.warn(`[Worker] ⚠️ Provided website rejected (${confidence.toFixed(2)} < ${minValidWebsiteConfidence}): ${company_name} -> ${website}`);
@@ -158,6 +185,7 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
 
             if (discoveryResult.url && discoveryResult.status === 'FOUND_VALID') {
                 website = discoveryResult.url;
+                discoveryStageStatus = 'success';
                 Logger.info(`[Worker] ✅ Discovery VALID: ${company_name} -> ${website} (${discoveryResult.confidence.toFixed(2)}) [${discoveryResult.reason_code}]`);
             } else if (discoveryResult.url) {
                 Logger.warn(
@@ -168,7 +196,18 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             }
         }
 
-        // STEP 2: FINANCIAL ENRICHMENT
+        discoveryTimer(); // stop the histogram timer
+        stageOutcome.inc({ stage: 'website_discovery', status: discoveryStageStatus });
+
+        // Emit discovery lane metric
+        const lane = normalizeDiscoveryLane(discoveryMethod);
+        discoveryLaneTotal.inc({ lane, status: website ? 'found' : 'not_found' });
+        getActiveRunSummary()?.recordDiscoveryLane(lane);
+
+        // ── STEP 2: FINANCIAL ENRICHMENT with stage timing ───────────────────
+        const financialTimer = stageDuration.startTimer({ stage: 'financial_enrichment' });
+        let financialStageStatus: 'success' | 'not_found' | 'failed' = 'not_found';
+
         const result = await financialService.enrich(
             {
                 company_name,
@@ -184,6 +223,15 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             website
         );
 
+        // Stop financial timer and record stage outcome
+        const hasFinancialData = !!(result.vat || result.pec || result.revenue || result.employees);
+        financialStageStatus = hasFinancialData ? 'success' : 'not_found';
+        financialTimer();
+        stageOutcome.inc({ stage: 'financial_enrichment', status: financialStageStatus });
+
+        // ── DETERMINE BUSINESS OUTCOME ────────────────────────────────────────
+        const businessOutcome = determineBusinessOutcome(website, hasFinancialData, false);
+
         const duration = Date.now() - startTime;
 
         Logger.info(`✅ Enriched: ${company_name}`, {
@@ -193,8 +241,37 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             revenue: result.revenue,
             employees: result.employees,
             website,
-            has_website: !!website
+            has_website: !!website,
+            business_outcome: businessOutcome,
         });
+
+        // ── EMIT TELEMETRY ─────────────────────────────────────────────────────
+        companiesProcessed.inc({ outcome: businessOutcome });
+        companyProcessingDuration.observe(duration / 1000);
+
+        // Field coverage counters
+        if (website) enrichmentFieldFound.inc({ field: 'website' });
+        if (result.vat) enrichmentFieldFound.inc({ field: 'vat' });
+        if (result.pec) enrichmentFieldFound.inc({ field: 'pec' });
+        if (result.revenue) enrichmentFieldFound.inc({ field: 'revenue' });
+        if (result.employees) enrichmentFieldFound.inc({ field: 'employees' });
+        // email from input (promoted from PagineGialle)
+        if (job.data.email) enrichmentFieldFound.inc({ field: 'email' });
+
+        // Run summary
+        const summary = getActiveRunSummary();
+        if (summary) {
+            summary.recordOutcome(businessOutcome);
+            summary.recordDiscoveryLane(lane); // already normalised above
+            summary.recordReasonCode(discoveryReasonCode);
+            if (website) summary.recordFieldFound('website');
+            if (result.vat) summary.recordFieldFound('vat');
+            if (result.pec) summary.recordFieldFound('pec');
+            if (result.revenue) summary.recordFieldFound('revenue');
+            if (result.employees) summary.recordFieldFound('employees');
+            if (job.data.email) summary.recordFieldFound('email');
+            // Stage durations also captured via RunSummaryCollector (complementary to Prometheus)
+        }
 
         insertEnrichmentResult({
             id: `er-${company_id}`,
@@ -218,7 +295,8 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             undefined,
             undefined,
             discoveryReasonCode || 'OK_ENRICHMENT_COMPLETED',
-            run_id
+            run_id,
+            businessOutcome
         );
 
         return {
@@ -248,15 +326,26 @@ async function processEnrichmentJob(job: Job<EnrichmentJobData>): Promise<JobRes
             attempt: job.attemptsMade + 1,
             max_attempts: RETRY_ATTEMPTS,
         });
+
+        // Only count as WORKER_EXCEPTION on final attempt (not retries)
+        const isFinalAttempt = job.attemptsMade >= RETRY_ATTEMPTS - 1;
+        if (isFinalAttempt) {
+            companiesProcessed.inc({ outcome: 'WORKER_EXCEPTION' });
+            companyProcessingDuration.observe(duration / 1000);
+            getActiveRunSummary()?.recordOutcome('WORKER_EXCEPTION');
+            getActiveRunSummary()?.recordReasonCode(reasonCode);
+        }
+
         logJobResult(
             company_id,
-            job.attemptsMade >= RETRY_ATTEMPTS - 1 ? 'FAILED' : 'RETRYING',
+            isFinalAttempt ? 'FAILED' : 'RETRYING',
             duration,
             job.attemptsMade + 1,
             err.message,
             Logger.categorizeError(err),
             reasonCode,
-            run_id
+            run_id,
+            isFinalAttempt ? 'WORKER_EXCEPTION' : undefined
         );
 
         // If this is the last attempt, move to dead letter queue
@@ -374,6 +463,9 @@ export async function runWorker(): Promise<Worker<EnrichmentJobData, JobResult>>
     Logger.info('🚀 WORKER: Starting enrichment processor');
     Logger.info(`🤖 LLM model configured: ${config.llm.model}`);
     initializeDatabase();
+
+    // Start background process metrics sampling (event loop lag, heap, rss)
+    startRuntimeMonitoring();
 
     const worker = startWorker();
 

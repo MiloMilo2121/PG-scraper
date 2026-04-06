@@ -10,7 +10,13 @@
 import * as http from 'http';
 import { Logger } from './utils/logger';
 import { getQueueHealth } from './queue';
-import { getStats as getDbStats, initializeDatabase } from './db';
+import {
+    getStats as getDbStats,
+    initializeDatabase,
+    getOutcomeBreakdown,
+    getEnrichedFieldCoverage,
+    getTopReasonCodes,
+} from './db';
 import { config } from './config';
 
 const PORT = config.health.port;
@@ -37,9 +43,22 @@ const server = http.createServer(async (req, res) => {
             const dbStats = getDbStats();
             const queueHealth = await getQueueHealth();
 
+            // Analytics queries are best-effort – don't crash /stats if DB isn't initialised
+            let outcomeBreakdown: Record<string, number> = {};
+            let fieldCoverage: ReturnType<typeof getEnrichedFieldCoverage> | null = null;
+            let topReasonCodes: Array<{ reason_code: string; count: number }> = [];
+            try { outcomeBreakdown = getOutcomeBreakdown(); } catch { /* ok */ }
+            try { fieldCoverage = getEnrichedFieldCoverage(); } catch { /* ok */ }
+            try { topReasonCodes = getTopReasonCodes(undefined, 10); } catch { /* ok */ }
+
             res.statusCode = 200;
             res.end(JSON.stringify({
-                database: dbStats,
+                database: {
+                    ...dbStats,
+                    outcome_breakdown: outcomeBreakdown,
+                    field_coverage: fieldCoverage ?? null,
+                    top_reason_codes: topReasonCodes,
+                },
                 queue: queueHealth.enrichmentQueue,
                 timestamp: new Date().toISOString(),
             }));

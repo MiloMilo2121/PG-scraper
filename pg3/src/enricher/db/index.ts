@@ -13,6 +13,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { Logger } from '../utils/logger';
 import { config } from '../config';
+import type { BusinessOutcome } from '../observability/telemetry';
 
 // Use environment or default
 const SQLITE_PATH = process.env.SQLITE_PATH || config.sqlitePath;
@@ -143,6 +144,8 @@ export function initializeDatabase(): void {
         };
         addJlIfMissing('reason_code', `ALTER TABLE job_log ADD COLUMN reason_code TEXT`);
         addJlIfMissing('run_id', `ALTER TABLE job_log ADD COLUMN run_id TEXT`);
+        // v2: business outcome – separates business result from technical job status
+        addJlIfMissing('business_outcome', `ALTER TABLE job_log ADD COLUMN business_outcome TEXT`);
     } catch (e) {
         Logger.warn('DB migration check failed (continuing)', { error: e as Error });
     }
@@ -224,8 +227,8 @@ function initializeStatements(): void {
     getResultByCompanyStmt = db.prepare('SELECT * FROM enrichment_results WHERE company_id = ?');
 
     insertJobLogStmt = db.prepare(`
-        INSERT INTO job_log (company_id, status, error_message, error_category, reason_code, run_id, duration_ms, attempt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO job_log (company_id, status, error_message, error_category, reason_code, run_id, duration_ms, attempt, business_outcome)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     statementsInitialized = true;
@@ -329,10 +332,21 @@ export function logJobResult(
     errorMessage?: string,
     errorCategory?: string,
     reasonCode?: string,
-    runId?: string
+    runId?: string,
+    businessOutcome?: BusinessOutcome
 ): void {
     ensureReady();
-    insertJobLogStmt.run(companyId, status, errorMessage, errorCategory, reasonCode, runId, durationMs, attempt);
+    insertJobLogStmt.run(
+        companyId,
+        status,
+        errorMessage ?? null,
+        errorCategory ?? null,
+        reasonCode ?? null,
+        runId ?? null,
+        durationMs,
+        attempt,
+        businessOutcome ?? null
+    );
 }
 
 // 📊 Statistics
@@ -346,6 +360,128 @@ export function getStats(): { total: number; enriched: number; pending: number; 
         enriched,
         pending: total - enriched,
         failed,
+    };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ANALYTICS QUERIES
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Returns count of job_log entries grouped by business_outcome.
+ * Pass a runId to scope to a specific run; omit for all-time counts.
+ */
+export function getOutcomeBreakdown(runId?: string): Record<string, number> {
+    ensureReady();
+    const rows = runId
+        ? (db.prepare(
+              `SELECT business_outcome, COUNT(*) as cnt FROM job_log
+               WHERE run_id = ? AND business_outcome IS NOT NULL
+               GROUP BY business_outcome`
+          ).all(runId) as Array<{ business_outcome: string; cnt: number }>)
+        : (db.prepare(
+              `SELECT business_outcome, COUNT(*) as cnt FROM job_log
+               WHERE business_outcome IS NOT NULL
+               GROUP BY business_outcome`
+          ).all() as Array<{ business_outcome: string; cnt: number }>);
+
+    const result: Record<string, number> = {};
+    for (const row of rows) {
+        result[row.business_outcome] = row.cnt;
+    }
+    return result;
+}
+
+/**
+ * Returns the top N reason codes by frequency.
+ * Null/empty reason_codes are excluded.
+ */
+export function getTopReasonCodes(
+    runId?: string,
+    limit: number = 15
+): Array<{ reason_code: string; count: number }> {
+    ensureReady();
+    const rows = runId
+        ? (db.prepare(
+              `SELECT reason_code, COUNT(*) as cnt FROM job_log
+               WHERE run_id = ? AND reason_code IS NOT NULL AND reason_code != ''
+               GROUP BY reason_code ORDER BY cnt DESC LIMIT ?`
+          ).all(runId, limit) as Array<{ reason_code: string; cnt: number }>)
+        : (db.prepare(
+              `SELECT reason_code, COUNT(*) as cnt FROM job_log
+               WHERE reason_code IS NOT NULL AND reason_code != ''
+               GROUP BY reason_code ORDER BY cnt DESC LIMIT ?`
+          ).all(limit) as Array<{ reason_code: string; cnt: number }>);
+
+    return rows.map((r) => ({ reason_code: r.reason_code, count: r.cnt }));
+}
+
+/**
+ * Returns field coverage rates from enrichment_results.
+ * Rates are in [0, 1]; 0 if no results exist.
+ */
+export function getEnrichedFieldCoverage(): {
+    total: number;
+    website_rate: number;
+    vat_rate: number;
+    pec_rate: number;
+    revenue_rate: number;
+    employees_rate: number;
+} {
+    ensureReady();
+    const row = db
+        .prepare(
+            `SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN website_validated IS NOT NULL AND website_validated != '' THEN 1 ELSE 0 END) as has_website,
+                SUM(CASE WHEN vat IS NOT NULL AND vat != '' THEN 1 ELSE 0 END) as has_vat,
+                SUM(CASE WHEN pec IS NOT NULL AND pec != '' THEN 1 ELSE 0 END) as has_pec,
+                SUM(CASE WHEN revenue IS NOT NULL AND revenue != '' THEN 1 ELSE 0 END) as has_revenue,
+                SUM(CASE WHEN employees IS NOT NULL AND employees != '' THEN 1 ELSE 0 END) as has_employees
+             FROM enrichment_results`
+        )
+        .get() as {
+        total: number;
+        has_website: number;
+        has_vat: number;
+        has_pec: number;
+        has_revenue: number;
+        has_employees: number;
+    };
+
+    const total = row.total || 0;
+    if (total === 0) {
+        return { total: 0, website_rate: 0, vat_rate: 0, pec_rate: 0, revenue_rate: 0, employees_rate: 0 };
+    }
+    return {
+        total,
+        website_rate: row.has_website / total,
+        vat_rate: row.has_vat / total,
+        pec_rate: row.has_pec / total,
+        revenue_rate: row.has_revenue / total,
+        employees_rate: row.has_employees / total,
+    };
+}
+
+/**
+ * Returns aggregated stats for a specific run_id.
+ */
+export function getRunStats(runId: string): {
+    total: number;
+    outcomes: Record<string, number>;
+    duration_ms_avg: number;
+    top_reason_codes: Array<{ reason_code: string; count: number }>;
+} {
+    ensureReady();
+    const totalRow = db
+        .prepare(`SELECT COUNT(*) as cnt, AVG(duration_ms) as avg_ms FROM job_log WHERE run_id = ?`)
+        .get(runId) as { cnt: number; avg_ms: number | null };
+
+    return {
+        total: totalRow.cnt,
+        outcomes: getOutcomeBreakdown(runId),
+        duration_ms_avg: Math.round(totalRow.avg_ms ?? 0),
+        top_reason_codes: getTopReasonCodes(runId, 10),
     };
 }
 
