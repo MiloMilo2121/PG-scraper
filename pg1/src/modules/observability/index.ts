@@ -1,6 +1,6 @@
 import winston from 'winston';
 import 'winston-daily-rotate-file';
-import { OutputResult } from '../../types';
+import { OutputResult, DecisionStatus } from '../../types';
 
 export class Logger {
     private logger: winston.Logger;
@@ -45,9 +45,9 @@ export class Metrics {
 
     record(result: OutputResult, latencyMs: number) {
         this.stats.total++;
-        if (result.status === 'OK') this.stats.ok++;
-        if (result.status === 'NO_DOMAIN_FOUND') this.stats.no_domain++;
-        if (result.status === 'ERROR') this.stats.error++;
+        if (result.status === DecisionStatus.OK) this.stats.ok++;
+        if (result.status === DecisionStatus.NO_DOMAIN_FOUND) this.stats.no_domain++;
+        if (result.status === DecisionStatus.ERROR) this.stats.error++;
         this.stats.total_latency += latencyMs;
     }
 

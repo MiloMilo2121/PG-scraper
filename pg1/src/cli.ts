@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
 import { Pipeline } from './pipeline';
+import { loadConfig } from './config';
 import path from 'path';
 
 const program = new Command();
@@ -20,6 +21,8 @@ program
         try {
             const inputPath = path.resolve(options.input);
             const outputPath = path.resolve(options.output);
+
+            if (options.config) loadConfig(path.resolve(options.config));
 
             console.log(`Starting ADR-IT v3...`);
             console.log(`Input: ${inputPath}`);

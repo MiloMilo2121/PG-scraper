@@ -86,19 +86,14 @@ export class Scorer {
         }
         corrobScore += c2;
 
-        // C3 Corporate Signals
+        // C3 Corporate Signals — count presence of: contact page, privacy policy, VAT number
         let c3 = 0;
-        // We use our Classifier's implicit count or calculate?
-        // "corporate_positive_signals_count" in Evidence
-        // wait, Evidence has 'parked_indicators_count' but not 'corporate'?
-        // I missed adding `corporate_positive_signals_count` to Evidence definition in previous step.
-        // I will simulate it:
-        let corpCount = 0;
-        if (evidence.has_contact_page) corpCount++;
-        if (evidence.has_privacy_policy) corpCount++;
-        if (evidence.vat_ids_found.length > 0) corpCount++;
+        let corporateSignalsCount = 0;
+        if (evidence.has_contact_page) corporateSignalsCount++;
+        if (evidence.has_privacy_policy) corporateSignalsCount++;
+        if (evidence.vat_ids_found.length > 0) corporateSignalsCount++;
 
-        if (corpCount >= 2) {
+        if (corporateSignalsCount >= 2) {
             c3 = config.scoring.weights.c3_corporate_signals;
             details.push('C3: Corporate Signals >= 2');
         }

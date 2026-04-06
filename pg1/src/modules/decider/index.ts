@@ -1,4 +1,4 @@
-import { ScoreBreakdown, DecisionStatus, OutputResult, Candidate, Evidence, NormalizedEntity } from '../../types';
+import { ScoreBreakdown, DecisionStatus, OutputResult, Candidate, Evidence, NormalizedEntity, SiteType } from '../../types';
 import { getConfig } from '../../config';
 import { OpenAIVerifier } from '../verifier/openai-verifier';
 import { logger } from '../observability';
@@ -11,13 +11,17 @@ export class Decider {
         if (top.evidence.name_match_score >= 0.6 && top.evidence.address_match_score >= 0.45) {
             return 'OK_LIKELY_NAME_CITY_MATCH';
         }
-        return 'OK_LIKELY_NAME_CITY_MATCH';
+        return 'OK_LIKELY_WEAK_SIGNALS';
     }
 
     private static reasonCodeForFailure(reason: string, top?: { candidate: Candidate, score: ScoreBreakdown, evidence: Evidence }): string {
         const normalizedReason = reason.toLowerCase();
         if (normalizedReason.includes('no candidates')) return 'NOT_FOUND_NO_CANDIDATES';
         if (normalizedReason.includes('ai rejected')) return 'REJECTED_NO_MATCHING_SIGNALS';
+        const siteType = top?.evidence?.site_type;
+        if (siteType && [SiteType.SOCIAL, SiteType.DIRECTORY, SiteType.MARKETPLACE, SiteType.PARKED].includes(siteType)) {
+            return 'REJECTED_DIRECTORY_OR_SOCIAL';
+        }
         const url = top?.candidate?.source_url?.toLowerCase() || '';
         if (url.includes('facebook.com') || url.includes('instagram.com') || url.includes('linkedin.com') || url.includes('paginegialle.it')) {
             return 'REJECTED_DIRECTORY_OR_SOCIAL';

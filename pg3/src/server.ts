@@ -57,21 +57,23 @@ export async function startServer() {
                 allLocations: location_raw
             });
 
-            // Spawn runner.ts as detached process
-            const runnerPath = path.join(process.cwd(), 'src/scraper/runner.ts');
-            const args = ['ts-node', runnerPath, `--category=${category}`, `--city=${city}`];
+            // Spawn runner as detached process — resolve path relative to this file to work in both
+            // dev (ts-node) and compiled (node dist/) environments.
+            const isDist = __filename.endsWith('.js');
+            const runnerPath = isDist
+                ? path.resolve(__dirname, 'scraper/runner.js')
+                : path.resolve(__dirname, 'scraper/runner.ts');
+            const runnerCmd = isDist ? 'node' : 'npx';
+            const runnerArgs = isDist
+                ? [runnerPath, `--category=${category}`, `--city=${city}`]
+                : ['ts-node', runnerPath, `--category=${category}`, `--city=${city}`];
 
-            const job = spawn('npx', args, {
+            const job = spawn(runnerCmd, runnerArgs, {
                 cwd: process.cwd(),
                 detached: true,
                 stdio: ['ignore', 'pipe', 'pipe'],
                 env: { ...process.env }
             });
-
-            // Track the job
-            if (job.pid) {
-                activeJobs.set(jobId, { pid: job.pid, startedAt: new Date() });
-            }
 
             // Log output for debugging
             job.stdout?.on('data', (data) => {
@@ -87,19 +89,29 @@ export async function startServer() {
                 activeJobs.delete(jobId);
             });
 
-            job.on('error', (err) => {
+            // Send success only after the OS confirms the process started successfully.
+            // If spawn fails (bad path, permissions), the error event fires before spawn.
+            job.once('error', (err) => {
                 Logger.error(`[${jobId}] Failed to start`, { error: err });
                 activeJobs.delete(jobId);
+                if (!res.headersSent) {
+                    res.status(500).json({ success: false, message: err.message });
+                }
             });
 
-            // Detach from parent so it runs independently
-            job.unref();
-
-            res.json({
-                success: true,
-                jobId,
-                message: `Scraper launched: ${category} → ${city}`,
-                pid: job.pid
+            job.once('spawn', () => {
+                // Track the job now that we know pid is valid
+                if (job.pid) {
+                    activeJobs.set(jobId, { pid: job.pid, startedAt: new Date() });
+                }
+                // Detach from parent so it runs independently
+                job.unref();
+                res.json({
+                    success: true,
+                    jobId,
+                    message: `Scraper launched: ${category} → ${city}`,
+                    pid: job.pid,
+                });
             });
 
         } catch (error) {

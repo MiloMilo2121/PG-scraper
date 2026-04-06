@@ -9,7 +9,7 @@ export class Deduplicator {
     private vatIndex = new Map<string, CompanyInput>();
     private phoneIndex = new Map<string, CompanyInput>();
     private fingerPrintIndex = new Map<string, CompanyInput>();
-    private domainCache = new Set<string>();
+    private domainCache = new Map<string, CompanyInput>();
 
     constructor() { }
 
@@ -40,10 +40,7 @@ export class Deduplicator {
         if (company.website) {
             try {
                 const domain = new URL(company.website).hostname.replace('www.', '');
-                // We can't easily return the object from a Set<string>, so we rely on other methods mostly.
-                // But if we wanted to enforce domain uniqueness we could. 
-                // For now, let's stick to the indices that map to objects.
-                // If we really want to check domain duplication returning the object, we'd need a map.
+                if (this.domainCache.has(domain)) return this.domainCache.get(domain)!;
             } catch { }
         }
 
@@ -70,7 +67,7 @@ export class Deduplicator {
         if (company.website) {
             try {
                 const domain = new URL(company.website).hostname.replace('www.', '');
-                this.domainCache.add(domain);
+                this.domainCache.set(domain, company);
             } catch { }
         }
     }

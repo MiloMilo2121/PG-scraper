@@ -133,7 +133,7 @@ async function main() {
                 let useCluster = false;
                 const pgUrl = `https://www.paginegialle.it/ricerca/${encodeURIComponent(keyword)}/${encodeURIComponent(city)}`;
 
-                await page.goto(pgUrl, { waitUntil: 'domcontentloaded' });
+                await retry(() => page.goto(pgUrl, { waitUntil: 'domcontentloaded' }));
                 await CookieConsent.handle(page); // 🍪 Smash cookies
 
                 // Parse Total Count
@@ -232,7 +232,7 @@ async function scrapePG(
 
         while (hasNext && pageNum <= MAX_PAGES_PG && count < limit) {
             const url = `https://www.paginegialle.it/ricerca/${encodeURIComponent(keyword)}/${encodeURIComponent(location)}/p-${pageNum}`;
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await retry(() => page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 }));
 
             // Extract
             const items = await page.evaluate((loc, key) => {

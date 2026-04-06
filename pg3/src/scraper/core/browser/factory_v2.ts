@@ -3,17 +3,12 @@ import { Browser, Page } from 'puppeteer';
 import puppeteer from 'puppeteer-extra';
 import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import * as os from 'os';
-import * as path from 'path';
 import * as fs from 'fs';
 
 import { ResourceManager, PhaseType } from '../../utils/resource_manager';
-import { getRandomUserAgent } from './ua_db';
 import { GeneticFingerprinter } from './genetic_fingerprinter';
-// Task 8 & 9: Human Behavior
-import { HumanBehavior } from './human_behavior';
 import { config } from '../../config';
 import { BrowserEvasion } from './evasion';
-import { CookieConsent } from './cookie_consent';
 import { Logger } from '../../utils/logger';
 // Task 16: Proxy Integration
 import { ProxyManager } from '../../../enricher/core/browser/proxy_manager';
@@ -25,21 +20,13 @@ if (process.env.DISABLE_STEALTH !== 'true') {
     puppeteer.use(StealthPlugin());
 }
 
-function getSandboxArgs(): string[] {
-    // FORCE ARGS FOR DEBUGGING
-    console.log('[BrowserFactory] Forcing no-sandbox args');
-    return ['--no-sandbox', '--disable-setuid-sandbox'];
-}
-
 export class BrowserFactory {
     private static instance: BrowserFactory;
     private browser: Browser | null = null;
-    private userDataDir: string;
     private launchPromise: Promise<Browser> | null = null;
     private activePages: Set<Page> = new Set();
     private instanceId: string;
     private lastHealthCheck: number = Date.now();
-    private currentProfilePath: string | null = null;
     private browserCounted = false;
 
     // Configuration
@@ -50,8 +37,6 @@ export class BrowserFactory {
 
     constructor() {
         this.instanceId = Math.random().toString(36).substring(7);
-        this.userDataDir = path.join(process.cwd(), 'temp_profiles', `browser_${this.instanceId}`);
-        this.currentProfilePath = this.userDataDir;
         BrowserFactory.instances.add(this);
     }
 
@@ -114,7 +99,6 @@ export class BrowserFactory {
 
             const freeMem = os.freemem() / 1024 / 1024;
             console.log(`[BrowserFactory:${this.instanceId}] 🚀 Spawning Browser (Free RAM: ${Math.round(freeMem)}MB)`);
-            this.currentProfilePath = this.userDataDir;
 
             // Task 10: Cloak webdriver
             let executablePath = process.env.CHROME_PATH;
@@ -188,7 +172,7 @@ export class BrowserFactory {
                         browser = await puppeteer.launch({
                             headless: true,
                             args: args,
-                            executablePath: process.env.CHROME_BIN || undefined,
+                            executablePath: process.env.CHROME_BIN || executablePath || undefined,
                             defaultViewport: null,
                             ignoreHTTPSErrors: true,
                             // userDataDir: this.userDataDir, // Disable custom profile to match debug script and avoid collisions
@@ -292,13 +276,6 @@ export class BrowserFactory {
         }
 
 
-        // Task: Cookie Consent
-        try {
-            await CookieConsent.handle(page);
-        } catch (e) {
-            Logger.warn(`[BrowserFactory] ⚠️ Cookie consent failed (non-critical): ${(e as Error).message}`);
-        }
-
         // 🛡️ MONITOR DETACHED FRAMES
         page.on('error', err => Logger.error(`[BrowserFactory] ❌ Page Error: ${err.message}`));
         page.on('close', () => Logger.info(`[BrowserFactory] 🚪 Page Closed`));
@@ -350,14 +327,5 @@ export class BrowserFactory {
             }
         }
 
-        // Cleanup temporary profile
-        if (this.currentProfilePath) {
-            try {
-                if (fs.existsSync(this.currentProfilePath)) {
-                    fs.rmSync(this.currentProfilePath, { recursive: true, force: true });
-                }
-            } catch (e) { console.error('Failed to clean profile:', e); }
-            this.currentProfilePath = null;
-        }
     }
 }
