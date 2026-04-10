@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "PG3 enrichment pipeline",
   "main": "dist/src/index.js",
+  "engines": {
+    "node": ">=22.14.0 <23"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && cp -r src/LANDING dist/src/",
     "typecheck": "tsc --noEmit -p tsconfig.json",

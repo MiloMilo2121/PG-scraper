@@ -1,11 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
-require('dotenv').config();
 import { parse } from 'csv-parse/sync';
-import { ShadowRegistry } from './ShadowRegistry';
-import { BrowserPool } from '../shared-runtime/browser/BrowserPool';
-import { MemoryFirstCache } from '../shared-runtime/cache/MemoryFirstCache';
-import { createOmegaRuntime } from '../enricher/runtime/runtime_factory';
+import { initializeRuntimeEnvironment } from '../shared-runtime/config/runtime_bootstrap';
+import { initializeRuntimeConfig } from '../shared-runtime/config/runtime_config';
+import type { OmegaRuntime } from '../enricher/runtime/runtime_factory';
 
 // Prevent Puppeteer Stealth plugin "Target closed" async crashes from killing the runner
 process.on('unhandledRejection', (reason, promise) => {
@@ -19,7 +17,11 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-async function healthCheck(cache: MemoryFirstCache, registry: ShadowRegistry, pool: BrowserPool) {
+async function healthCheck(
+    cache: OmegaRuntime['cache'],
+    registry: OmegaRuntime['registry'],
+    pool: OmegaRuntime['pool']
+) {
     console.log('[RunnerV6] Running Startup Health Diagnostics...');
     const redisOk = await cache.ping();
     if (!redisOk) {
@@ -91,6 +93,8 @@ async function startupGate(): Promise<{ mode: 'FULL' | 'FREE_ONLY' | 'ABORT', av
 }
 
 async function run() {
+    initializeRuntimeEnvironment();
+    initializeRuntimeConfig();
     const csvPath = process.argv[2];
     if (!csvPath || !fs.existsSync(csvPath)) {
         console.error('Usage: ts-node RunnerV6.ts <path-to-csv>');
@@ -99,6 +103,7 @@ async function run() {
 
     await startupGate();
 
+    const { createOmegaRuntime } = await import('../enricher/runtime/runtime_factory');
     const runtime = await createOmegaRuntime();
     const { ledger, cache, valve, pool, registry, bleedingCtrl, pipeline } = runtime;
 

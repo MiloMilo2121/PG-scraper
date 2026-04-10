@@ -33,4 +33,11 @@ describe('CostRouter error classification', () => {
       punitive: true,
     });
   });
+
+  it('classifies token bucket overloads separately and keeps them punitive', () => {
+    expect(classify('ProviderOverloadedError: Queue for OPENAI-1 exceeded max depth.')).toEqual({
+      errorClass: 'provider_overloaded',
+      punitive: true,
+    });
+  });
 });

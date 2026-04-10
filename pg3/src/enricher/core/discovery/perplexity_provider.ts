@@ -2,6 +2,7 @@ import { SearchProvider } from './search_provider';
 import { SerpResult } from './serp_analyzer';
 import { Logger } from '../../utils/logger';
 import { Retry } from '../../../utils/decorators';
+import { config } from '../../../shared-runtime/config/runtime_config';
 
 export class PerplexityProvider implements SearchProvider {
     id = 'PERPLEXITY-API-4'; // Tier 4 Oracle
@@ -10,6 +11,10 @@ export class PerplexityProvider implements SearchProvider {
 
     @Retry({ attempts: 2, delay: 5000, backoff: 'exponential' })
     async search(query: string, maxResults: number = 3): Promise<SerpResult[]> {
+        if (!config.features.perplexityEnabled) {
+            throw new Error('DISCOVERY_PERPLEXITY_ENABLED is false. Perplexity provider is disabled.');
+        }
+
         if (!process.env.PERPLEXITY_API_KEY) {
             throw new Error('PERPLEXITY_API_KEY is missing. Skipping Sonar Oracle.');
         }

@@ -28,13 +28,14 @@ describe('search_provider compatibility exports', () => {
     expect(new ExaSearchProvider()).toBeInstanceOf(ExaSearchProvider);
   });
 
-  it('routes SERP traffic through official APIs before HTML scraping', () => {
-    expect(SERP_PROVIDER_ORDER.slice(0, 5)).toEqual([
-      'SERPER-API-1',
-      'EXA-API-2',
-      'BRAVE-API-1',
-      'TAVILY-API-2',
-      'ORACLE-SERP-1',
+  it('routes SERP traffic through free-first providers before paid APIs', () => {
+    expect(SERP_PROVIDER_ORDER.slice(0, 6)).toEqual([
+      'DNS-MX-MINING-0',
+      'CRTSH-API-1',
+      'DDG-LITE-1',
+      'BRAVE-HTML-1',
+      'BING-HTML-1',
+      'SEARXNG-NET-1',
     ]);
 
     const providerMap = buildProviderMap();

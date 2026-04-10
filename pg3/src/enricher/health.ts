@@ -13,8 +13,6 @@ import { getQueueHealth } from './queue';
 import { getStats as getDbStats, initializeDatabase } from './db';
 import { config } from './config';
 
-const PORT = config.health.port;
-
 const server = http.createServer(async (req, res) => {
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -56,8 +54,9 @@ const server = http.createServer(async (req, res) => {
 
 export function startHealthServer(): void {
     initializeDatabase();
-    server.listen(PORT, () => {
-        Logger.info(`🏥 Health check API running on http://localhost:${PORT}/health`);
+    const port = config.health.port;
+    server.listen(port, () => {
+        Logger.info(`🏥 Health check API running on http://localhost:${port}/health`);
     });
 }
 

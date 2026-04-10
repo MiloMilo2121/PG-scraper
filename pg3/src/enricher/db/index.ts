@@ -12,21 +12,16 @@ import { Logger } from '../utils/logger';
 import { config } from '../config';
 import { DataMerger, DataSource } from '../utils/data_merger';
 
-const SQLITE_PATH = process.env.SQLITE_PATH || config.sqlitePath;
-
-const dataDir = path.dirname(SQLITE_PATH);
-if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-}
-
-const db = new Database(SQLITE_PATH, { timeout: 60000 });
+let db: Database.Database | null = null;
+let activeSqlitePath: string | null = null;
+let pragmasInitialized = false;
 
 // Safely execute pragmas that might throw SQLITE_BUSY during concurrent startup
 function safePragma(query: string) {
     let retries = 5;
     while (retries > 0) {
         try {
-            db.pragma(query);
+            getDb().pragma(query);
             return;
         } catch (err: any) {
             if (err.message && err.message.includes('database is locked') && retries > 1) {
@@ -41,21 +36,76 @@ function safePragma(query: string) {
     }
 }
 
-safePragma('journal_mode = WAL');
-safePragma('synchronous = NORMAL');
-safePragma('cache_size = 10000');
-safePragma('temp_store = MEMORY');
-safePragma('busy_timeout = 60000');
-safePragma('wal_autocheckpoint = 1000');
-safePragma('journal_size_limit = 16777216');
-
-Logger.info(`🗄️ SQLite connected: ${SQLITE_PATH} (WAL mode)`);
-
 let schemaInitialized = false;
 let statementsInitialized = false;
 
+function resolveSqlitePath(): string {
+    return process.env.SQLITE_PATH || config.sqlitePath;
+}
+
+function ensureDataDir(sqlitePath: string): void {
+    const dataDir = path.dirname(sqlitePath);
+    if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+    }
+}
+
+function initializePragmas(): void {
+    if (pragmasInitialized) {
+        return;
+    }
+
+    safePragma('journal_mode = WAL');
+    safePragma('synchronous = NORMAL');
+    safePragma('cache_size = 10000');
+    safePragma('temp_store = MEMORY');
+    safePragma('busy_timeout = 60000');
+    safePragma('wal_autocheckpoint = 1000');
+    safePragma('journal_size_limit = 16777216');
+    pragmasInitialized = true;
+}
+
+export function getDb(): Database.Database {
+    const sqlitePath = resolveSqlitePath();
+    if (db && activeSqlitePath === sqlitePath) {
+        return db;
+    }
+
+    if (db) {
+        closeDatabase();
+    }
+
+    ensureDataDir(sqlitePath);
+    db = new Database(sqlitePath, { timeout: 60000 });
+    activeSqlitePath = sqlitePath;
+    initializePragmas();
+    Logger.info(`🗄️ SQLite connected: ${sqlitePath} (WAL mode)`);
+    return db;
+}
+
+export function closeDatabase(): void {
+    if (db) {
+        db.close();
+    }
+
+    db = null;
+    activeSqlitePath = null;
+    pragmasInitialized = false;
+    schemaInitialized = false;
+    statementsInitialized = false;
+    upsertCompanyStmt = undefined;
+    getCompanyByIdStmt = undefined;
+    getCompanyByNameStmt = undefined;
+    getPendingCompaniesStmt = undefined;
+    upsertResultStmt = undefined;
+    getResultByCompanyStmt = undefined;
+    insertJobLogStmt = undefined;
+    insertFieldEvidenceStmt = undefined;
+    insertResultVersionStmt = undefined;
+}
+
 function getTableColumns(tableName: string): Set<string> {
-    const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+    const rows = getDb().prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
     return new Set(rows.map((row) => row.name));
 }
 
@@ -75,7 +125,7 @@ function addColumnIfMissing(tableName: string, columns: Set<string>, columnName:
     }
 
     const added = runMigrationStep(`${tableName}.${columnName}`, () => {
-        db.exec(ddl);
+        getDb().exec(ddl);
     });
 
     if (added) {
@@ -90,7 +140,9 @@ export function initializeDatabase(): void {
         return;
     }
 
-    db.exec(`
+    const database = getDb();
+
+    database.exec(`
         CREATE TABLE IF NOT EXISTS companies (
             id TEXT PRIMARY KEY,
             company_name TEXT NOT NULL,
@@ -210,7 +262,7 @@ export function initializeDatabase(): void {
 
     if (enrichmentColumns.has('updated_at')) {
         runMigrationStep('enrichment_results.updated_at_backfill', () => {
-            db.exec(`
+            database.exec(`
                 UPDATE enrichment_results
                 SET updated_at = COALESCE(updated_at, enriched_at, CURRENT_TIMESTAMP)
                 WHERE updated_at IS NULL
@@ -220,7 +272,7 @@ export function initializeDatabase(): void {
 
     if (enrichmentColumns.has('deleted_at') && enrichmentColumns.has('updated_at')) {
         runMigrationStep('enrichment_results.soft_delete_dedupe', () => {
-            db.exec(`
+            database.exec(`
                 WITH ranked AS (
                     SELECT
                         id,
@@ -241,7 +293,7 @@ export function initializeDatabase(): void {
         });
 
         runMigrationStep('enrichment_results.active_unique_index', () => {
-            db.exec(`
+            database.exec(`
                 CREATE UNIQUE INDEX IF NOT EXISTS ux_enrichment_results_company_active
                 ON enrichment_results(company_id)
                 WHERE deleted_at IS NULL
@@ -256,7 +308,7 @@ export function initializeDatabase(): void {
     addColumnIfMissing('job_log', jobLogColumns, 'run_id', `ALTER TABLE job_log ADD COLUMN run_id TEXT`);
     if (jobLogColumns.has('business_status')) {
         runMigrationStep('job_log.business_status_index', () => {
-            db.exec(`
+            database.exec(`
                 CREATE INDEX IF NOT EXISTS idx_job_log_business_status
                 ON job_log(business_status)
             `);
@@ -335,7 +387,9 @@ function initializeStatements(): void {
         return;
     }
 
-    upsertCompanyStmt = db.prepare(`
+    const database = getDb();
+
+    upsertCompanyStmt = database.prepare(`
         INSERT INTO companies
         (id, company_name, city, province, zip_code, region, address, phone, website, category, source, vat_code, pg_url, email, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -357,16 +411,16 @@ function initializeStatements(): void {
             updated_at = CURRENT_TIMESTAMP
     `);
 
-    getCompanyByIdStmt = db.prepare('SELECT * FROM companies WHERE id = ?');
-    getCompanyByNameStmt = db.prepare('SELECT * FROM companies WHERE company_name = ? AND city = ?');
-    getPendingCompaniesStmt = db.prepare(`
+    getCompanyByIdStmt = database.prepare('SELECT * FROM companies WHERE id = ?');
+    getCompanyByNameStmt = database.prepare('SELECT * FROM companies WHERE company_name = ? AND city = ?');
+    getPendingCompaniesStmt = database.prepare(`
         SELECT c.* FROM companies c
         LEFT JOIN enrichment_results er ON c.id = er.company_id AND er.deleted_at IS NULL
         WHERE er.id IS NULL AND c.deleted_at IS NULL
         LIMIT ?
     `);
 
-    upsertResultStmt = db.prepare(`
+    upsertResultStmt = database.prepare(`
         INSERT INTO enrichment_results
         (id, company_id, vat, revenue, revenue_year, employees, is_estimated_employees, pec, email, website_validated, decision_maker_name, decision_maker_role, decision_maker_linkedin_url, decision_maker_confidence, lead_score, data_source, discovery_method, discovery_confidence, reason_code, stage_outcomes_json, enriched_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -406,7 +460,7 @@ function initializeStatements(): void {
         RETURNING id
     `);
 
-    getResultByCompanyStmt = db.prepare(`
+    getResultByCompanyStmt = database.prepare(`
         SELECT *
         FROM enrichment_results
         WHERE company_id = ? AND deleted_at IS NULL
@@ -414,17 +468,17 @@ function initializeStatements(): void {
         LIMIT 1
     `);
 
-    insertJobLogStmt = db.prepare(`
+    insertJobLogStmt = database.prepare(`
         INSERT INTO job_log (company_id, status, business_status, error_message, error_category, reason_code, stage_outcomes_json, run_id, duration_ms, attempt)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    insertFieldEvidenceStmt = db.prepare(`
+    insertFieldEvidenceStmt = database.prepare(`
         INSERT INTO field_evidence (entity_type, entity_id, company_id, field_name, field_value, source, trust_score, run_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    insertResultVersionStmt = db.prepare(`
+    insertResultVersionStmt = database.prepare(`
         INSERT INTO enrichment_result_versions (result_id, company_id, snapshot_json, data_source, reason_code)
         VALUES (?, ?, ?, ?, ?)
     `);
@@ -465,7 +519,7 @@ export function insertCompany(company: Company): void {
 
 export function insertCompanies(companies: Company[]): void {
     ensureReady();
-    const insertMany = db.transaction((items: Company[]) => {
+    const insertMany = getDb().transaction((items: Company[]) => {
         for (const company of items) {
             insertCompany(company);
         }
@@ -492,7 +546,7 @@ export function insertEnrichmentResult(result: EnrichmentResult): void {
         throw new Error(`insertEnrichmentResult requires a non-empty id for company ${result.company_id}`);
     }
 
-    const tx = db.transaction(() => {
+    const tx = getDb().transaction(() => {
         const stageOutcomesJson = result.stage_outcomes_json
             || (result.stage_outcomes ? JSON.stringify(result.stage_outcomes) : undefined);
         const persisted = upsertResultStmt.get(
@@ -596,25 +650,26 @@ export function getStats(): {
     not_found: number;
 } {
     ensureReady();
-    const total = (db.prepare('SELECT COUNT(*) as count FROM companies WHERE deleted_at IS NULL').get() as { count: number }).count;
-    const enriched = (db.prepare('SELECT COUNT(DISTINCT company_id) as count FROM enrichment_results WHERE deleted_at IS NULL').get() as { count: number }).count;
-    const processed = (db.prepare(`
+    const database = getDb();
+    const total = (database.prepare('SELECT COUNT(*) as count FROM companies WHERE deleted_at IS NULL').get() as { count: number }).count;
+    const enriched = (database.prepare('SELECT COUNT(DISTINCT company_id) as count FROM enrichment_results WHERE deleted_at IS NULL').get() as { count: number }).count;
+    const processed = (database.prepare(`
         SELECT COUNT(DISTINCT company_id) as count
         FROM job_log
         WHERE status IN ('SUCCESS', 'FAILED')
     `).get() as { count: number }).count;
-    const failed = (db.prepare('SELECT COUNT(DISTINCT company_id) as count FROM job_log WHERE status = ?').get('FAILED') as { count: number }).count;
-    const foundComplete = (db.prepare(`
+    const failed = (database.prepare('SELECT COUNT(DISTINCT company_id) as count FROM job_log WHERE status = ?').get('FAILED') as { count: number }).count;
+    const foundComplete = (database.prepare(`
         SELECT COUNT(DISTINCT company_id) as count
         FROM job_log
         WHERE status = 'SUCCESS' AND business_status = 'FOUND_COMPLETE'
     `).get() as { count: number }).count;
-    const enrichmentOnly = (db.prepare(`
+    const enrichmentOnly = (database.prepare(`
         SELECT COUNT(DISTINCT company_id) as count
         FROM job_log
         WHERE status = 'SUCCESS' AND business_status = 'ENRICHMENT_ONLY_NO_WEBSITE'
     `).get() as { count: number }).count;
-    const notFound = (db.prepare(`
+    const notFound = (database.prepare(`
         SELECT COUNT(DISTINCT company_id) as count
         FROM job_log
         WHERE status = 'SUCCESS' AND business_status = 'NOT_FOUND'
@@ -633,7 +688,7 @@ export function getStats(): {
 
 export function exportEnrichedToCSV(outputPath: string): void {
     ensureReady();
-    const stmt = db.prepare(`
+    const stmt = getDb().prepare(`
         SELECT
             c.company_name, c.city, c.province, c.address, c.phone, c.category,
             c.email AS input_email,
@@ -736,4 +791,12 @@ function escapeCsvValue(value: unknown): string {
     return `"${raw.replace(/"/g, '""')}"`;
 }
 
-export default db;
+const dbFacade = new Proxy({} as Database.Database, {
+    get(_target, prop) {
+        const instance = getDb();
+        const value = (instance as any)[prop];
+        return typeof value === 'function' ? value.bind(instance) : value;
+    },
+});
+
+export default dbFacade;

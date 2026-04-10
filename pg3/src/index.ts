@@ -1,4 +1,6 @@
 import { Logger } from './shared-runtime/logging/Logger';
+import { initializeRuntimeEnvironment } from './shared-runtime/config/runtime_bootstrap';
+import { initializeRuntimeConfig } from './shared-runtime/config/runtime_config';
 
 const VALID_COMMANDS = new Set(['worker', 'scheduler', 'server']);
 
@@ -10,6 +12,8 @@ function printUsage(): void {
 }
 
 async function main(): Promise<void> {
+  initializeRuntimeEnvironment();
+  initializeRuntimeConfig();
   const command = process.argv[2];
 
   if (!command || !VALID_COMMANDS.has(command)) {

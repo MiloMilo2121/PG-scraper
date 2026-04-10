@@ -8,6 +8,7 @@ const RESET_KEYS = [
   'DEEPSEEK_API_KEY',
   'KIMI_API_KEY',
   'PERPLEXITY_API_KEY',
+  'DISCOVERY_PERPLEXITY_ENABLED',
   'LOCAL_ORACLE_FETCH_COST_EUR',
   'LOCAL_BROWSER_NAV_COST_EUR',
 ];
@@ -92,6 +93,33 @@ describe('provider catalog', () => {
     expect(providers.get('EXA-API-2')?.family).toBe('SERP');
     expect(providers.get('OPENAI-1')?.family).toBe('LLM');
     expect(providers.get('OPENROUTER-2')?.family).toBe('LLM');
+  }, 120000);
+
+  it('keeps Perplexity out of the provider map when the feature flag is disabled', async () => {
+    const { buildProviderMap } = await loadCatalog({
+      DISCOVERY_PERPLEXITY_ENABLED: 'false',
+    });
+    const { buildSerpProviderEntries } = await import('../../src/enricher/runtime/providers/serp_provider_registry');
+
+    const providers = buildProviderMap();
+    const serpEntries = buildSerpProviderEntries();
+
+    expect(serpEntries.some(([id]) => id === 'PERPLEXITY-API-4')).toBe(false);
+    expect(providers.has('PERPLEXITY-API-4')).toBe(false);
+  }, 120000);
+
+  it('registers Perplexity only when the feature flag is enabled', async () => {
+    const { buildProviderMap } = await loadCatalog({
+      DISCOVERY_PERPLEXITY_ENABLED: 'true',
+      PERPLEXITY_API_KEY: 'test-key',
+    });
+    const { buildSerpProviderEntries } = await import('../../src/enricher/runtime/providers/serp_provider_registry');
+
+    const providers = buildProviderMap();
+    const serpEntries = buildSerpProviderEntries();
+
+    expect(serpEntries.some(([id]) => id === 'PERPLEXITY-API-4')).toBe(true);
+    expect(providers.has('PERPLEXITY-API-4')).toBe(true);
   }, 120000);
 
   it('threads configurable local Oracle cost into the provider map', async () => {

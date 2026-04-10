@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { CostRouter } from '../../src/shared-runtime/routing/CostRouter';
 
 const ORIGINAL_SERPER_API_KEY = process.env.SERPER_API_KEY;
+const ORIGINAL_OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const ORIGINAL_OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 function createRouter(
   providers: Map<string, any>,
@@ -9,6 +11,7 @@ function createRouter(
   overrides?: {
     recentEntries?: Array<{ provider: string; success: boolean; punitive?: boolean; duration_ms: number }>;
   },
+  family: 'SERP' | 'LLM' | 'PROXY_FETCH' = 'SERP',
 ) {
   const cache = {
     get: vi.fn().mockResolvedValue({ level: 'MISS', value: null }),
@@ -21,7 +24,7 @@ function createRouter(
   };
 
   return new CostRouter(cache as any, ledger as any, providers as any, {
-    SERP: providerOrder,
+    [family]: providerOrder,
   });
 }
 
@@ -137,5 +140,48 @@ describe('CostRouter provider cooldowns', () => {
     expect(first.provider).toBe('DDG-LITE-1');
     expect(second.provider).toBe('BING-HTML-1');
     expect(htmlProviderExecute).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats bucket overload as a provider failure and waterfalls to the next LLM provider', async () => {
+    const overloadedExecute = vi.fn().mockResolvedValue([{ url: 'https://should-not-run.test', title: 'blocked' }]);
+    const fallbackExecute = vi.fn().mockResolvedValue([{ url: 'https://fallback.test', title: 'fallback' }]);
+    const providers = new Map([
+      ['OPENAI-1', { family: 'LLM', tier: 1, costPerRequest: 0.001, execute: overloadedExecute }],
+      ['OPENROUTER-2', { family: 'LLM', tier: 1, costPerRequest: 0.002, execute: fallbackExecute }],
+    ]);
+
+    process.env.OPENAI_API_KEY = 'test-openai';
+    process.env.OPENROUTER_API_KEY = 'test-openrouter';
+
+    try {
+      const router = createRouter(providers, ['OPENAI-1', 'OPENROUTER-2'], undefined, 'LLM');
+      const llmBuckets = (router as any).llmBuckets as Map<string, any>;
+      const bucket = llmBuckets.get('OPENAI-1');
+      bucket.tokens = 0;
+      bucket.queue = new Array(20).fill(() => undefined);
+
+      const result = await router.route('LLM_CLASSIFY', 'classify this company', { skipCache: true });
+
+      expect(result.provider).toBe('OPENROUTER-2');
+      expect(overloadedExecute).not.toHaveBeenCalled();
+      expect(fallbackExecute).toHaveBeenCalledTimes(1);
+      expect((router as any).providerCooldowns.get('OPENAI-1')).toBeGreaterThan(Date.now());
+    } finally {
+      if (ORIGINAL_SERPER_API_KEY === undefined) {
+        delete process.env.SERPER_API_KEY;
+      } else {
+        process.env.SERPER_API_KEY = ORIGINAL_SERPER_API_KEY;
+      }
+      if (ORIGINAL_OPENAI_API_KEY === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = ORIGINAL_OPENAI_API_KEY;
+      }
+      if (ORIGINAL_OPENROUTER_API_KEY === undefined) {
+        delete process.env.OPENROUTER_API_KEY;
+      } else {
+        process.env.OPENROUTER_API_KEY = ORIGINAL_OPENROUTER_API_KEY;
+      }
+    }
   });
 });

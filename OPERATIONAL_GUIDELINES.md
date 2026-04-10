@@ -2,7 +2,7 @@
 # PG-Scraper / ANTIGRAVITY / OMEGA ENGINE v6
 
 > **Classificazione**: OPERATIVA L5 (Massimo)
-> **Versione**: 1.0.0 | **Data**: 2026-02-21
+> **Versione**: 1.0.1 | **Data**: 2026-04-10
 > **Scope**: Governo completo del ciclo di vita del sistema
 
 ---
@@ -88,6 +88,25 @@ node dist/src/index.js server
 
 ## 2. CONFIGURAZIONE OPERATIVA
 
+### 2.0 Bootstrap Riproducibile
+
+```bash
+cd PG
+nvm use                # legge .nvmrc -> Node 22.14.0
+
+cd pg3
+npm ci
+npm rebuild better-sqlite3
+
+cd ../pg1
+npm ci
+```
+
+Regole operative:
+- L'ambiente runtime viene bootstrap-pato una sola volta dagli entrypoint applicativi.
+- SQLite non deve mai aprirsi a import-time: usare bootstrap esplicito (`initializeDatabase()` / `getDb()`).
+- Se cambi major/minor di Node, i moduli nativi vanno ricompilati prima di eseguire test o smoke.
+
 ### 2.1 Variabili d'Ambiente Critiche
 
 ```bash
@@ -110,18 +129,13 @@ DISCOVERY_DEFAULT_MODE=DEEP_RUN2
 ### 2.2 Gerarchia dei Provider (CostRouter)
 
 ```
-Tier 0: BING-HTML   (Costo: 0.000 EUR) ← SEMPRE PRIMO
-Tier 1: DDG-LITE    (Costo: 0.000 EUR) ← Fallback gratuito
-Tier 2: SERPER      (Costo: 0.001 EUR) ← Google SERP via API
-Tier 2: JINA        (Costo: 0.002 EUR) ← Content reader
-Tier 3: OPENAI      (Costo: 0.005 EUR) ← GPT-4o-mini
-Tier 4: PERPLEXITY  (Costo: 0.005 EUR) ← Sonar Reasoning
-Tier 5: DEEPSEEK    (Costo: 0.002 EUR) ← deepseek-chat
-Tier 6: KIMI        (Costo: 0.002 EUR) ← moonshot-v1-8k
-Tier 7: Z.AI        (Costo: 0.002 EUR) ← z-chat
+Lane gratuita: DNS-MX → CRTSH → DDG → BRAVE-HTML → BING → SEARXNG
+Lane paid-light: SERPER → EXA → BRAVE-API → TAVILY
+Lane hard target: ORACLE-SERP
+Lane heavy fallback: PERPLEXITY (solo se feature flag esplicito)
 ```
 
-**REGOLA**: Il CostRouter scala automaticamente. Non saltare mai un tier.
+**REGOLA**: Il CostRouter scala automaticamente in ordine free-first. Non saltare mai una lane senza un errore reale, un cooldown o un feature flag che la esclude.
 
 ### 2.3 Soglie di Discovery
 
@@ -182,7 +196,7 @@ STAGE 3: HyperGuesser
   └── company_name → domain probe su .it TLD
 
 STAGE 4: SERP Company Search
-  └── CostRouter waterfall (Bing → DDG → Serper → fallback)
+  └── CostRouter waterfall (DNS-MX → CRTSH → DDG → BRAVE-HTML → BING → SEARXNG → paid)
 
 STAGE 5: SERP Registry Search
   └── site:registroimprese.it OR site:informazione-aziende.it
