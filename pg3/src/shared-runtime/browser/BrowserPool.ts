@@ -4,6 +4,7 @@ import * as path from 'path';
 const crypto = require('crypto');
 import { CostLedger } from '../budget/CostLedger';
 import { BlockClassifier, BlockType } from '../security/block_classifier';
+import { shouldRelaxTlsForUrl } from './tls_policy';
 
 export interface NavigationResult {
     status: 'OK' | 'TIMEOUT' | 'BLOCKED' | 'CF_CHALLENGE' | 'ERROR';
@@ -19,6 +20,7 @@ interface ContextInstance {
     context: BrowserContext;
     page: Page;
     session_key: string;
+    tls_relaxed: boolean;
     storage_state_path: string;
     loaded_from_storage_state: boolean;
     blocked_resources_current_nav: number;
@@ -159,11 +161,12 @@ export class BrowserPool {
         }
     }
 
-    private async createInstance(sessionKey: string = 'generic'): Promise<ContextInstance> {
+    private async createInstance(sessionKey: string = 'generic', targetUrl: string = ''): Promise<ContextInstance> {
         const id = crypto.randomUUID().substring(0, 8);
         const browser = await this.ensureBrowser();
         const storageStatePath = this.getStorageStatePath(sessionKey);
         const hasStorageState = fs.existsSync(storageStatePath);
+        const relaxTls = shouldRelaxTlsForUrl(targetUrl);
 
         // Each context is fully isolated (cookies, localStorage, fingerprint)
         const context = await browser.newContext({
@@ -175,7 +178,7 @@ export class BrowserPool {
             userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             locale: 'it-IT',
             timezoneId: 'Europe/Rome',
-            ignoreHTTPSErrors: true,
+            ignoreHTTPSErrors: relaxTls,
             ...(hasStorageState ? { storageState: storageStatePath } : {}),
         });
 
@@ -186,6 +189,7 @@ export class BrowserPool {
             context,
             page,
             session_key: sessionKey,
+            tls_relaxed: relaxTls,
             storage_state_path: storageStatePath,
             loaded_from_storage_state: hasStorageState,
             blocked_resources_current_nav: 0,
@@ -209,24 +213,25 @@ export class BrowserPool {
 
     private async acquireInstance(url: string): Promise<ContextInstance> {
         const sessionKey = this.getSessionKey(url);
+        const relaxTls = shouldRelaxTlsForUrl(url);
 
-        let available = this.instances.find(i => !i.is_busy && i.session_key === sessionKey);
+        let available = this.instances.find(i => !i.is_busy && i.session_key === sessionKey && i.tls_relaxed === relaxTls);
         if (available) {
             available.is_busy = true;
             return available;
         }
 
         if (this.instances.length < this.maxInstances) {
-            available = await this.createInstance(sessionKey);
+            available = await this.createInstance(sessionKey, url);
             this.instances.push(available);
             available.is_busy = true;
             return available;
         }
 
-        const reusableOtherLane = this.instances.find(i => !i.is_busy);
+        const reusableOtherLane = this.instances.find(i => !i.is_busy && i.tls_relaxed === relaxTls);
         if (reusableOtherLane) {
             await this.recycleInstance(reusableOtherLane);
-            available = await this.createInstance(sessionKey);
+            available = await this.createInstance(sessionKey, url);
             this.instances.push(available);
             available.is_busy = true;
             return available;
@@ -235,16 +240,16 @@ export class BrowserPool {
         const start = Date.now();
         while (Date.now() - start < 10000) {
             await new Promise(r => setTimeout(r, 200));
-            available = this.instances.find(i => !i.is_busy && i.session_key === sessionKey);
+            available = this.instances.find(i => !i.is_busy && i.session_key === sessionKey && i.tls_relaxed === relaxTls);
             if (available) {
                 available.is_busy = true;
                 return available;
             }
 
-            const freeOtherLane = this.instances.find(i => !i.is_busy);
+            const freeOtherLane = this.instances.find(i => !i.is_busy && i.tls_relaxed === relaxTls);
             if (freeOtherLane) {
                 await this.recycleInstance(freeOtherLane);
-                available = await this.createInstance(sessionKey);
+                available = await this.createInstance(sessionKey, url);
                 this.instances.push(available);
                 available.is_busy = true;
                 return available;

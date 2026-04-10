@@ -2,6 +2,7 @@ import { NormalizedEntity, Candidate, SearchProvider, SearchResult } from '../..
 import { URL } from 'url';
 import { Scorer } from '../scorer'; // for ranking if needed, or just ranking logic here
 import { getConfig } from '../../config';
+import { GoogleSearchProviderError } from './provider';
 
 export class CandidateMiner {
     private provider: SearchProvider;
@@ -86,8 +87,21 @@ export class CandidateMiner {
                         // invalid url
                     }
                 }
-            } catch (e) {
-                console.error(`Search failed for query: ${q}`, e);
+            } catch (error: any) {
+                if (error instanceof GoogleSearchProviderError && error.retriable) {
+                    console.warn(`[Miner] Retriable search failure for query: ${q}`, { kind: error.kind, statusCode: error.statusCode });
+                    continue;
+                }
+
+                if (candidates.length > 0) {
+                    console.warn(`[Miner] Stopping search phase after non-retriable error with partial candidates for query: ${q}`, {
+                        kind: error instanceof GoogleSearchProviderError ? error.kind : 'unknown',
+                        message: error?.message || String(error),
+                    });
+                    break;
+                }
+
+                throw error;
             }
         }
     }
