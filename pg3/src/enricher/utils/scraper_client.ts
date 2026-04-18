@@ -2,13 +2,16 @@ import { fetch, Agent, ProxyAgent } from 'undici';
 import { config } from '../config';
 import { Logger } from './logger';
 import { BlockClassifier, BlockType } from '../core/security/block_classifier';
+import { shouldRelaxTlsForUrl } from '../../shared-runtime/browser/tls_policy';
 
 // Connection pooling - reuse TCP connections for massive speedup
-const globalDispatcher = new Agent({
+const dispatcherOptions = {
   keepAliveTimeout: 15000,
   keepAliveMaxTimeout: 30000,
   connections: 50,
-});
+};
+const strictDispatcher = new Agent(dispatcherOptions);
+let relaxedDispatcher: Agent | null = null;
 
 export type ScraperClientMode = 'auto' | 'direct' | 'brightdata' | 'oracle';
 
@@ -44,6 +47,21 @@ function safeHost(url: string): string {
   }
 }
 
+function getDispatcherForUrl(url: string): Agent {
+  if (!shouldRelaxTlsForUrl(url)) {
+    return strictDispatcher;
+  }
+
+  if (!relaxedDispatcher) {
+    relaxedDispatcher = new Agent({
+      ...dispatcherOptions,
+      connect: { rejectUnauthorized: false },
+    } as any);
+  }
+
+  return relaxedDispatcher;
+}
+
 function looksBlocked(status: number, body: string, url: string = ''): boolean {
   const sig = BlockClassifier.classify(status, body, url, 'scraper_client');
   if (sig.type !== BlockType.NONE) {
@@ -53,21 +71,6 @@ function looksBlocked(status: number, body: string, url: string = ''): boolean {
   // Legacy fallback: keep original status-code checks for edge cases
   if ([401, 407, 451, 503].includes(status)) return true;
   return false;
-}
-
-function isHardTarget(url: string): boolean {
-  const host = safeHost(url);
-  const hard = [
-    'google.',
-    'duckduckgo.com',
-    'bing.com',
-    'reportaziende.it',
-    'ufficiocamerale.it',
-    'registroimprese.it',
-    'informazione-aziende.it',
-    'fatturatoitalia.it',
-  ];
-  return hard.some((h) => host.includes(h));
 }
 
 async function withRetry<T>(fn: () => Promise<T>, retries: number): Promise<T> {
@@ -104,7 +107,7 @@ export class ScraperClient {
     const response = await fetch(url, {
       method: 'GET',
       headers: { ...this.defaultHeaders(), ...(options.headers || {}) },
-      dispatcher: globalDispatcher,
+      dispatcher: getDispatcherForUrl(url),
       redirect: 'follow',
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -127,12 +130,16 @@ export class ScraperClient {
     const timeoutMs = options.timeoutMs ?? 30000;
 
     // Web Unlocker operates via proxy authentication
-    const proxyAgent = new ProxyAgent({
-      uri: config.brightData.webUnlockerUrl!,
-      connect: { rejectUnauthorized: false },
+    const proxyUrl = config.brightData.webUnlockerUrl!;
+    const proxyAgentOptions: Record<string, unknown> = {
+      uri: proxyUrl,
       keepAliveTimeout: 10000,
       keepAliveMaxTimeout: 15000,
-    });
+    };
+    if (shouldRelaxTlsForUrl(proxyUrl)) {
+      proxyAgentOptions.connect = { rejectUnauthorized: false };
+    }
+    const proxyAgent = new ProxyAgent(proxyAgentOptions as any);
 
     const response = await fetch(targetUrl, {
       method: 'GET',
@@ -177,19 +184,17 @@ export class ScraperClient {
       },
     ];
 
-
+    if (allowOracleFallback) {
+      steps.push({
+        label: 'oracle',
+        run: () => this.oracleGet(targetUrl, options),
+      });
+    }
 
     if (this.isBrightDataEnabled()) {
       steps.push({
         label: 'brightdata_unlocker',
         run: () => this.brightDataGet(targetUrl, options),
-      });
-    }
-
-    if (allowOracleFallback) {
-      steps.push({
-        label: 'oracle',
-        run: () => this.oracleGet(targetUrl, options),
       });
     }
 
@@ -253,6 +258,4 @@ export class ScraperClient {
     const res = await this.fetchHtml(targetUrl, options);
     return res.data;
   }
-
-
 }

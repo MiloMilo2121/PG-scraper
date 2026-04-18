@@ -69,13 +69,13 @@ class TokenBucketQueue {
         }, refillRateMs);
     }
 
-    public async acquire(): Promise<void> {
+    public async acquire(providerId: string): Promise<void> {
         if (this.tokens > 0) {
             this.tokens--;
             return;
         }
         if (this.queue.length >= 20) {
-            throw new Error("QUEUE_FULL");
+            throw new ProviderOverloadedError(providerId);
         }
         return new Promise<void>((resolve) => {
             this.queue.push(resolve);
@@ -247,23 +247,18 @@ export class CostRouter {
                 continue;
             }
 
-            // Check bucket
-            const bucket = this.llmBuckets.get(providerId);
-            if (bucket) {
-                try {
-                    await bucket.acquire();
-                } catch (e) {
-                    throw new ProviderOverloadedError(providerId);
-                }
-            }
-
             const start = Date.now();
             let success = false;
             let errorMsg: string | undefined;
             let resultData: T | undefined;
             let statusCode: number | undefined;
+            const bucket = this.llmBuckets.get(providerId);
 
             try {
+                if (bucket) {
+                    await bucket.acquire(providerId);
+                }
+
                 resultData = await adapter.execute<T>(payload, options);
 
                 // If a SERP provider returns 0 results, it's a silent block (captcha/ban), so we failover
@@ -275,7 +270,12 @@ export class CostRouter {
             } catch (err: any) {
                 const messageString = err.message || 'Unknown';
                 errorMsg = messageString;
-                statusCode = err.response?.status || (messageString.includes('401') ? 401 : messageString.includes('403') ? 403 : messageString.includes('400') ? 400 : undefined);
+                const isProviderOverload = err instanceof ProviderOverloadedError
+                    || messageString.includes('provideroverloadederror')
+                    || messageString.includes('queue_full')
+                    || messageString.includes('queue for ');
+
+                statusCode = err.response?.status || (isProviderOverload ? 429 : messageString.includes('401') ? 401 : messageString.includes('403') ? 403 : messageString.includes('400') ? 400 : undefined);
 
                 // If Tor is unreachable, immediately exhaust all Tier 0/1 Tor providers
                 if (messageString.includes('Tor ControlPort')) {
@@ -283,12 +283,12 @@ export class CostRouter {
                 }
 
                 // If API returns 400/402 (Not enough credits) or 401, mark exhausted
-                if ((statusCode === 400 || statusCode === 402 || statusCode === 401) && this.isDirectApiProvider(providerId, messageString)) {
+                if (!isProviderOverload && (statusCode === 400 || statusCode === 402 || statusCode === 401) && this.isDirectApiProvider(providerId, messageString)) {
                     this.credits.set(providerId, 0);
                 }
                 
                 // For 403/429, only exhaust if it's a direct API provider, NOT a proxy-scraping provider where 403 is just a target website block
-                if ((statusCode === 403 || statusCode === 429) && this.isDirectApiProvider(providerId, messageString)) {
+                if (!isProviderOverload && (statusCode === 403 || statusCode === 429) && this.isDirectApiProvider(providerId, messageString)) {
                         this.credits.set(providerId, 0);
                 }
 
@@ -371,11 +371,14 @@ export class CostRouter {
         }
     }
 
-    private classifyError(errorMsg?: string, statusCode?: number): { errorClass: 'provider_auth' | 'provider_rate_limit' | 'provider_block' | 'semantic_empty' | 'transport' | 'unknown'; punitive: boolean } {
+    private classifyError(errorMsg?: string, statusCode?: number): { errorClass: 'provider_auth' | 'provider_rate_limit' | 'provider_overloaded' | 'provider_block' | 'semantic_empty' | 'transport' | 'unknown'; punitive: boolean } {
         const message = (errorMsg || '').toLowerCase();
 
         if (message.includes('serp_empty_result')) {
             return { errorClass: 'semantic_empty', punitive: false };
+        }
+        if (message.includes('provideroverloadederror') || message.includes('queue_full') || message.includes('queue for ')) {
+            return { errorClass: 'provider_overloaded', punitive: true };
         }
         if (
             statusCode === 400 ||
@@ -434,7 +437,7 @@ export class CostRouter {
 
     private registerCooldown(
         providerId: string,
-        classification: { errorClass: 'provider_auth' | 'provider_rate_limit' | 'provider_block' | 'semantic_empty' | 'transport' | 'unknown'; punitive: boolean },
+        classification: { errorClass: 'provider_auth' | 'provider_rate_limit' | 'provider_overloaded' | 'provider_block' | 'semantic_empty' | 'transport' | 'unknown'; punitive: boolean },
     ): void {
         if (!classification.punitive) {
             return;
@@ -452,8 +455,8 @@ export class CostRouter {
         }
     }
 
-    private getCooldownMs(errorClass: 'provider_auth' | 'provider_rate_limit' | 'provider_block' | 'semantic_empty' | 'transport' | 'unknown'): number {
-        if (errorClass === 'provider_block' || errorClass === 'provider_rate_limit') {
+    private getCooldownMs(errorClass: 'provider_auth' | 'provider_rate_limit' | 'provider_overloaded' | 'provider_block' | 'semantic_empty' | 'transport' | 'unknown'): number {
+        if (errorClass === 'provider_block' || errorClass === 'provider_rate_limit' || errorClass === 'provider_overloaded') {
             return config.proxy.failureCooldownMs;
         }
         if (errorClass === 'transport' || errorClass === 'unknown') {

@@ -1,7 +1,8 @@
 import { ProviderRegistryEntry, runSearchProvider } from './provider_registry_helpers';
+import { config } from '../../../shared-runtime/config/runtime_config';
 
 export function buildSerpProviderEntries(): ProviderRegistryEntry[] {
-    return [
+    const entries: ProviderRegistryEntry[] = [
         ['DNS-MX-MINING-0', {
             family: 'SERP',
             costPerRequest: 0,
@@ -101,7 +102,10 @@ export function buildSerpProviderEntries(): ProviderRegistryEntry[] {
                 return runSearchProvider<T>(() => import('../../core/discovery/search_provider'), 'SearXNGProvider', query);
             },
         }],
-        ['PERPLEXITY-API-4', {
+    ];
+
+    if (config.features.perplexityEnabled) {
+        entries.push(['PERPLEXITY-API-4', {
             family: 'SERP',
             costPerRequest: 0.010,
             tier: 4,
@@ -109,6 +113,8 @@ export function buildSerpProviderEntries(): ProviderRegistryEntry[] {
                 const query = typeof payload === 'string' ? payload : payload.query;
                 return runSearchProvider<T>(() => import('../../core/discovery/perplexity_provider'), 'PerplexityProvider', query);
             },
-        }],
-    ];
+        }]);
+    }
+
+    return entries;
 }

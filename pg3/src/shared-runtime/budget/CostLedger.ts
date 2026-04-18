@@ -14,7 +14,7 @@ export interface LedgerEntry {
     duration_ms: number;
     success: boolean;
     error?: string;
-    error_class?: 'provider_auth' | 'provider_rate_limit' | 'provider_block' | 'semantic_empty' | 'transport' | 'browser_pool' | 'unknown';
+    error_class?: 'provider_auth' | 'provider_rate_limit' | 'provider_overloaded' | 'provider_block' | 'semantic_empty' | 'transport' | 'browser_pool' | 'unknown';
     punitive?: boolean;
     company_id?: string;
     waf_family?: 'cloudflare' | 'datadome' | 'generic_waf';

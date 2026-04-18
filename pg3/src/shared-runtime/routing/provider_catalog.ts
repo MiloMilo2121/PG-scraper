@@ -1,16 +1,16 @@
 // Shared routing remains neutral: these arrays define the escalation order only.
 export const SERP_PROVIDER_ORDER = [
-    'SERPER-API-1',
-    'EXA-API-2',
-    'BRAVE-API-1',
-    'TAVILY-API-2',
-    'ORACLE-SERP-1',
     'DNS-MX-MINING-0',
     'CRTSH-API-1',
     'DDG-LITE-1',
     'BRAVE-HTML-1',
     'BING-HTML-1',
     'SEARXNG-NET-1',
+    'SERPER-API-1',
+    'EXA-API-2',
+    'BRAVE-API-1',
+    'TAVILY-API-2',
+    'ORACLE-SERP-1',
     'PERPLEXITY-API-4',
 ] as const;
 
