@@ -293,18 +293,18 @@ export class FatturatoItaliaHarvester {
     Logger.info(`[FatturatoItalia] 🔍 Searching: ${query}`);
 
     const {
-      BraveApiSearchProvider,
+
       DDGSearchProvider,
-      JinaSearchProvider,
+
       SerperSearchProvider,
       TavilySearchProvider,
     } = await import('../discovery/search_provider');
 
     const providers = [
       { name: 'Serper', provider: new SerperSearchProvider() },
-      { name: 'Brave API', provider: new BraveApiSearchProvider() },
+
       { name: 'Tavily', provider: new TavilySearchProvider() },
-      { name: 'Jina', provider: new JinaSearchProvider() },
+
       { name: 'DDG', provider: new DDGSearchProvider() },
     ];
 

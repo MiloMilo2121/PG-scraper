@@ -2,7 +2,6 @@ import axios from 'axios';
 import { Logger } from '../../utils/logger';
 import { BingSerpAnalyzer, SerpResult } from './serp_analyzer';
 import { DuckDuckGoSerpAnalyzer } from './ddg_analyzer';
-import { BraveSerpAnalyzer } from './brave_analyzer';
 import { Retry } from '../../../utils/decorators';
 import { ScraperClient } from '../../utils/scraper_client';
 
@@ -14,29 +13,6 @@ interface SerperOrganicResult {
     title?: string;
     link?: string;
     snippet?: string;
-}
-
-interface JinaSearchItem {
-    title?: string;
-    url?: string;
-    content?: string;
-}
-
-interface JinaSearchResponse {
-    data?: JinaSearchItem[];
-}
-
-interface BraveApiWebResult {
-    title?: string;
-    url?: string;
-    description?: string;
-    extra_snippets?: string[];
-}
-
-interface BraveApiResponse {
-    web?: {
-        results?: BraveApiWebResult[];
-    };
 }
 
 interface TavilySearchItem {
@@ -102,80 +78,6 @@ export class SerperSearchProvider implements SearchProvider {
                 url: result.link!,
                 snippet: result.snippet || '',
                 source: 'serper_google',
-            } as SerpResult));
-    }
-}
-
-/**
- * Compatibility shim for enrichment paths that use Jina search/read as a cheap fallback.
- */
-export class JinaSearchProvider implements SearchProvider {
-    @Retry({ attempts: 3, delay: 2000, backoff: 'fixed' })
-    async search(query: string): Promise<SerpResult[]> {
-        const apiKey = process.env.JINA_API_KEY?.trim();
-        if (!apiKey) {
-            Logger.warn('[JinaProvider] JINA_API_KEY not set.');
-            return [];
-        }
-
-        Logger.info(`[JinaProvider] Searching: "${query}"`);
-        const response = await axios.get<JinaSearchResponse>(`https://s.jina.ai/${encodeURIComponent(query)}`, {
-            headers: {
-                Authorization: `Bearer ${apiKey}`,
-                Accept: 'application/json',
-            },
-            timeout: 15000,
-        });
-
-        return (response.data.data || [])
-            .filter((result) => typeof result.url === 'string' && result.url.trim() !== '')
-            .map((result) => ({
-                title: result.title || '',
-                url: result.url!,
-                snippet: result.content || '',
-                source: 'jina_ai',
-            } as SerpResult));
-    }
-}
-
-export class BraveApiSearchProvider implements SearchProvider {
-    @Retry({ attempts: 3, delay: 2000, backoff: 'fixed' })
-    async search(query: string): Promise<SerpResult[]> {
-        const apiKey = process.env.BRAVE_SEARCH_API_KEY?.trim();
-        if (!apiKey) {
-            Logger.warn('[BraveApiProvider] BRAVE_SEARCH_API_KEY not set.');
-            return [];
-        }
-
-        Logger.info(`[BraveApiProvider] Searching: "${query}"`);
-
-        const url = new URL('https://api.search.brave.com/res/v1/web/search');
-        url.searchParams.set('q', query);
-        url.searchParams.set('country', 'IT');
-        url.searchParams.set('search_lang', 'it');
-        url.searchParams.set('ui_lang', 'it-IT');
-        url.searchParams.set('count', '10');
-        url.searchParams.set('extra_snippets', 'true');
-
-        const response = await fetch(url.toString(), {
-            headers: {
-                'Accept': 'application/json',
-                'X-Subscription-Token': apiKey,
-            },
-        });
-
-        if (!response.ok) {
-            throw new Error(`Brave API error: ${response.status} ${response.statusText}`);
-        }
-
-        const data = (await response.json()) as BraveApiResponse;
-        return (data.web?.results || [])
-            .filter((result) => typeof result.url === 'string' && result.url.trim() !== '')
-            .map((result) => ({
-                title: result.title || '',
-                url: result.url!,
-                snippet: [result.description, ...(result.extra_snippets || [])].filter(Boolean).join(' | '),
-                source: 'brave_api',
             } as SerpResult));
     }
 }
@@ -303,45 +205,6 @@ export class DDGSearchProvider implements SearchProvider {
     }
 }
 
-export class BraveSearchProvider implements SearchProvider {
-
-    @Retry({ attempts: 3, delay: 5000, backoff: 'exponential' })
-    async search(query: string): Promise<SerpResult[]> {
-        const rng = Math.random().toString(36).substring(7);
-        const url = `https://search.brave.com/search?q=${encodeURIComponent(query)}&_t=${Date.now()}_${rng}`;
-        Logger.info(`[BraveProvider] Searching via Proxy: ${url}`);
-
-        try {
-            const response = await ScraperClient.fetchHtml(url, { mode: 'auto', render: false, super: true });
-            const content = response.data;
-            const titleMatch = content.match(/<title>([^<]*)<\/title>/i);
-            const title = titleMatch ? titleMatch[1] : '';
-
-            // Check blocks/captchas
-            if (this.isBlocked(content, title)) {
-                Logger.warn(`[BraveProvider] Block detected (Title: "${title}"). Retrying...`);
-                throw new Error('BRAVE_BLOCK');
-            }
-
-            const results = BraveSerpAnalyzer.parseSerp(content);
-            Logger.info(`[BraveProvider] Success: ${results.length} results`);
-            return results;
-
-        } catch (e: unknown) {
-            Logger.warn(`[BraveProvider] Search Error: ${(e as Error).message}`);
-            throw e;
-        }
-    }
-
-    private isBlocked(content: string, title: string): boolean {
-        const lowerTitle = title.toLowerCase();
-        return lowerTitle.includes('human verification') ||
-            lowerTitle.includes('are you a human') ||
-            content.includes('unusual traffic') ||
-            lowerTitle.includes('403') ||
-            content.length < 1000;
-    }
-}
 
 export class BingSearchProvider implements SearchProvider {
     @Retry({ attempts: 3, delay: 5000, backoff: 'exponential' })

@@ -13,7 +13,7 @@ async function runAudit() {
 
     // 1. STATO VARIABILI D'AMBIENTE
     console.log("🔍 CHECK 1: ENVIRONMENT VARIABLES");
-    const requiredKeys = ['SERPER_API_KEY', 'SCRAPE_DO_TOKEN', 'PROXY_RESIDENTIAL_URL', 'JINA_API_KEY', 'Z_AI_API_KEY'];
+    const requiredKeys = ['SERPER_API_KEY', 'PROXY_RESIDENTIAL_URL', 'Z_AI_API_KEY'];
     for (const key of requiredKeys) {
         if (!process.env[key]) {
             console.error(`   ❌ MANCANTE: ${key}`);
@@ -48,45 +48,7 @@ async function runAudit() {
     }
     console.log("");
 
-    // 3. TEST SCRAPE.DO (Unlocker)
-    console.log("🔍 CHECK 3: SCRAPE.DO API");
-    try {
-        const testUrl = encodeURIComponent("https://httpbin.org/ip");
-        const res = await request(`http://api.scrape.do?token=${process.env.SCRAPE_DO_TOKEN}&url=${testUrl}`, {
-            headers: { 'Accept': 'application/json' },
-            bodyTimeout: 10000
-        });
-        if (res.statusCode === 200) {
-            console.log(`   ✅ SCRAPE.DO: Autenticazione OK. Status: ${res.statusCode}`);
-        } else {
-            const body = await res.body.text();
-            console.error(`   ❌ SCRAPE.DO FALLITO: Errore ${res.statusCode} - ${body}`);
-            allSystemsGo = false;
-        }
-    } catch (e: any) {
-        console.error(`   ❌ SCRAPE.DO FALLITO: ${e.message}`);
-        allSystemsGo = false;
-    }
-    console.log("");
 
-    // 4. TEST JINA AI (Estrattore)
-    console.log("🔍 CHECK 4: JINA AI READER");
-    try {
-        const res = await request('https://r.jina.ai/https://example.com', {
-            headers: { 'Authorization': `Bearer ${process.env.JINA_API_KEY}` },
-            bodyTimeout: 5000
-        });
-        if (res.statusCode === 200) {
-            console.log("   ✅ JINA AI: Autenticazione OK. Markdown generato.");
-        } else {
-            console.error(`   ❌ JINA AI FALLITO: Status ${res.statusCode}`);
-            allSystemsGo = false;
-        }
-    } catch (e: any) {
-        console.error(`   ❌ JINA AI FALLITO: ${e.message}`);
-        allSystemsGo = false;
-    }
-    console.log("");
 
     // 5. TEST DEEPSEEK API (LLM)
     console.log("🔍 CHECK 5: DEEPSEEK API");
@@ -114,8 +76,8 @@ async function runAudit() {
     console.log("🔍 CHECK 6: PROXY RESIDENZIALE (IPRoyal)");
     try {
         const proxyUrl = process.env.PROXY_RESIDENTIAL_URL;
-        if (!proxyUrl || proxyUrl.includes('proxy.scrape.do')) {
-            console.error(`   ❌ PROXY FALLITO: URL mancante o stai ancora usando scrape.do come proxy base.`);
+        if (!proxyUrl) {
+            console.error(`   ❌ PROXY FALLITO: URL mancante.`);
             allSystemsGo = false;
         } else {
             // Facciamo una chiamata tramite il proxy a httpbin.org/ip

@@ -56,7 +56,6 @@ async function startupGate(): Promise<{ mode: 'FULL' | 'FREE_ONLY' | 'ABORT', av
         'SERPER_API_KEY',
         'BRAVE_SEARCH_API_KEY',
         'TAVILY_API_KEY',
-        'JINA_API_KEY',
         'EXA_API_KEY',
         'FIRECRAWL_API_KEY',
         'OPENAI_API_KEY',
@@ -84,8 +83,8 @@ async function startupGate(): Promise<{ mode: 'FULL' | 'FREE_ONLY' | 'ABORT', av
 
     if (!paidOk) {
         console.log('🟡 FREE-ONLY MODE: Tutti i provider a pagamento sono invalidi o non configurati.');
-        console.log('   Il batch girerà SOLO con risorse gratuite e Jina senza key.');
-        return { mode: 'FREE_ONLY', available: ['DNS-MX-MINING', 'CRTSH', 'DDG', 'BRAVE-HTML', 'BING', 'JINA'] };
+        console.log('   Il batch girerà SOLO con risorse gratuite.');
+        return { mode: 'FREE_ONLY', available: ['DNS-MX-MINING', 'CRTSH', 'DDG', 'BRAVE-HTML', 'BING'] };
     }
 
     console.log(`🟢 FULL MODE: Provider operativi rilevati: ${available.join(', ')}`);

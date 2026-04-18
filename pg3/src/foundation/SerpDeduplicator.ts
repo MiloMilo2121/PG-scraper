@@ -180,7 +180,7 @@ export class SerpDeduplicator {
 
         for (const query of variants) {
             try {
-                // CostRouter automatically waterfalls through healthy SERP providers (Jina -> DDG -> Bing)
+                // CostRouter automatically waterfalls through healthy SERP providers (Serper -> DDG -> Bing)
                 const routeResult = await this.costRouter.route<any[]>('SERP', query, {
                     maxTier: options?.maxTier,
                     companyId

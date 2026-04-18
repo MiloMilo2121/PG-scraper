@@ -61,7 +61,7 @@ export type StageStatus = 'success' | 'not_found' | 'failed' | 'skipped';
 /** Provider family grouping (keep ≤ 8 to avoid cardinality creep) */
 export type ProviderFamily =
     | 'serp'      // SERP search APIs (Serper, DDG, Bing)
-    | 'http'      // Direct HTTP fetchers (Jina, Scrape.do, direct)
+    | 'http'      // Direct HTTP fetchers (direct)
     | 'llm'       // LLM calls (GLM, OpenAI, DeepSeek, Kimi)
     | 'browser'   // Browser automation (Puppeteer)
     | 'oracle'    // LLM-Oracle disambiguation loop
@@ -548,7 +548,7 @@ export function discoveryMethodToProviderFamily(method: string | undefined): Pro
     if (m.includes('oracle')) return 'oracle';
     if (m.includes('llm') || m.includes('openai') || m.includes('deepseek') || m.includes('kimi') || m.includes('glm')) return 'llm';
     if (m.includes('browser') || m.includes('puppeteer')) return 'browser';
-    if (m.includes('jina') || m.includes('scrape') || m.includes('http') || m.includes('hyper') || m.includes('email')) return 'http';
+    if (m.includes('http') || m.includes('hyper') || m.includes('email')) return 'http';
     if (m.includes('financial') || m.includes('vies') || m.includes('registry') || m.includes('bilancio')) return 'financial';
     return 'unknown';
 }

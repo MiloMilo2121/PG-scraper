@@ -64,84 +64,6 @@ const providers: ProviderTest[] = [
     },
 
     // ─── TIER 1: FREE API (key opzionale o assente) ───
-    {
-        name: 'Jina Search',
-        tier: 1,
-        envKey: 'JINA_API_KEY',
-        test: async () => {
-            try {
-                const headers: Record<string, string> = { 'Accept': 'application/json' };
-                const jinaKey = process.env.JINA_API_KEY;
-                if (jinaKey && jinaKey.trim()) {
-                    headers['Authorization'] = `Bearer ${jinaKey.trim()}`;
-                }
-                const res = await fetch('https://s.jina.ai/?q=test+italia', {
-                    signal: AbortSignal.timeout(15000),
-                    headers,
-                });
-                if (res.status === 401 || res.status === 403) {
-                    return { ok: false, detail: `HTTP ${res.status}: Key invalida o scaduta` };
-                }
-                if (res.status === 429) {
-                    return { ok: true, detail: `HTTP 429: Key valida ma rate-limited (funziona, aspetta)` };
-                }
-                const data = await res.text();
-                return { ok: res.ok && data.length > 50, detail: `HTTP ${res.status}, ${data.length} chars returned` };
-            } catch (e: any) {
-                return { ok: false, detail: `Error: ${e.message}` };
-            }
-        }
-    },
-
-    {
-        name: 'Jina Reader',
-        tier: 1,
-        envKey: 'JINA_API_KEY',
-        test: async () => {
-            try {
-                const headers: Record<string, string> = {};
-                const jinaKey = process.env.JINA_API_KEY;
-                if (jinaKey && jinaKey.trim()) {
-                    headers['Authorization'] = `Bearer ${jinaKey.trim()}`;
-                }
-                const res = await fetch('https://r.jina.ai/https://example.com', {
-                    signal: AbortSignal.timeout(15000),
-                    headers,
-                });
-                const text = await res.text();
-                return { ok: text.length > 100, detail: `HTTP ${res.status}, ${text.length} chars` };
-            } catch (e: any) {
-                return { ok: false, detail: `Error: ${e.message}` };
-            }
-        }
-    },
-
-    {
-        name: 'Brave Search API',
-        tier: 2,
-        envKey: 'BRAVE_SEARCH_API_KEY',
-        test: async () => {
-            const key = process.env.BRAVE_SEARCH_API_KEY;
-            if (!key || !key.trim() || key.includes('your-') || key.includes('xxx')) {
-                return { ok: false, detail: 'Key mancante o placeholder' };
-            }
-            try {
-                const res = await fetch('https://api.search.brave.com/res/v1/web/search?q=test+italia&count=3&country=IT&search_lang=it', {
-                    signal: AbortSignal.timeout(15000),
-                    headers: {
-                        'Accept': 'application/json',
-                        'X-Subscription-Token': key.trim(),
-                    },
-                });
-                if (res.status === 401) return { ok: false, detail: 'HTTP 401: Key invalida' };
-                if (res.status === 429) return { ok: true, detail: 'HTTP 429: Key valida ma rate-limited' };
-                const data = await res.json();
-                return { ok: res.ok, detail: `HTTP ${res.status}, ${data.web?.results?.length || 0} results` };
-            } catch (e: any) {
-                return { ok: false, detail: `Error: ${e.message}` };
-            }
-        }
-    },
 
     {
         name: 'Tavily Search',
@@ -300,28 +222,6 @@ const providers: ProviderTest[] = [
     },
 
     {
-        name: 'Scrape.do',
-        tier: 2,
-        envKey: 'SCRAPE_DO_TOKEN',
-        test: async () => {
-            const key = process.env.SCRAPE_DO_TOKEN;
-            if (!key || !key.trim()) {
-                return { ok: false, detail: 'Token mancante' };
-            }
-            try {
-                const res = await fetch(`https://api.scrape.do?token=${key.trim()}&url=${encodeURIComponent('https://example.com')}`, {
-                    signal: AbortSignal.timeout(15000),
-                });
-                if (res.status === 401 || res.status === 403) return { ok: false, detail: `HTTP ${res.status}: Token invalido` };
-                const text = await res.text();
-                return { ok: text.includes('Example Domain'), detail: `HTTP ${res.status}, ${text.length} chars` };
-            } catch (e: any) {
-                return { ok: false, detail: `Error: ${e.message}` };
-            }
-        }
-    },
-
-    {
         name: 'Firecrawl Search',
         tier: 2,
         envKey: 'FIRECRAWL_API_KEY',
@@ -440,8 +340,8 @@ function validateEnvKeys() {
     console.log('═══════════════════════════════════════════════════════\n');
 
     const keysToCheck = [
-        'SERPER_API_KEY', 'BRAVE_SEARCH_API_KEY', 'TAVILY_API_KEY', 'JINA_API_KEY', 'DEEPSEEK_API_KEY', 'KIMI_API_KEY',
-        'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'PERPLEXITY_API_KEY', 'EXA_API_KEY', 'FIRECRAWL_API_KEY', 'SCRAPE_DO_TOKEN',
+        'SERPER_API_KEY', 'TAVILY_API_KEY', 'DEEPSEEK_API_KEY', 'KIMI_API_KEY',
+        'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'PERPLEXITY_API_KEY', 'EXA_API_KEY', 'FIRECRAWL_API_KEY',
     ];
 
     let issues = 0;
@@ -547,7 +447,7 @@ function strategicAssessment(results: { name: string; tier: number; ok: boolean;
         console.log('     Test: curl -I https://lite.duckduckgo.com');
     } else if (freeWorking.length >= 2 && paidWorking.length === 0) {
         console.log('\n  🟡 MODALITÀ FREE-ONLY: I provider gratuiti funzionano.');
-        console.log('     L\'Engine PUÒ girare solo con DDG + Bing + Jina.');
+        console.log('     L\'Engine PUÒ girare solo con DDG + Bing.');
         console.log('     Stima: ~55-65% delle aziende risolvibili (P.IVA + Website).');
         console.log('     Nessun costo. Nessuna key necessaria.');
         console.log('     Mancano: LLM fallback, vision, bilancio parsing avanzato.');

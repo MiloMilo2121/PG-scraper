@@ -35,6 +35,8 @@ const EnvSchema = z.object({
   KIMI_API_KEY: CommaSeparatedString.optional(),
   EXA_API_KEY: CommaSeparatedString.optional(),
   FIRECRAWL_API_KEY: CommaSeparatedString.optional(),
+  SERPER_API_KEY: CommaSeparatedString.optional(),
+  TAVILY_API_KEY: CommaSeparatedString.optional(),
   LLM_MODEL: z.string().optional(),
   LLM_MODEL_FAST: z.string().optional(),
   LLM_MODEL_SMART: z.string().optional(),
@@ -108,6 +110,7 @@ const EnvSchema = z.object({
   AI_CACHE_TTL_MS: z.coerce.number().min(1000).default(3600000), // 1 hour
   DEDUPLICATOR_MAX_COMPANIES: z.coerce.number().min(1000).default(100000),
   CAPTCHA_MAX_ATTEMPTS: z.coerce.number().min(1).default(30),
+  TWO_CAPTCHA_API_KEY: z.string().optional(),
 
   // JINA (REMOVED — using internal DomDistiller fallback)
 
