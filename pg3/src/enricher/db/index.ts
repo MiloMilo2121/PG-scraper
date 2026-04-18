@@ -686,6 +686,109 @@ export function getStats(): {
     };
 }
 
+// Analytics breakdown by business status from job logs.
+export function getOutcomeBreakdown(runId?: string): Record<string, number> {
+    ensureReady();
+
+    const rows = runId
+        ? (getDb().prepare(`
+            SELECT business_status, COUNT(*) AS cnt
+            FROM job_log
+            WHERE run_id = ? AND business_status IS NOT NULL AND business_status != ''
+            GROUP BY business_status
+        `).all(runId) as Array<{ business_status: string; cnt: number }>)
+        : (getDb().prepare(`
+            SELECT business_status, COUNT(*) AS cnt
+            FROM job_log
+            WHERE business_status IS NOT NULL AND business_status != ''
+            GROUP BY business_status
+        `).all() as Array<{ business_status: string; cnt: number }>);
+
+    const result: Record<string, number> = {};
+    for (const row of rows) {
+        result[row.business_status] = row.cnt;
+    }
+    return result;
+}
+
+export function getTopReasonCodes(
+    runId?: string,
+    limit: number = 15
+): Array<{ reason_code: string; count: number }> {
+    ensureReady();
+
+    const rows = runId
+        ? (getDb().prepare(`
+            SELECT reason_code, COUNT(*) AS cnt
+            FROM job_log
+            WHERE run_id = ? AND reason_code IS NOT NULL AND reason_code != ''
+            GROUP BY reason_code
+            ORDER BY cnt DESC
+            LIMIT ?
+        `).all(runId, limit) as Array<{ reason_code: string; cnt: number }>)
+        : (getDb().prepare(`
+            SELECT reason_code, COUNT(*) AS cnt
+            FROM job_log
+            WHERE reason_code IS NOT NULL AND reason_code != ''
+            GROUP BY reason_code
+            ORDER BY cnt DESC
+            LIMIT ?
+        `).all(limit) as Array<{ reason_code: string; cnt: number }>);
+
+    return rows.map((row) => ({ reason_code: row.reason_code, count: row.cnt }));
+}
+
+export function getEnrichedFieldCoverage(): {
+    total: number;
+    website_rate: number;
+    vat_rate: number;
+    pec_rate: number;
+    revenue_rate: number;
+    employees_rate: number;
+} {
+    ensureReady();
+
+    const row = getDb().prepare(`
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN website_validated IS NOT NULL AND website_validated != '' THEN 1 ELSE 0 END) AS has_website,
+            SUM(CASE WHEN vat IS NOT NULL AND vat != '' THEN 1 ELSE 0 END) AS has_vat,
+            SUM(CASE WHEN pec IS NOT NULL AND pec != '' THEN 1 ELSE 0 END) AS has_pec,
+            SUM(CASE WHEN revenue IS NOT NULL AND revenue != '' THEN 1 ELSE 0 END) AS has_revenue,
+            SUM(CASE WHEN employees IS NOT NULL AND employees != '' THEN 1 ELSE 0 END) AS has_employees
+        FROM enrichment_results
+        WHERE deleted_at IS NULL
+    `).get() as {
+        total: number;
+        has_website: number;
+        has_vat: number;
+        has_pec: number;
+        has_revenue: number;
+        has_employees: number;
+    };
+
+    const total = row.total || 0;
+    if (total === 0) {
+        return {
+            total: 0,
+            website_rate: 0,
+            vat_rate: 0,
+            pec_rate: 0,
+            revenue_rate: 0,
+            employees_rate: 0,
+        };
+    }
+
+    return {
+        total,
+        website_rate: row.has_website / total,
+        vat_rate: row.has_vat / total,
+        pec_rate: row.has_pec / total,
+        revenue_rate: row.has_revenue / total,
+        employees_rate: row.has_employees / total,
+    };
+}
+
 export function exportEnrichedToCSV(outputPath: string): void {
     ensureReady();
     const stmt = getDb().prepare(`

@@ -6,7 +6,7 @@
  *  2. normalizeDiscoveryLane  – all 8 values incl. edge cases
  *  3. RunSummaryCollector     – percentile math, bottleneck detection, build() shape
  *  4. DB analytics queries    – getOutcomeBreakdown, getTopReasonCodes, getEnrichedFieldCoverage
- *  5. logJobResult            – business_outcome stored correctly, backward compat
+ *  5. logJobResult            – business_status stored correctly, backward compat
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -242,7 +242,7 @@ describe('DB analytics functions', () => {
                 duration_ms INTEGER,
                 attempt INTEGER DEFAULT 1,
                 processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                business_outcome TEXT
+                business_status TEXT
             );
             CREATE TABLE enrichment_results (
                 id TEXT PRIMARY KEY,
@@ -270,7 +270,7 @@ describe('DB analytics functions', () => {
 
     it('getOutcomeBreakdown returns correct counts', () => {
         const insert = db.prepare(
-            `INSERT INTO job_log (company_id, status, business_outcome, run_id) VALUES (?, ?, ?, ?)`
+            `INSERT INTO job_log (company_id, status, business_status, run_id) VALUES (?, ?, ?, ?)`
         );
         insert.run('c1', 'SUCCESS', 'FOUND_COMPLETE', 'run-1');
         insert.run('c2', 'SUCCESS', 'FOUND_COMPLETE', 'run-1');
@@ -280,13 +280,13 @@ describe('DB analytics functions', () => {
 
         // Replicate the query logic from db/index.ts
         const rows = db.prepare(
-            `SELECT business_outcome, COUNT(*) as cnt FROM job_log
-             WHERE run_id = ? AND business_outcome IS NOT NULL
-             GROUP BY business_outcome`
-        ).all('run-1') as Array<{ business_outcome: string; cnt: number }>;
+            `SELECT business_status, COUNT(*) as cnt FROM job_log
+             WHERE run_id = ? AND business_status IS NOT NULL
+             GROUP BY business_status`
+        ).all('run-1') as Array<{ business_status: string; cnt: number }>;
 
         const result: Record<string, number> = {};
-        for (const row of rows) result[row.business_outcome] = row.cnt;
+        for (const row of rows) result[row.business_status] = row.cnt;
 
         expect(result['FOUND_COMPLETE']).toBe(2);
         expect(result['ENRICHMENT_ONLY_NO_WEBSITE']).toBe(1);
@@ -318,16 +318,16 @@ describe('DB analytics functions', () => {
         expect(rows[1].cnt).toBe(2);
     });
 
-    it('business_outcome column is nullable (backward compat – old rows without it)', () => {
-        // Insert without business_outcome (old-style call)
+    it('business_status column is nullable (backward compat – old rows without it)', () => {
+        // Insert without business_status (old-style call)
         db.prepare(
             `INSERT INTO job_log (company_id, status, duration_ms, attempt) VALUES (?, ?, ?, ?)`
         ).run('c-legacy', 'SUCCESS', 1500, 1);
 
         const row = db.prepare(`SELECT * FROM job_log WHERE company_id = 'c-legacy'`).get() as {
-            business_outcome: string | null;
+            business_status: string | null;
         };
-        expect(row.business_outcome).toBeNull();
+        expect(row.business_status).toBeNull();
     });
 
     it('getEnrichedFieldCoverage computes rates correctly', () => {
@@ -361,20 +361,20 @@ describe('DB analytics functions', () => {
 
     it('all-time getOutcomeBreakdown (no runId) returns totals across all runs', () => {
         const insert = db.prepare(
-            `INSERT INTO job_log (company_id, status, business_outcome, run_id) VALUES (?, ?, ?, ?)`
+            `INSERT INTO job_log (company_id, status, business_status, run_id) VALUES (?, ?, ?, ?)`
         );
         insert.run('c1', 'SUCCESS', 'FOUND_COMPLETE', 'run-1');
         insert.run('c2', 'SUCCESS', 'FOUND_COMPLETE', 'run-2');
         insert.run('c3', 'FAILED', 'WORKER_EXCEPTION', 'run-2');
 
         const rows = db.prepare(
-            `SELECT business_outcome, COUNT(*) as cnt FROM job_log
-             WHERE business_outcome IS NOT NULL
-             GROUP BY business_outcome`
-        ).all() as Array<{ business_outcome: string; cnt: number }>;
+            `SELECT business_status, COUNT(*) as cnt FROM job_log
+             WHERE business_status IS NOT NULL
+             GROUP BY business_status`
+        ).all() as Array<{ business_status: string; cnt: number }>;
 
         const result: Record<string, number> = {};
-        for (const row of rows) result[row.business_outcome] = row.cnt;
+        for (const row of rows) result[row.business_status] = row.cnt;
 
         expect(result['FOUND_COMPLETE']).toBe(2);
         expect(result['WORKER_EXCEPTION']).toBe(1);
