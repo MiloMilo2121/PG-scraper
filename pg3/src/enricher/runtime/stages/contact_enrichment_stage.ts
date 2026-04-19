@@ -1,5 +1,7 @@
 import { NormalizedInput } from '../../../foundation/InputNormalizer';
 import { PecHunter } from '../../../foundation/PecHunter';
+import { HunterClient } from '../../utils/hunter_client';
+import { Logger } from '../../../shared-runtime/logging/Logger';
 import { RuntimeStageOutcome } from './stage_types';
 
 export interface ContactStageResult {
@@ -9,7 +11,10 @@ export interface ContactStageResult {
 }
 
 export class ContactEnrichmentStage {
-  constructor(private readonly pecHunter: PecHunter) {}
+  constructor(
+    private readonly pecHunter: PecHunter,
+    private readonly hunterClient?: HunterClient,
+  ) {}
 
   private isLikelyPec(email?: string | null): boolean {
     const normalized = (email || '').toLowerCase();
@@ -67,6 +72,39 @@ export class ContactEnrichmentStage {
     };
   }
 
+  /**
+   * Calls Hunter.io Domain Search as a fallback when the website scan found nothing.
+   * Strategy: free emailCount check first → domainSearch (1 credit for up to 10 emails).
+   * Returns the best email found, or null.
+   */
+  private async tryHunter(discoveredUrl: string): Promise<{ email: string; confidence: number; organization?: string } | null> {
+    if (!this.hunterClient) return null;
+
+    const domain = HunterClient.extractDomain(discoveredUrl);
+    if (!domain) return null;
+
+    // Free check: skip if Hunter has zero emails for this domain
+    const count = await this.hunterClient.emailCount(domain);
+    if (count === 0) {
+      Logger.debug(`[ContactStage] Hunter has no emails for ${domain}`);
+      return null;
+    }
+
+    const result = await this.hunterClient.domainSearch(domain, 10);
+    if (!result || !result.emails.length) return null;
+
+    const best = HunterClient.pickBestEmail(result.emails);
+    if (!best) return null;
+
+    Logger.info(`[ContactStage] Hunter found ${result.emails.length} email(s) for ${domain}; using ${best.value} (conf: ${best.confidence})`);
+
+    return {
+      email: best.value,
+      confidence: HunterClient.normalizeConfidence(best.confidence),
+      organization: result.organization,
+    };
+  }
+
   public async run(companyId: string, input: NormalizedInput, discoveredUrl: string | null): Promise<ContactStageResult> {
     const startedAt = Date.now();
 
@@ -90,27 +128,95 @@ export class ContactEnrichmentStage {
 
     try {
       const contacts = await this.pecHunter.hunt(companyId, input, discoveredUrl);
-      if (!(contacts.pec || contacts.email) && input.email) {
+
+      if (contacts.pec || contacts.email) {
+        return {
+          pec: contacts.pec || null,
+          email: contacts.email || null,
+          outcome: {
+            stage: 'contacts',
+            status: 'success',
+            duration_ms: Date.now() - startedAt,
+            detail: 'contact signals found',
+            reason_code: 'CONTACTS_FOUND',
+            confidence: contacts.pec ? 0.95 : 0.9,
+            provider: contacts.source || 'website_contact_scan',
+            source_url: discoveredUrl,
+            attempted_count: 1,
+            evidence_count: [contacts.pec, contacts.email].filter(Boolean).length,
+            entity_match_status: 'matched',
+          },
+        };
+      }
+
+      // PecHunter found nothing — try Hunter.io as secondary source
+      const hunterResult = await this.tryHunter(discoveredUrl);
+      if (hunterResult) {
+        return {
+          pec: null,
+          email: hunterResult.email,
+          outcome: {
+            stage: 'contacts',
+            status: 'success',
+            duration_ms: Date.now() - startedAt,
+            detail: hunterResult.organization
+              ? `Hunter domain search: ${hunterResult.organization}`
+              : 'Hunter domain search',
+            reason_code: 'CONTACTS_HUNTER_DOMAIN_SEARCH',
+            confidence: hunterResult.confidence,
+            provider: 'hunter_domain_search',
+            source_url: discoveredUrl,
+            attempted_count: 2,
+            evidence_count: 1,
+            entity_match_status: 'matched',
+          },
+        };
+      }
+
+      // Fall back to input email if available
+      if (input.email) {
         return this.buildConfirmedContactResult(input, startedAt, 'fallback', discoveredUrl);
       }
+
       return {
-        pec: contacts.pec || null,
-        email: contacts.email || null,
+        pec: null,
+        email: null,
         outcome: {
           stage: 'contacts',
-          status: contacts.pec || contacts.email ? 'success' : 'not_found',
+          status: 'not_found',
           duration_ms: Date.now() - startedAt,
-          detail: contacts.pec || contacts.email ? 'contact signals found' : 'no contact signals found',
-          reason_code: contacts.pec || contacts.email ? 'CONTACTS_FOUND' : 'CONTACTS_NOT_FOUND',
-          confidence: contacts.pec ? 0.95 : contacts.email ? 0.9 : 0,
-          provider: contacts.pec || contacts.email ? contacts.source || 'website_contact_scan' : undefined,
+          detail: 'no contact signals found',
+          reason_code: 'CONTACTS_NOT_FOUND',
+          confidence: 0,
           source_url: discoveredUrl,
-          attempted_count: 1,
-          evidence_count: [contacts.pec, contacts.email].filter(Boolean).length,
-          entity_match_status: contacts.pec || contacts.email ? 'matched' : 'unknown',
+          attempted_count: this.hunterClient ? 2 : 1,
+          evidence_count: 0,
+          entity_match_status: 'unknown',
         },
       };
     } catch (error) {
+      // PecHunter errored — still attempt Hunter before giving up
+      const hunterResult = await this.tryHunter(discoveredUrl);
+      if (hunterResult) {
+        return {
+          pec: null,
+          email: hunterResult.email,
+          outcome: {
+            stage: 'contacts',
+            status: 'success',
+            duration_ms: Date.now() - startedAt,
+            detail: 'Hunter domain search (website scan failed)',
+            reason_code: 'CONTACTS_HUNTER_DOMAIN_SEARCH',
+            confidence: hunterResult.confidence,
+            provider: 'hunter_domain_search',
+            source_url: discoveredUrl,
+            attempted_count: 2,
+            evidence_count: 1,
+            entity_match_status: 'matched',
+          },
+        };
+      }
+
       if (input.email) {
         return this.buildConfirmedContactResult(input, startedAt, 'fallback', discoveredUrl);
       }

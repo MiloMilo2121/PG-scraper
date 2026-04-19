@@ -11,6 +11,7 @@ import { EnrichmentBuffer } from '../../foundation/EnrichmentBuffer';
 import { QuerySanitizer } from '../../foundation/QuerySanitizer';
 import { EnrichmentPostProcessor } from '../../foundation/EnrichmentPostProcessor';
 import { PecHunter } from '../../foundation/PecHunter';
+import { HunterClient } from '../utils/hunter_client';
 import { BackpressureValve } from '../../shared-runtime/control/BackpressureValve';
 import { BrowserPool } from '../../shared-runtime/browser/BrowserPool';
 import { MemoryFirstCache } from '../../shared-runtime/cache/MemoryFirstCache';
@@ -65,6 +66,10 @@ function createRuntimePipeline(core: ReturnType<typeof createRuntimeCore>): Mast
     const dedup = new SerpDeduplicator(core.router, new QuerySanitizer(), buffer);
     const oracleGuard = new LLMOracleGuard(core.cache, core.valve);
 
+    const hunterClient = config.hunter.enabled && config.hunter.apiKey
+        ? new HunterClient(config.hunter.apiKey)
+        : undefined;
+
     return new MasterPipeline({
         normalizer: new InputNormalizer(),
         registry: core.registry,
@@ -79,6 +84,7 @@ function createRuntimePipeline(core: ReturnType<typeof createRuntimeCore>): Mast
         costRouter: core.router,
         postProcessor: new EnrichmentPostProcessor(core.pool),
         pecHunter: new PecHunter(core.pool, core.router),
+        hunterClient,
     });
 }
 

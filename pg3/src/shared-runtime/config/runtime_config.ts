@@ -101,6 +101,10 @@ const EnvSchema = z.object({
   NEO4J_PASSWORD: z.string().default('password'),
   GOOGLE_STREET_VIEW_KEY: z.string().optional(),
 
+  // 📧 HUNTER.IO (Email Discovery)
+  HUNTER_API_KEY: z.string().optional(),
+  HUNTER_ENABLED: BooleanString.default(false),
+
   // 📱 NOTIFICATIONS
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
@@ -357,6 +361,10 @@ function buildConfig(env: Env) {
       browserPoolNavTimeoutMs: env.BROWSER_POOL_NAV_TIMEOUT_MS,
       backpressureInitialConcurrency: env.BACKPRESSURE_INITIAL_CONCURRENCY,
       backpressureMaxConcurrency: env.BACKPRESSURE_MAX_CONCURRENCY,
+    },
+    hunter: {
+      apiKey: env.HUNTER_API_KEY,
+      enabled: env.HUNTER_ENABLED,
     },
     telegram: {
       botToken: env.TELEGRAM_BOT_TOKEN,

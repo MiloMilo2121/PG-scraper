@@ -3,6 +3,7 @@ import { EnrichmentPostProcessor } from '../../../foundation/EnrichmentPostProce
 import { NormalizedInput } from '../../../foundation/InputNormalizer';
 import { LinkedInSniper } from '../../../foundation/LinkedInSniper';
 import { PecHunter } from '../../../foundation/PecHunter';
+import { HunterClient } from '../../utils/hunter_client';
 import { ContactEnrichmentStage } from './contact_enrichment_stage';
 import { DecisionMakerStage } from './decision_maker_stage';
 import { EmployeeEnrichmentStage } from './employee_enrichment_stage';
@@ -31,11 +32,12 @@ export class PostDiscoveryEnrichmentStage {
     linkedinSniper: LinkedInSniper;
     postProcessor: EnrichmentPostProcessor;
     pecHunter: PecHunter;
+    hunterClient?: HunterClient;
   }) {
     this.financialStage = new FinancialEnrichmentStage(deps.bilancioHunter);
     this.decisionMakerStage = new DecisionMakerStage(deps.linkedinSniper);
     this.employeeStage = new EmployeeEnrichmentStage(deps.postProcessor);
-    this.contactStage = new ContactEnrichmentStage(deps.pecHunter);
+    this.contactStage = new ContactEnrichmentStage(deps.pecHunter, deps.hunterClient);
   }
 
   public async run(companyId: string, input: NormalizedInput, discoveredUrl: string | null): Promise<PostDiscoveryEnrichmentResult> {
