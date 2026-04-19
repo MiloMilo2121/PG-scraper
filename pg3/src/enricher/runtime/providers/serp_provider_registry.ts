@@ -48,15 +48,6 @@ export function buildSerpProviderEntries(): ProviderRegistryEntry[] {
                 return runSearchProvider<T>(() => import('../../core/discovery/search_provider'), 'ExaSearchProvider', query);
             },
         }],
-        ['BRAVE-API-1', {
-            family: 'SERP',
-            costPerRequest: 0.001,
-            tier: 1,
-            execute: async <T>(payload: any): Promise<T> => {
-                const query = typeof payload === 'string' ? payload : payload.query;
-                return runSearchProvider<T>(() => import('../../core/discovery/search_provider'), 'BraveApiSearchProvider', query);
-            },
-        }],
         ['TAVILY-API-2', {
             family: 'SERP',
             costPerRequest: 0.001,
@@ -64,15 +55,6 @@ export function buildSerpProviderEntries(): ProviderRegistryEntry[] {
             execute: async <T>(payload: any): Promise<T> => {
                 const query = typeof payload === 'string' ? payload : payload.query;
                 return runSearchProvider<T>(() => import('../../core/discovery/search_provider'), 'TavilySearchProvider', query);
-            },
-        }],
-        ['BRAVE-HTML-1', {
-            family: 'SERP',
-            costPerRequest: 0,
-            tier: 1,
-            execute: async <T>(payload: any): Promise<T> => {
-                const query = typeof payload === 'string' ? payload : payload.query;
-                return runSearchProvider<T>(() => import('../../core/discovery/search_provider'), 'BraveSearchProvider', query);
             },
         }],
         ['BING-HTML-1', {

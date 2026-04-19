@@ -18,7 +18,10 @@
     "start": "node dist/src/index.js worker",
     "start:worker": "node dist/src/enricher/worker.js",
     "start:scheduler": "node dist/src/index.js scheduler",
-    "start:server": "node dist/src/index.js server"
+    "start:server": "node dist/src/index.js server",
+    "oracle": "source testenv/bin/activate && python ops/oracle/server.py",
+    "benchmark": "npx tsx src/scripts/v8_benchmark.ts",
+    "benchmark:wave": "npx tsx src/scripts/v8_benchmark_wave.ts"
   },
   "dependencies": {
     "@types/cors": "^2.8.19",
