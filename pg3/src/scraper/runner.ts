@@ -107,6 +107,12 @@ const COMPANY_LIMIT = limitArg ? parseInt(limitArg, 10) : Infinity;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// --- ERRORS ---
+
+class BrowserCorruptedError extends Error {
+    constructor(msg: string) { super(msg); this.name = 'BrowserCorruptedError'; }
+}
+
 // --- BROWSER HELPERS ---
 
 async function ensurePage(factory: BrowserFactory, current: Page): Promise<Page> {
@@ -250,7 +256,23 @@ async function main() {
 
                     Logger.info(`      📍 [kw ${ki + 1}/${keywords.length}, loc ${li + 1}/${locations.length}] ${loc}`);
 
-                    totalFound = await scrapePG(page, keyword, loc, dedup, cityCompanies, totalFound, COMPANY_LIMIT);
+                    // Retry loop: if browser corrupts mid-scrape, restart and retry same location
+                    let scrapeRetries = 0;
+                    while (true) {
+                        try {
+                            totalFound = await scrapePG(page, keyword, loc, dedup, cityCompanies, totalFound, COMPANY_LIMIT);
+                            break;
+                        } catch (e) {
+                            if (e instanceof BrowserCorruptedError && scrapeRetries < 2) {
+                                scrapeRetries++;
+                                Logger.warn(`🔄 Browser corrupted at [${loc}], restart #${scrapeRetries}`);
+                                page = await restartBrowser(factory);
+                            } else {
+                                Logger.error(`PG Fatal [${loc}]`, (e as Error).message);
+                                break; // skip location, keep going
+                            }
+                        }
+                    }
 
                     await flush();
 
@@ -301,7 +323,12 @@ async function scrapePG(
 
         while (hasNext && pageNum <= MAX_PAGES_PG && count < limit) {
             const url = `https://www.paginegialle.it/ricerca/${encodeURIComponent(keyword)}/${encodeURIComponent(location)}/p-${pageNum}`;
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            try {
+                await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            } catch (e) {
+                // goto timeout/crash = browser corrupted; propagate so main() can restart
+                throw new BrowserCorruptedError(`goto failed [${location} p${pageNum}]: ${(e as Error).message}`);
+            }
 
             // PG is a React SPA — 5 s is enough for results; timeout is fine for 0-result pages
             await page.waitForSelector('.search-itm', { timeout: 5000 }).catch(() => {});
@@ -358,6 +385,7 @@ async function scrapePG(
             await delay(1000);
         }
     } catch (e) {
+        if (e instanceof BrowserCorruptedError) throw e; // let main() handle restart
         Logger.error(`PG Error [${location}]`, (e as Error).message);
     }
 
