@@ -153,11 +153,11 @@ async function main() {
             const cityCompanies: CompanyInput[] = [];
             const deduplicator = new Deduplicator();
 
-            // Setup CSV
+            // Setup CSV (append mode — safe for incremental saves and resume after crash)
             const timestamp = new Date().toISOString().split('T')[0];
             const categorySlug = keywords.join('-').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
             const cityFile = path.join(OUTPUT_DIR, `campaign_${city.toLowerCase()}_${categorySlug}_${timestamp}.csv`);
-            const csvWriter = createObjectCsvWriter({
+            const csvWriterHeader = createObjectCsvWriter({
                 path: cityFile,
                 header: [
                     { id: 'company_name', title: 'company_name' },
@@ -174,6 +174,25 @@ async function main() {
                     { id: 'pg_url', title: 'pg_url' }
                 ]
             });
+            const csvWriterAppend = createObjectCsvWriter({
+                path: cityFile,
+                header: [
+                    { id: 'company_name', title: 'company_name' },
+                    { id: 'city', title: 'city' },
+                    { id: 'province', title: 'province' },
+                    { id: 'zip_code', title: 'zip_code' },
+                    { id: 'region', title: 'region' },
+                    { id: 'address', title: 'address' },
+                    { id: 'phone', title: 'phone' },
+                    { id: 'website', title: 'website' },
+                    { id: 'category', title: 'category' },
+                    { id: 'source', title: 'source' },
+                    { id: 'vat_code', title: 'vat_code' },
+                    { id: 'pg_url', title: 'pg_url' }
+                ],
+                append: true
+            });
+            let csvInitialized = false;
 
             for (const keyword of keywords) {
                 Logger.info(`   🔎 Keyword: "${keyword}"`);
@@ -203,32 +222,18 @@ async function main() {
                         break;
                     }
 
-                    // --- SOURCE B: GOOGLE MAPS (capital only — too fragile across full cluster) ---
-                    if (loc === city) try {
-                        const mapsResults = await GoogleMapsProvider.fetchDeepResults(page, loc, keyword);
-
-                        for (const mRes of mapsResults) {
-                            if (totalGlobalFound >= COMPANY_LIMIT) break; // LIMIT CHECK
-
-                            try {
-                                const existing = deduplicator.checkDuplicate(mRes);
-                                if (existing) {
-                                    deduplicator.merge(existing, mRes);
-                                    Logger.info(`      ✨ Merged Maps data for: ${existing.company_name}`);
-                                } else {
-                                    deduplicator.add(mRes);
-                                    cityCompanies.push(mRes);
-                                    totalGlobalFound++;
-                                }
-                            } catch (itemErr) {
-                                Logger.warn(`      [Maps] Skipping entry "${mRes.company_name}": ${(itemErr as Error).message}`);
-                            }
+                    // Incremental save after each location — survives mid-run crashes
+                    if (cityCompanies.length > 0) {
+                        if (!csvInitialized) {
+                            await csvWriterHeader.writeRecords(cityCompanies);
+                            csvInitialized = true;
+                        } else {
+                            await csvWriterAppend.writeRecords(cityCompanies);
                         }
-                    } catch (mapsErr) {
-                        Logger.warn(`      [Maps] Failed for ${loc}: ${(mapsErr as Error).message} — PG data preserved`);
-                    } // end Maps capital-only block
+                        Logger.info(`      💾 Saved batch (${cityCompanies.length} total for ${city})`);
+                        cityCompanies.length = 0; // clear flushed records
+                    }
 
-                    // Early exit if limit reached
                     if (totalGlobalFound >= COMPANY_LIMIT) {
                         Logger.info(`🛑 LIMIT REACHED: ${totalGlobalFound} companies. Stopping.`);
                         break;
@@ -236,11 +241,16 @@ async function main() {
                 }
             }
 
-            // Save City Batch
+            // Flush any remaining records not yet written
             if (cityCompanies.length > 0) {
-                Logger.info(`\n💾 Saving ${cityCompanies.length} companies for ${city}...`);
-                await csvWriter.writeRecords(cityCompanies);
+                if (!csvInitialized) {
+                    await csvWriterHeader.writeRecords(cityCompanies);
+                } else {
+                    await csvWriterAppend.writeRecords(cityCompanies);
+                }
+                Logger.info(`\n💾 Final flush: ${cityCompanies.length} records for ${city}`);
             }
+            Logger.info(`\n✅ ${city} complete — ${totalGlobalFound} total leads so far`);
         }
 
     } catch (e) {
