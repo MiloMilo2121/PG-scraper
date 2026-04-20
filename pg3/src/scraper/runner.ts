@@ -203,8 +203,8 @@ async function main() {
                         break;
                     }
 
-                    // --- SOURCE B: GOOGLE MAPS (Deep Fill) ---
-                    try {
+                    // --- SOURCE B: GOOGLE MAPS (capital only — too fragile across full cluster) ---
+                    if (loc === city) try {
                         const mapsResults = await GoogleMapsProvider.fetchDeepResults(page, loc, keyword);
 
                         for (const mRes of mapsResults) {
@@ -226,7 +226,7 @@ async function main() {
                         }
                     } catch (mapsErr) {
                         Logger.warn(`      [Maps] Failed for ${loc}: ${(mapsErr as Error).message} — PG data preserved`);
-                    }
+                    } // end Maps capital-only block
 
                     // Early exit if limit reached
                     if (totalGlobalFound >= COMPANY_LIMIT) {
