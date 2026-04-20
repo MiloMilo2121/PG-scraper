@@ -175,23 +175,28 @@ async function main() {
                     }
 
                     // --- SOURCE B: GOOGLE MAPS (Deep Fill) ---
-                    // Only run maps if PG yield was low OR if we are in main city to ensure quality
-                    // Actually, let's run it always for maximum coverage but handle dedupe
-                    const mapsResults = await GoogleMapsProvider.fetchDeepResults(page, loc, keyword);
+                    try {
+                        const mapsResults = await GoogleMapsProvider.fetchDeepResults(page, loc, keyword);
 
-                    for (const mRes of mapsResults) {
-                        if (totalGlobalFound >= COMPANY_LIMIT) break; // LIMIT CHECK
+                        for (const mRes of mapsResults) {
+                            if (totalGlobalFound >= COMPANY_LIMIT) break; // LIMIT CHECK
 
-                        const existing = deduplicator.checkDuplicate(mRes);
-                        if (existing) {
-                            // Smart Merge
-                            deduplicator.merge(existing, mRes);
-                            Logger.info(`      ✨ Merged Maps data for: ${existing.company_name}`);
-                        } else {
-                            deduplicator.add(mRes);
-                            cityCompanies.push(mRes);
-                            totalGlobalFound++;
+                            try {
+                                const existing = deduplicator.checkDuplicate(mRes);
+                                if (existing) {
+                                    deduplicator.merge(existing, mRes);
+                                    Logger.info(`      ✨ Merged Maps data for: ${existing.company_name}`);
+                                } else {
+                                    deduplicator.add(mRes);
+                                    cityCompanies.push(mRes);
+                                    totalGlobalFound++;
+                                }
+                            } catch (itemErr) {
+                                Logger.warn(`      [Maps] Skipping entry "${mRes.company_name}": ${(itemErr as Error).message}`);
+                            }
                         }
+                    } catch (mapsErr) {
+                        Logger.warn(`      [Maps] Failed for ${loc}: ${(mapsErr as Error).message} — PG data preserved`);
                     }
 
                     // Early exit if limit reached
