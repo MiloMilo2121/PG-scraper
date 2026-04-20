@@ -178,53 +178,17 @@ async function main() {
             for (const keyword of keywords) {
                 Logger.info(`   🔎 Keyword: "${keyword}"`);
 
-                // 2. THE BARRIER CHECK (PagineGialle Total Results)
-                let useCluster = false;
-                // Use /p-1 so PG renders the full results SPA (base URL serves a different page)
-                const pgUrl = `https://www.paginegialle.it/ricerca/${encodeURIComponent(keyword)}/${encodeURIComponent(city)}/p-1`;
-
-                await page.goto(pgUrl, { waitUntil: 'domcontentloaded' });
-                await CookieConsent.handle(page); // 🍪 Smash cookies
-
-                // Wait until PG has rendered the result count text in the body
-                await page.waitForFunction(
-                    () => /risultat/i.test(document.body.innerText),
-                    { timeout: 15000, polling: 500 }
-                ).catch(() => {});
-
-                // Parse Total Count — PG shows "più di 200 risultati" or "1.247 risultati"
-                const countText = await page.evaluate(() => {
-                    const body = document.body.innerText;
-                    // "più di 200 risultati" — preserve full phrase for caller parsing
-                    const piuMatch = body.match(/pi[uù]\s+di\s+[\d.]+\s*risultat[^\n]*/i);
-                    if (piuMatch) return piuMatch[0];
-                    // "1.247 risultati"
-                    const numMatch = body.match(/\d[\d.]*\s+risultat/i);
-                    if (numMatch) return numMatch[0];
-                    return '0';
-                });
-                // Handle both "1.247 risultati" and "più di 200 risultati"
-                const piuDiMatch = countText.match(/pi[uù]\s+di\s+([\d.]+)/i);
-                const totalResults = piuDiMatch
-                    ? parseInt(piuDiMatch[1].replace(/\./g, ''), 10) + 1
-                    : parseInt(countText.replace(/\./g, ''), 10) || 0;
-                Logger.info(`      📊 PG Total Results: ${totalResults} (raw: "${countText}")`);
-
                 const cluster = TARGET_CLUSTERS[city];
-                if (totalResults > 200) {
-                    useCluster = true;
-                    Logger.info(`      🚀 HIGH VOLUME DETECTED (>200). ACTIVATING CLUSTER STRATEGY.`);
+                // Always use cluster when one is defined — all target provinces have >200 results
+                // and we want full municipal coverage for the 500-1000 lead goal.
+                const useCluster = !!cluster;
+                if (useCluster) {
+                    Logger.info(`      🚀 CLUSTER STRATEGY: scanning ${cluster.length} locations for ${city}`);
                 } else {
-                    Logger.info(`      📉 Low volume (${totalResults}). Scanned only main city.`);
+                    Logger.info(`      📍 No cluster defined, scanning main city only`);
                 }
 
-                // Define Locations based on Cluster Decision
-                const needMoreThanCity =
-                    COMPANY_LIMIT !== Infinity &&
-                    Number.isFinite(COMPANY_LIMIT) &&
-                    COMPANY_LIMIT > totalResults &&
-                    !!cluster;
-                const locations = (useCluster || needMoreThanCity) && cluster ? cluster : [city];
+                const locations = useCluster && cluster ? cluster : [city];
 
                 // 3. EXECUTE SEARCH
                 for (const loc of locations) {
