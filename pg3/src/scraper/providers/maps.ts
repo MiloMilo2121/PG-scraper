@@ -20,6 +20,9 @@ export class GoogleMapsProvider {
                 await page.goto(mapsUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
                 await this.smashCookies(page);
 
+                // Wait for Maps JS to render the results list
+                await page.waitForSelector('div.VkpGBb, div[jscontroller="AtSb"], .dbg0pd, .C8TUKc', { timeout: 8000 }).catch(() => {});
+
                 // Expanded selectors for List Items
                 const items = await page.$$('div.VkpGBb, div[jscontroller="AtSb"], .dbg0pd, .C8TUKc, div[role="article"] a[href^="/maps/place"]');
                 if (items.length === 0) continue;

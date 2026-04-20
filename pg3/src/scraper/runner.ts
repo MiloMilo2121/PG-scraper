@@ -185,6 +185,9 @@ async function main() {
                 await page.goto(pgUrl, { waitUntil: 'domcontentloaded' });
                 await CookieConsent.handle(page); // 🍪 Smash cookies
 
+                // Wait for PG results count element to be JS-rendered
+                await page.waitForSelector('.listing-res__numresults, .search-ind__res, [class*="numresults"]', { timeout: 8000 }).catch(() => {});
+
                 // Parse Total Count — PG shows "più di 200 risultati" or "1.247 risultati"
                 const countText = await page.evaluate(() => {
                     const selectors = [
@@ -303,6 +306,10 @@ async function scrapePG(
         while (hasNext && pageNum <= MAX_PAGES_PG && count < limit) {
             const url = `https://www.paginegialle.it/ricerca/${encodeURIComponent(keyword)}/${encodeURIComponent(location)}/p-${pageNum}`;
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+            // Wait for JS-rendered results before extracting — PG is a SPA,
+            // domcontentloaded fires before React injects .search-itm elements.
+            await page.waitForSelector('.search-itm', { timeout: 10000 }).catch(() => {});
 
             // Extract
             const items = await page.evaluate(({ loc, key }) => {
