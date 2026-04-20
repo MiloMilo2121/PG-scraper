@@ -177,7 +177,7 @@ async function main() {
         process.exit(1);
     });
 
-    Logger.info('🚀 UNIFIED CAMPAIGN GENERATOR v4.3 (Resilient)');
+    Logger.info('🚀 UNIFIED CAMPAIGN GENERATOR v4.5 (Resilient)');
 
     try { EnvValidator.validate(); }
     catch (e) { Logger.error('Environment Error', (e as Error).message); process.exit(1); }
