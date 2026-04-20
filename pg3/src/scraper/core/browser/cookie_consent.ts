@@ -1,38 +1,34 @@
-
 import { Page } from 'playwright';
 
 export class CookieConsent {
-    private static commonSelectors = [
-        'button[id="L2AGLb"]', // Google Agree
-        '#onetrust-accept-btn-handler', // OneTrust
-        '.iubenda-cs-accept-btn', // Iubenda
-        'button[sc-const="accept_all"]', // Generic
-        'button.cookie-agree',
-        'button.btn-accept',
-        'a.cc-btn.cc-dismiss',
-        'button[aria-label="Accept all"]',
-        'button:contains("Accetto")',
-        '#cmp-button-accept',
-        'button.btn-primary[id*="accept"]'
-    ];
-
-
     public static async handle(page: Page): Promise<void> {
         try {
             await page.evaluate(() => {
-                const buttons = Array.from(document.querySelectorAll('button, a'));
-                const target = buttons.find(b => {
-                    const txt = b.textContent?.toLowerCase() || '';
-                    return txt.includes('accetto') || txt.includes('acconsento') || txt.includes('accetta');
+                // Priority: selector-based (faster)
+                const selectors = [
+                    '#onetrust-accept-btn-handler',      // OneTrust (PG uses this)
+                    '#cmp-button-accept',
+                    '.iubenda-cs-accept-btn',
+                    'button[sc-const="accept_all"]',
+                    'button[aria-label="Accept all"]',
+                    'button[aria-label="Accetta tutto"]',
+                    'button.btn-primary[id*="accept"]',
+                    'button[class*="accept"][class*="cookie"]',
+                ];
+                for (const sel of selectors) {
+                    const btn = document.querySelector<HTMLElement>(sel);
+                    if (btn) { btn.click(); return; }
+                }
+
+                // Fallback: text-based scan
+                const allBtns = Array.from(document.querySelectorAll<HTMLElement>('button, a[role="button"]'));
+                const target = allBtns.find(b => {
+                    const txt = b.textContent?.toLowerCase().trim() ?? '';
+                    return txt === 'accetto' || txt === 'accetta' || txt === 'accetta tutto'
+                        || txt === 'acconsento' || txt === 'accept all' || txt === 'i accept';
                 });
-                if (target && (target as HTMLElement).click) (target as HTMLElement).click();
+                target?.click();
             });
-
-
-            // Text based fallback (slower)
-            // await page.evaluate(() => { ... }) 
-        } catch (e) {
-            // Ignore errors here, non-critical
-        }
+        } catch { /* non-critical */ }
     }
 }
