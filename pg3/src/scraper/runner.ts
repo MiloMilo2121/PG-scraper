@@ -196,11 +196,12 @@ async function main() {
                         '.search-ind__res',
                         '[class*="numresults"]',
                         '[class*="num-results"]',
-                        '[class*="risultati"]',
                     ];
                     for (const sel of selectors) {
                         const el = document.querySelector(sel);
-                        if (el?.textContent?.trim()) return el.textContent.trim();
+                        const txt = el?.textContent?.trim() || '';
+                        // Only trust elements that actually contain a digit or "più di"
+                        if (txt && (/\d/.test(txt) || /pi[uù]\s+di/i.test(txt))) return txt;
                     }
                     const body = document.body.innerText;
                     // Preserve "più di X risultati" so the caller can parse it correctly.
