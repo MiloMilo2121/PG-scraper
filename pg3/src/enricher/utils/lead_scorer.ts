@@ -57,12 +57,13 @@ export class LeadScorer {
         }
 
         // 5. CONTACT REACHABILITY BONUS - cap 10 pts
-        // PEC takes priority; falls back to email quality if no PEC.
+        // Personal/corporate email is the primary signal for outreach.
+        // PEC is a legal formality — useful but low outreach value.
         let contactBonus = 0;
-        if (company.pec && company.pec.includes('@')) {
-            contactBonus = 10;
-        } else if (company.email && company.email.includes('@')) {
-            contactBonus = classifyEmail(company.email) === 'corporate' ? 8 : 5;
+        if (company.email && company.email.includes('@')) {
+            contactBonus = classifyEmail(company.email) === 'corporate' ? 10 : 6;
+        } else if (company.pec && company.pec.includes('@')) {
+            contactBonus = 4;
         }
         score += Math.min(contactBonus, 10);
 

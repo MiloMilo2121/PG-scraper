@@ -81,13 +81,13 @@ export class HunterClient {
 
   /**
    * Selects the most outreach-suitable email from a domain search result:
-   * prefers generic addresses (info@, contact@) over personal ones,
+   * prefers personal addresses (decision-maker direct) over generic ones,
    * then ranks by confidence score descending.
    */
   static pickBestEmail(emails: HunterEmail[]): HunterEmail | null {
     if (!emails.length) return null;
     return [...emails].sort((a, b) => {
-      if (a.type !== b.type) return a.type === 'generic' ? -1 : 1;
+      if (a.type !== b.type) return a.type === 'personal' ? -1 : 1;
       return (b.confidence ?? 0) - (a.confidence ?? 0);
     })[0] ?? null;
   }
