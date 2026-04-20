@@ -258,9 +258,11 @@ async function main() {
 
                     // Retry loop: if browser corrupts mid-scrape, restart and retry same location
                     let scrapeRetries = 0;
+                    let scrapeSucceeded = false;
                     while (true) {
                         try {
                             totalFound = await scrapePG(page, keyword, loc, dedup, cityCompanies, totalFound, COMPANY_LIMIT);
+                            scrapeSucceeded = true;
                             break;
                         } catch (e) {
                             if (e instanceof BrowserCorruptedError && scrapeRetries < 2) {
@@ -269,16 +271,18 @@ async function main() {
                                 page = await restartBrowser(factory);
                             } else {
                                 Logger.error(`PG Fatal [${loc}]`, (e as Error).message);
-                                break; // skip location, keep going
+                                break; // skip location, keep going (NOT marked done)
                             }
                         }
                     }
 
                     await flush();
 
-                    // Mark location as done in checkpoint
-                    cp[key] = true;
-                    saveCheckpoint(cpFile, cp);
+                    // Only mark checkpoint if scrape succeeded. Otherwise leave it for next run.
+                    if (scrapeSucceeded) {
+                        cp[key] = true;
+                        saveCheckpoint(cpFile, cp);
+                    }
 
                     if (totalFound >= COMPANY_LIMIT) {
                         Logger.info(`🛑 LIMIT: ${totalFound}. Stopping.`);
@@ -369,18 +373,45 @@ async function scrapePG(
                 }).filter((x): x is import('./types').CompanyInput => x !== null);
             }, { loc: location, key: keyword });
 
-            if (items.length === 0) break;
+            // Detect pagination: multiple selector fallbacks for resilience
+            const paginationInfo = await page.evaluate(() => {
+                const nextBtn = document.querySelector('.search-pagi__next')
+                             || document.querySelector('a[rel="next"]')
+                             || document.querySelector('.pagination__next')
+                             || document.querySelector('a.next')
+                             || document.querySelector('[class*="pagi"][class*="next"]');
+                const isDisabled = nextBtn?.classList.contains('disabled')
+                                || nextBtn?.getAttribute('aria-disabled') === 'true'
+                                || (nextBtn as HTMLAnchorElement | null)?.href?.includes('javascript:');
+                return {
+                    hasNextBtn: !!nextBtn,
+                    isDisabled: !!isDisabled,
+                    btnHref: (nextBtn as HTMLAnchorElement | null)?.href ?? null,
+                };
+            });
 
+            let added = 0;
             for (const item of items) {
                 if (count >= limit) break;
                 if (!dedup.checkDuplicate(item)) {
                     dedup.add(item);
                     list.push(item);
                     count++;
+                    added++;
                 }
             }
 
-            hasNext = !!(await page.$('.search-pagi__next'));
+            Logger.info(`         p${pageNum}: ${items.length} items, +${added} new (total ${count}) | next=${paginationInfo.hasNextBtn ? 'yes' : 'no'}${paginationInfo.isDisabled ? ' (disabled)' : ''}`);
+
+            // Stop if no next-page link; but don't stop on empty items
+            // (some intermediate pages could be empty but later ones have data)
+            hasNext = paginationInfo.hasNextBtn && !paginationInfo.isDisabled;
+
+            // Extra safety: if BOTH items.length === 0 AND no next button, stop (avoids infinite 0-result loop on misroute)
+            if (items.length === 0 && !hasNext) {
+                break;
+            }
+
             pageNum++;
             await delay(1000);
         }

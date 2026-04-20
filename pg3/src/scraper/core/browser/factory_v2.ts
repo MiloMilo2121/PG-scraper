@@ -354,7 +354,13 @@ export class BrowserFactory {
             }
 
             try {
-                await browserToClose.close();
+                // Timeout-wrapped close: if Chromium hangs, fall back to forceKill after 10s
+                await Promise.race([
+                    browserToClose.close(),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('browser.close() timeout')), 10_000)
+                    ),
+                ]);
             } catch {
                 await this.forceKill(browserToClose);
             }
