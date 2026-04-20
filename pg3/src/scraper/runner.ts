@@ -12,7 +12,8 @@ import { EnvValidator } from './utils/env_validator';
 // --- CONFIGURATION ---
 const MAX_PAGES_PG = 5;
 const OUTPUT_DIR = 'output/campaigns';
-const BROWSER_REFRESH_EVERY = 8; // proactive restart every N locations
+// Proactive browser restart every N locations. Lower = more stable, more overhead.
+const BROWSER_REFRESH_EVERY = 5;
 
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
@@ -106,14 +107,19 @@ const COMPANY_LIMIT = limitArg ? parseInt(limitArg, 10) : Infinity;
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-/**
- * Checks browser + page health; restarts both if dead.
- * Called before every location scrape — catches browser crashes reactively.
- */
+// --- BROWSER HELPERS ---
+
 async function ensurePage(factory: BrowserFactory, current: Page): Promise<Page> {
     if (!current.isClosed() && await factory.isHealthy()) return current;
     Logger.warn('🔄 Browser/page dead — reactive restart');
     try { await factory.close(); } catch { /* ignore */ }
+    await delay(800); // let old Chromium fully exit before spawning new one
+    return factory.newPage();
+}
+
+async function restartBrowser(factory: BrowserFactory): Promise<Page> {
+    await factory.close();
+    await delay(800); // ensure old Chromium exits before spawning new one
     return factory.newPage();
 }
 
@@ -123,7 +129,6 @@ const CSV_HEADER = [
     { id: 'city',         title: 'city' },
     { id: 'province',     title: 'province' },
     { id: 'zip_code',     title: 'zip_code' },
-    { id: 'region',       title: 'region' },
     { id: 'address',      title: 'address' },
     { id: 'phone',        title: 'phone' },
     { id: 'website',      title: 'website' },
@@ -137,6 +142,24 @@ function makeCsvWriter(filePath: string, append: boolean) {
     return createObjectCsvWriter({ path: filePath, header: CSV_HEADER, append });
 }
 
+// --- CHECKPOINT ---
+// Tracks which (keyword, location) pairs are done so retries skip them.
+type Checkpoint = Record<string, true>; // key: `${keyword}|${location}`
+
+function cpKey(kw: string, loc: string) { return `${kw}|${loc}`; }
+
+function loadCheckpoint(cpFile: string): Checkpoint {
+    try {
+        return JSON.parse(fs.readFileSync(cpFile, 'utf8')) as Checkpoint;
+    } catch {
+        return {};
+    }
+}
+
+function saveCheckpoint(cpFile: string, cp: Checkpoint) {
+    fs.writeFileSync(cpFile, JSON.stringify(cp));
+}
+
 // --- MAIN ---
 async function main() {
     process.on('uncaughtException', (err) => {
@@ -148,7 +171,7 @@ async function main() {
         process.exit(1);
     });
 
-    Logger.info('🚀 UNIFIED CAMPAIGN GENERATOR v4.2 (Bulletproof)');
+    Logger.info('🚀 UNIFIED CAMPAIGN GENERATOR v4.3 (Resilient)');
 
     try { EnvValidator.validate(); }
     catch (e) { Logger.error('Environment Error', (e as Error).message); process.exit(1); }
@@ -173,15 +196,22 @@ async function main() {
 
             const timestamp = new Date().toISOString().split('T')[0];
             const slug = keywords.join('-').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-            const cityFile = path.join(OUTPUT_DIR, `campaign_${city.toLowerCase().replace(/\s+/g, '_')}_${slug}_${timestamp}.csv`);
-            let csvInitialized = false;
+            const citySlug = city.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+            const cityFile = path.join(OUTPUT_DIR, `campaign_${citySlug}_${slug}_${timestamp}.csv`);
+            const cpFile   = path.join(OUTPUT_DIR, `.cp_${citySlug}_${timestamp}.json`);
+
+            // Resume support: don't overwrite CSV, skip already-done locations
+            const csvInitialized = fs.existsSync(cityFile);
+            const cp = loadCheckpoint(cpFile);
+            if (csvInitialized) {
+                Logger.info(`   ♻️  Resuming — ${Object.keys(cp).length} locations already done`);
+            }
 
             async function flush() {
                 if (cityCompanies.length === 0) return;
-                const writer = makeCsvWriter(cityFile, csvInitialized);
+                const writer = makeCsvWriter(cityFile, csvInitialized || totalFound > 0);
                 await writer.writeRecords(cityCompanies);
                 Logger.info(`      💾 Saved ${cityCompanies.length} records (${totalFound} cumulative)`);
-                csvInitialized = true;
                 cityCompanies.length = 0;
             }
 
@@ -191,25 +221,29 @@ async function main() {
 
                 const cluster = TARGET_CLUSTERS[city];
                 const locations = cluster ?? [city];
-                if (cluster) {
-                    Logger.info(`      🚀 Cluster: ${cluster.length} locations`);
-                }
+                if (cluster) Logger.info(`      🚀 Cluster: ${cluster.length} locations`);
 
                 for (let li = 0; li < locations.length; li++) {
                     const loc = locations[li];
+                    const key = cpKey(keyword, loc);
+
+                    // Skip if already completed in a previous run
+                    if (cp[key]) {
+                        Logger.info(`      ⏩ [kw ${ki + 1}/${keywords.length}, loc ${li + 1}/${locations.length}] ${loc} (done)`);
+                        continue;
+                    }
 
                     // Proactive browser refresh every N locations
                     if (navCount > 0 && navCount % BROWSER_REFRESH_EVERY === 0) {
                         Logger.info(`      🔄 Proactive refresh (${navCount} done)`);
                         try {
-                            await factory.close();
-                            page = await factory.newPage();
+                            page = await restartBrowser(factory);
                         } catch (e) {
                             Logger.error('Proactive refresh failed', (e as Error).message);
                             throw e;
                         }
                     } else {
-                        // Reactive: recover from any browser crash immediately
+                        // Reactive: detect and recover from unexpected browser crash
                         page = await ensurePage(factory, page);
                     }
                     navCount++;
@@ -219,6 +253,10 @@ async function main() {
                     totalFound = await scrapePG(page, keyword, loc, dedup, cityCompanies, totalFound, COMPANY_LIMIT);
 
                     await flush();
+
+                    // Mark location as done in checkpoint
+                    cp[key] = true;
+                    saveCheckpoint(cpFile, cp);
 
                     if (totalFound >= COMPANY_LIMIT) {
                         Logger.info(`🛑 LIMIT: ${totalFound}. Stopping.`);
@@ -231,6 +269,10 @@ async function main() {
 
             // Final flush for anything left
             await flush();
+
+            // Clean up checkpoint on successful completion
+            try { fs.unlinkSync(cpFile); } catch { /* ignore if missing */ }
+
             Logger.info(`\n✅ ${city} done — ${totalFound} leads`);
         }
 
@@ -261,7 +303,7 @@ async function scrapePG(
             const url = `https://www.paginegialle.it/ricerca/${encodeURIComponent(keyword)}/${encodeURIComponent(location)}/p-${pageNum}`;
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-            // PG is a React SPA — wait for results to render (5 s is enough; 0 results → timeout is ok)
+            // PG is a React SPA — 5 s is enough for results; timeout is fine for 0-result pages
             await page.waitForSelector('.search-itm', { timeout: 5000 }).catch(() => {});
 
             const items = await page.evaluate(({ loc, key }) => {
@@ -269,14 +311,16 @@ async function scrapePG(
                     const name = el.querySelector('.search-itm__rag')?.textContent?.trim();
                     if (!name) return null;
 
-                    const tel  = el.querySelector('.search-itm__phone')?.textContent?.trim();
-                    const web  = el.querySelector('.search-itm__url')?.getAttribute('href') ?? undefined;
+                    const tel   = el.querySelector('.search-itm__phone')?.textContent?.trim();
+                    const web   = el.querySelector('.search-itm__url')?.getAttribute('href') ?? undefined;
                     const pgUrl = (el.querySelector('a.remove_blank_for_app') as HTMLAnchorElement | null)?.href;
 
                     const adr  = el.querySelector('.search-itm__adr') as HTMLElement | null;
                     const addr = adr?.textContent?.replace(/\s+/g, ' ').trim();
                     const spans = adr
-                        ? Array.from(adr.querySelectorAll('span')).map(s => s.textContent?.trim() ?? '').filter(Boolean)
+                        ? Array.from(adr.querySelectorAll('span'))
+                            .map(s => s.textContent?.trim() ?? '')
+                            .filter(Boolean)
                         : [];
 
                     const zip      = spans[1] || undefined;
@@ -285,15 +329,15 @@ async function scrapePG(
 
                     return {
                         company_name: name,
-                        city: cityName || loc,
+                        city:     cityName || loc,
                         province,
                         zip_code: zip,
-                        address: addr || spans[0] || undefined,
-                        phone: tel,
-                        website: web,
+                        address:  addr || spans[0] || undefined,
+                        phone:    tel,
+                        website:  web,
                         category: key,
-                        source: 'PG',
-                        pg_url: pgUrl,
+                        source:   'PG',
+                        pg_url:   pgUrl,
                     } as import('./types').CompanyInput;
                 }).filter((x): x is import('./types').CompanyInput => x !== null);
             }, { loc: location, key: keyword });
