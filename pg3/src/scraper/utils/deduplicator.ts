@@ -84,10 +84,10 @@ export class Deduplicator {
         // 1. Website: prefer first non-empty candidate
         if (!existing.website && fresh.website) {
             existing.website = fresh.website;
-            const domain = this.normalizeDomain(fresh.website);
-            if (domain) {
-                this.domainIndex.set(domain, existing);
-            }
+            try {
+                const domain = this.normalizeDomain(fresh.website);
+                if (domain) this.domainIndex.set(domain, existing);
+            } catch { }
         }
 
         // 2. Phone: If different, maybe append? For now, we keep existing if present, else take fresh.

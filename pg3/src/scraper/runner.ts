@@ -107,7 +107,8 @@ async function main() {
 
             // Setup CSV
             const timestamp = new Date().toISOString().split('T')[0];
-            const cityFile = path.join(OUTPUT_DIR, `campaign_${city.toLowerCase()}_${timestamp}.csv`);
+            const categorySlug = keywords.join('-').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+            const cityFile = path.join(OUTPUT_DIR, `campaign_${city.toLowerCase()}_${categorySlug}_${timestamp}.csv`);
             const csvWriter = createObjectCsvWriter({
                 path: cityFile,
                 header: [
