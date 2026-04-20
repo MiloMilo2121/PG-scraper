@@ -10,7 +10,7 @@ import { Logger } from './utils/logger';
 import { EnvValidator } from './utils/env_validator';
 
 // --- CONFIGURATION ---
-const MAX_PAGES_PG = 5;
+const MAX_PAGES_PG = 15;
 const OUTPUT_DIR = 'output/campaigns';
 // Proactive browser restart every N locations. Lower = more stable, more overhead.
 const BROWSER_REFRESH_EVERY = 5;
