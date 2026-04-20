@@ -202,8 +202,14 @@ async function main() {
                         const el = document.querySelector(sel);
                         if (el?.textContent?.trim()) return el.textContent.trim();
                     }
-                    // Fallback: scan full page text for "risultati" pattern
-                    return document.body.innerText.match(/[\d\s.]+risultat/i)?.[0] ?? '0';
+                    const body = document.body.innerText;
+                    // Preserve "più di X risultati" so the caller can parse it correctly.
+                    const piuMatch = body.match(/pi[uù]\s+di\s+[\d.]+\s*risultat[^\n]*/i);
+                    if (piuMatch) return piuMatch[0];
+                    // Plain number: "1.247 risultati"
+                    const numMatch = body.match(/\d[\d.]*\s+risultat/i);
+                    if (numMatch) return numMatch[0];
+                    return '0';
                 });
                 // Handle both "1.247 risultati" and "più di 200 risultati"
                 const piuDiMatch = countText.match(/pi[uù]\s+di\s+([\d.]+)/i);
