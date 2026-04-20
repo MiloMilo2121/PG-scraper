@@ -12,14 +12,11 @@ import { EnvValidator } from './utils/env_validator';
 // --- CONFIGURATION ---
 const MAX_PAGES_PG = 5;
 const OUTPUT_DIR = 'output/campaigns';
+const BROWSER_REFRESH_EVERY = 8; // proactive restart every N locations
 
-// Ensure output dir exists
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
 // --- CLUSTERS ---
-// Each key is the PG search term (= province capital).
-// The array is the satellite municipality list activated when PG returns >200 results.
-// Municipalities are ordered roughly by population to maximise early yield.
 const TARGET_CLUSTERS: Record<string, string[]> = {
 
     // ── VENETO ─────────────────────────────────────────────────────────────
@@ -97,9 +94,8 @@ const TARGET_CLUSTERS: Record<string, string[]> = {
     "Mantova": ["Mantova", "Castiglione delle Stiviere", "Suzzara", "Viadana"],
 };
 
-// --- DEFAULT ARGS ---
+// --- CLI ARGS ---
 const args = process.argv.slice(2);
-// --category accepts a single value or comma-separated list: --category="a,b,c"
 const categoryArg = args.find(a => a.startsWith('--category='))?.split('=')[1];
 const specificCategories = categoryArg
     ? categoryArg.split(',').map(s => s.trim()).filter(Boolean)
@@ -108,11 +104,41 @@ const specificCity = args.find(a => a.startsWith('--city='))?.split('=')[1];
 const limitArg = args.find(a => a.startsWith('--limit='))?.split('=')[1];
 const COMPANY_LIMIT = limitArg ? parseInt(limitArg, 10) : Infinity;
 
-// Helpers
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+/**
+ * Checks browser + page health; restarts both if dead.
+ * Called before every location scrape — catches browser crashes reactively.
+ */
+async function ensurePage(factory: BrowserFactory, current: Page): Promise<Page> {
+    if (!current.isClosed() && await factory.isHealthy()) return current;
+    Logger.warn('🔄 Browser/page dead — reactive restart');
+    try { await factory.close(); } catch { /* ignore */ }
+    return factory.newPage();
+}
+
+// --- CSV HELPERS ---
+const CSV_HEADER = [
+    { id: 'company_name', title: 'company_name' },
+    { id: 'city',         title: 'city' },
+    { id: 'province',     title: 'province' },
+    { id: 'zip_code',     title: 'zip_code' },
+    { id: 'region',       title: 'region' },
+    { id: 'address',      title: 'address' },
+    { id: 'phone',        title: 'phone' },
+    { id: 'website',      title: 'website' },
+    { id: 'category',     title: 'category' },
+    { id: 'source',       title: 'source' },
+    { id: 'vat_code',     title: 'vat_code' },
+    { id: 'pg_url',       title: 'pg_url' },
+];
+
+function makeCsvWriter(filePath: string, append: boolean) {
+    return createObjectCsvWriter({ path: filePath, header: CSV_HEADER, append });
+}
+
+// --- MAIN ---
 async function main() {
-    // Catch silent crashes
     process.on('uncaughtException', (err) => {
         Logger.error('💥 uncaughtException', err.message + '\n' + err.stack);
         process.exit(1);
@@ -122,156 +148,108 @@ async function main() {
         process.exit(1);
     });
 
-    Logger.info(`🚀 UNIFIED CAMPAIGN GENERATOR v4.1 (Robust)`);
+    Logger.info('🚀 UNIFIED CAMPAIGN GENERATOR v4.2 (Bulletproof)');
 
-    // 0. Safety Check
     try { EnvValidator.validate(); }
     catch (e) { Logger.error('Environment Error', (e as Error).message); process.exit(1); }
 
-    // 1. Determine Scope
     const citiesToScan = specificCity ? [specificCity] : Object.keys(TARGET_CLUSTERS);
-    const keywords = specificCategories ?? ["centro estetico", "epilazione laser", "beauty center"];
+    const keywords = specificCategories ?? ['centro estetico', 'epilazione laser', 'beauty center'];
 
     Logger.info(`🎯 Scope: ${citiesToScan.join(', ')} | Keywords: ${keywords.join(', ')}`);
-    if (COMPANY_LIMIT !== Infinity) {
-        Logger.info(`🛑 Limit set: Will stop at ${COMPANY_LIMIT} companies`);
-    }
+    if (COMPANY_LIMIT !== Infinity) Logger.info(`🛑 Limit: ${COMPANY_LIMIT}`);
 
-    const browserFactory = BrowserFactory.getInstance();
-    let page = await browserFactory.newPage();
-
-    let totalGlobalFound = 0;
-    let navCount = 0; // tracks navigations for periodic browser restart
+    const factory = BrowserFactory.getInstance();
+    let page = await factory.newPage();
+    let navCount = 0;
+    let totalFound = 0;
 
     try {
         for (const city of citiesToScan) {
-            Logger.info(`\n🏙️  PROCESSING HUB: ${city}`);
+            Logger.info(`\n🏙️  HUB: ${city}`);
 
             const cityCompanies: CompanyInput[] = [];
-            const deduplicator = new Deduplicator();
+            const dedup = new Deduplicator();
 
-            // Setup CSV (append mode — safe for incremental saves and resume after crash)
             const timestamp = new Date().toISOString().split('T')[0];
-            const categorySlug = keywords.join('-').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-            const cityFile = path.join(OUTPUT_DIR, `campaign_${city.toLowerCase()}_${categorySlug}_${timestamp}.csv`);
-            const csvWriterHeader = createObjectCsvWriter({
-                path: cityFile,
-                header: [
-                    { id: 'company_name', title: 'company_name' },
-                    { id: 'city', title: 'city' },
-                    { id: 'province', title: 'province' },
-                    { id: 'zip_code', title: 'zip_code' },
-                    { id: 'region', title: 'region' },
-                    { id: 'address', title: 'address' },
-                    { id: 'phone', title: 'phone' },
-                    { id: 'website', title: 'website' },
-                    { id: 'category', title: 'category' },
-                    { id: 'source', title: 'source' },
-                    { id: 'vat_code', title: 'vat_code' },
-                    { id: 'pg_url', title: 'pg_url' }
-                ]
-            });
-            const csvWriterAppend = createObjectCsvWriter({
-                path: cityFile,
-                header: [
-                    { id: 'company_name', title: 'company_name' },
-                    { id: 'city', title: 'city' },
-                    { id: 'province', title: 'province' },
-                    { id: 'zip_code', title: 'zip_code' },
-                    { id: 'region', title: 'region' },
-                    { id: 'address', title: 'address' },
-                    { id: 'phone', title: 'phone' },
-                    { id: 'website', title: 'website' },
-                    { id: 'category', title: 'category' },
-                    { id: 'source', title: 'source' },
-                    { id: 'vat_code', title: 'vat_code' },
-                    { id: 'pg_url', title: 'pg_url' }
-                ],
-                append: true
-            });
+            const slug = keywords.join('-').toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+            const cityFile = path.join(OUTPUT_DIR, `campaign_${city.toLowerCase().replace(/\s+/g, '_')}_${slug}_${timestamp}.csv`);
             let csvInitialized = false;
 
-            for (const keyword of keywords) {
-                Logger.info(`   🔎 Keyword: "${keyword}"`);
+            async function flush() {
+                if (cityCompanies.length === 0) return;
+                const writer = makeCsvWriter(cityFile, csvInitialized);
+                await writer.writeRecords(cityCompanies);
+                Logger.info(`      💾 Saved ${cityCompanies.length} records (${totalFound} cumulative)`);
+                csvInitialized = true;
+                cityCompanies.length = 0;
+            }
+
+            for (let ki = 0; ki < keywords.length; ki++) {
+                const keyword = keywords[ki];
+                Logger.info(`   🔎 Keyword [${ki + 1}/${keywords.length}]: "${keyword}"`);
 
                 const cluster = TARGET_CLUSTERS[city];
-                // Always use cluster when one is defined — all target provinces have >200 results
-                // and we want full municipal coverage for the 500-1000 lead goal.
-                const useCluster = !!cluster;
-                if (useCluster) {
-                    Logger.info(`      🚀 CLUSTER STRATEGY: scanning ${cluster.length} locations for ${city}`);
-                } else {
-                    Logger.info(`      📍 No cluster defined, scanning main city only`);
+                const locations = cluster ?? [city];
+                if (cluster) {
+                    Logger.info(`      🚀 Cluster: ${cluster.length} locations`);
                 }
 
-                const locations = useCluster && cluster ? cluster : [city];
+                for (let li = 0; li < locations.length; li++) {
+                    const loc = locations[li];
 
-                // 3. EXECUTE SEARCH
-                for (const loc of locations) {
-                    // Restart browser every 8 locations to prevent state accumulation
-                    if (navCount > 0 && navCount % 8 === 0) {
-                        Logger.info(`      🔄 Browser refresh (${navCount} locations done)...`);
+                    // Proactive browser refresh every N locations
+                    if (navCount > 0 && navCount % BROWSER_REFRESH_EVERY === 0) {
+                        Logger.info(`      🔄 Proactive refresh (${navCount} done)`);
                         try {
-                            await browserFactory.close();
-                            page = await browserFactory.newPage();
-                        } catch (refreshErr) {
-                            Logger.error(`      Browser refresh failed — aborting run`, (refreshErr as Error).message);
-                            throw refreshErr; // bubble up to main catch
+                            await factory.close();
+                            page = await factory.newPage();
+                        } catch (e) {
+                            Logger.error('Proactive refresh failed', (e as Error).message);
+                            throw e;
                         }
+                    } else {
+                        // Reactive: recover from any browser crash immediately
+                        page = await ensurePage(factory, page);
                     }
                     navCount++;
 
-                    Logger.info(`      📍 Scanning Location: ${loc}`);
+                    Logger.info(`      📍 [kw ${ki + 1}/${keywords.length}, loc ${li + 1}/${locations.length}] ${loc}`);
 
-                    // --- SOURCE A: PAGINE GIALLE ---
-                    totalGlobalFound = await scrapePG(page, keyword, loc, deduplicator, cityCompanies, totalGlobalFound, COMPANY_LIMIT);
+                    totalFound = await scrapePG(page, keyword, loc, dedup, cityCompanies, totalFound, COMPANY_LIMIT);
 
-                    // Incremental save after each location — survives mid-run crashes
-                    if (cityCompanies.length > 0) {
-                        if (!csvInitialized) {
-                            await csvWriterHeader.writeRecords(cityCompanies);
-                            csvInitialized = true;
-                        } else {
-                            await csvWriterAppend.writeRecords(cityCompanies);
-                        }
-                        Logger.info(`      💾 Saved ${cityCompanies.length} records (${totalGlobalFound} cumulative)`);
-                        cityCompanies.length = 0;
-                    }
+                    await flush();
 
-                    if (totalGlobalFound >= COMPANY_LIMIT) {
-                        Logger.info(`🛑 LIMIT REACHED: ${totalGlobalFound} companies. Stopping.`);
+                    if (totalFound >= COMPANY_LIMIT) {
+                        Logger.info(`🛑 LIMIT: ${totalFound}. Stopping.`);
                         break;
                     }
                 }
+
+                if (totalFound >= COMPANY_LIMIT) break;
             }
 
-            // Flush any remaining records not yet written
-            if (cityCompanies.length > 0) {
-                if (!csvInitialized) {
-                    await csvWriterHeader.writeRecords(cityCompanies);
-                } else {
-                    await csvWriterAppend.writeRecords(cityCompanies);
-                }
-                Logger.info(`\n💾 Final flush: ${cityCompanies.length} records for ${city}`);
-            }
-            Logger.info(`\n✅ ${city} complete — ${totalGlobalFound} total leads so far`);
+            // Final flush for anything left
+            await flush();
+            Logger.info(`\n✅ ${city} done — ${totalFound} leads`);
         }
 
     } catch (e) {
         Logger.error('Main Loop Error', (e as Error).message);
     } finally {
-        await browserFactory.close();
+        await factory.close();
     }
 }
 
+// --- SCRAPER ---
 async function scrapePG(
     page: Page,
     keyword: string,
     location: string,
-    deduplicator: Deduplicator,
+    dedup: Deduplicator,
     list: CompanyInput[],
     currentCount: number,
-    limit: number
+    limit: number,
 ): Promise<number> {
     let count = currentCount;
 
@@ -283,66 +261,60 @@ async function scrapePG(
             const url = `https://www.paginegialle.it/ricerca/${encodeURIComponent(keyword)}/${encodeURIComponent(location)}/p-${pageNum}`;
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-            // Wait for JS-rendered results before extracting — PG is a SPA,
-            // domcontentloaded fires before React injects .search-itm elements.
-            await page.waitForSelector('.search-itm', { timeout: 10000 }).catch(() => {});
+            // PG is a React SPA — wait for results to render (5 s is enough; 0 results → timeout is ok)
+            await page.waitForSelector('.search-itm', { timeout: 5000 }).catch(() => {});
 
-            // Extract
             const items = await page.evaluate(({ loc, key }) => {
-                return Array.from(document.querySelectorAll('.search-itm')).map(item => {
-                    const name = item.querySelector('.search-itm__rag')?.textContent?.trim();
-                    const tel = item.querySelector('.search-itm__phone')?.textContent?.trim();
-                    const web = item.querySelector('.search-itm__url')?.getAttribute('href');
-                    const pgUrl = (item.querySelector('a.remove_blank_for_app') as HTMLAnchorElement | null)?.href;
-
-                    const adr = item.querySelector('.search-itm__adr') as HTMLElement | null;
-                    const addr = adr?.textContent?.replace(/\s+/g, ' ')?.trim();
-
-                    const region = (adr?.querySelector('div')?.textContent || '').trim() || undefined;
-                    const spans = adr ? Array.from(adr.querySelectorAll('span')).map(s => (s.textContent || '').trim()).filter(Boolean) : [];
-                    const street = spans[0] || '';
-                    const zip = spans[1] || undefined;
-                    const cityName = spans[2] || undefined;
-                    const provMatch = addr ? addr.match(/\(([A-Z]{2})\)/) : null;
-                    const province = provMatch && provMatch[1] ? provMatch[1] : undefined;
-
+                return Array.from(document.querySelectorAll('.search-itm')).map(el => {
+                    const name = el.querySelector('.search-itm__rag')?.textContent?.trim();
                     if (!name) return null;
+
+                    const tel  = el.querySelector('.search-itm__phone')?.textContent?.trim();
+                    const web  = el.querySelector('.search-itm__url')?.getAttribute('href') ?? undefined;
+                    const pgUrl = (el.querySelector('a.remove_blank_for_app') as HTMLAnchorElement | null)?.href;
+
+                    const adr  = el.querySelector('.search-itm__adr') as HTMLElement | null;
+                    const addr = adr?.textContent?.replace(/\s+/g, ' ').trim();
+                    const spans = adr
+                        ? Array.from(adr.querySelectorAll('span')).map(s => s.textContent?.trim() ?? '').filter(Boolean)
+                        : [];
+
+                    const zip      = spans[1] || undefined;
+                    const cityName = spans[2] || undefined;
+                    const province = addr?.match(/\(([A-Z]{2})\)/)?.[1];
+
                     return {
                         company_name: name,
                         city: cityName || loc,
                         province,
                         zip_code: zip,
-                        region,
-                        address: addr || (street ? street : undefined),
+                        address: addr || spans[0] || undefined,
                         phone: tel,
                         website: web,
                         category: key,
                         source: 'PG',
-                        pg_url: pgUrl
-                    } as CompanyInput;
-                }).filter(x => x !== null);
-            }, { loc: location, key: keyword }) as CompanyInput[];
+                        pg_url: pgUrl,
+                    } as import('./types').CompanyInput;
+                }).filter((x): x is import('./types').CompanyInput => x !== null);
+            }, { loc: location, key: keyword });
 
             if (items.length === 0) break;
 
             for (const item of items) {
-                if (!item) continue;
-                if (count >= limit) break; // 🛑 LIMIT CHECK
-
-                if (!deduplicator.checkDuplicate(item)) {
-                    deduplicator.add(item);
+                if (count >= limit) break;
+                if (!dedup.checkDuplicate(item)) {
+                    dedup.add(item);
                     list.push(item);
                     count++;
                 }
             }
 
-            // Next Page?
             hasNext = !!(await page.$('.search-pagi__next'));
             pageNum++;
             await delay(1000);
         }
     } catch (e) {
-        Logger.error(`PG Scrape Error ${location}`, (e as Error).message);
+        Logger.error(`PG Error [${location}]`, (e as Error).message);
     }
 
     return count;
