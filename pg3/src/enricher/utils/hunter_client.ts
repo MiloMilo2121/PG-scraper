@@ -80,16 +80,40 @@ export class HunterClient {
   }
 
   /**
-   * Selects the most outreach-suitable email from a domain search result:
-   * prefers personal addresses (decision-maker direct) over generic ones,
-   * then ranks by confidence score descending.
+   * Returns up to maxPersonal personal emails (confidence desc).
+   * Falls back to 1 generic email if no personal found.
+   * Generic fallback gets a halved confidence to signal lower outreach priority.
    */
-  static pickBestEmail(emails: HunterEmail[]): HunterEmail | null {
-    if (!emails.length) return null;
-    return [...emails].sort((a, b) => {
-      if (a.type !== b.type) return a.type === 'personal' ? -1 : 1;
-      return (b.confidence ?? 0) - (a.confidence ?? 0);
-    })[0] ?? null;
+  static pickBestEmails(
+    emails: HunterEmail[],
+    maxPersonal = 2,
+  ): { values: string[]; isPersonal: boolean; confidence: number } {
+    const personal = [...emails]
+      .filter(e => e.type === 'personal')
+      .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
+      .slice(0, maxPersonal);
+
+    if (personal.length > 0) {
+      return {
+        values: personal.map(e => e.value),
+        isPersonal: true,
+        confidence: personal[0].confidence ?? 0,
+      };
+    }
+
+    const generic = [...emails]
+      .filter(e => e.type === 'generic')
+      .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+
+    if (generic.length > 0) {
+      return {
+        values: [generic[0].value],
+        isPersonal: false,
+        confidence: (generic[0].confidence ?? 0) * 0.5, // lower priority
+      };
+    }
+
+    return { values: [], isPersonal: false, confidence: 0 };
   }
 
   /** Normalizes Hunter's 0–100 confidence to 0–1. */

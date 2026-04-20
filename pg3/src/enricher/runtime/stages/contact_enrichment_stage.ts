@@ -93,14 +93,17 @@ export class ContactEnrichmentStage {
     const result = await this.hunterClient.domainSearch(domain, 10);
     if (!result || !result.emails.length) return null;
 
-    const best = HunterClient.pickBestEmail(result.emails);
-    if (!best) return null;
+    const picked = HunterClient.pickBestEmails(result.emails, 2);
+    if (!picked.values.length) return null;
 
-    Logger.info(`[ContactStage] Hunter found ${result.emails.length} email(s) for ${domain}; using ${best.value} (conf: ${best.confidence})`);
+    const emailStr = picked.values.join(', ');
+    Logger.info(
+      `[ContactStage] Hunter: ${result.emails.length} email(s) for ${domain} → ${emailStr} (${picked.isPersonal ? 'personal' : 'generic'}, conf: ${picked.confidence})`
+    );
 
     return {
-      email: best.value,
-      confidence: HunterClient.normalizeConfidence(best.confidence),
+      email: emailStr,
+      confidence: HunterClient.normalizeConfidence(picked.confidence),
       organization: result.organization,
     };
   }
