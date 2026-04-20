@@ -185,8 +185,9 @@ async function main() {
                 await page.goto(pgUrl, { waitUntil: 'domcontentloaded' });
                 await CookieConsent.handle(page); // 🍪 Smash cookies
 
-                // Wait for PG results count element to be JS-rendered
-                await page.waitForSelector('.listing-res__numresults, .search-ind__res, [class*="numresults"]', { timeout: 8000 }).catch(() => {});
+                // Wait for PG to render results — .search-itm is the reliable React-rendered element.
+                // Once listings are in the DOM, the count text is also rendered.
+                await page.waitForSelector('.search-itm', { timeout: 12000 }).catch(() => {});
 
                 // Parse Total Count — PG shows "più di 200 risultati" or "1.247 risultati"
                 const countText = await page.evaluate(() => {
