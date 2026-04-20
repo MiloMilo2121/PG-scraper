@@ -185,22 +185,34 @@ async function main() {
                 await page.goto(pgUrl, { waitUntil: 'domcontentloaded' });
                 await CookieConsent.handle(page); // 🍪 Smash cookies
 
-                // Parse Total Count
+                // Parse Total Count — PG shows "più di 200 risultati" or "1.247 risultati"
                 const countText = await page.evaluate(() => {
-                    const el = document.querySelector('.listing-res__numresults span') || document.querySelector('.search-ind__res');
-                    return el ? el.textContent : '0';
+                    const selectors = [
+                        '.listing-res__numresults span',
+                        '.listing-res__numresults',
+                        '.search-ind__res',
+                        '[class*="numresults"]',
+                        '[class*="num-results"]',
+                        '[class*="risultati"]',
+                    ];
+                    for (const sel of selectors) {
+                        const el = document.querySelector(sel);
+                        if (el?.textContent?.trim()) return el.textContent.trim();
+                    }
+                    // Fallback: scan full page text for "risultati" pattern
+                    return document.body.innerText.match(/[\d\s.]+risultat/i)?.[0] ?? '0';
                 });
-                const totalResults = parseInt(countText?.replace(/\./g, '') || '0', 10);
-                Logger.info(`      📊 PG Total Results: ${totalResults}`);
+                // Handle both "1.247 risultati" and "più di 200 risultati"
+                const piuDiMatch = countText.match(/pi[uù]\s+di\s+([\d.]+)/i);
+                const totalResults = piuDiMatch
+                    ? parseInt(piuDiMatch[1].replace(/\./g, ''), 10) + 1
+                    : parseInt(countText.replace(/\./g, ''), 10) || 0;
+                Logger.info(`      📊 PG Total Results: ${totalResults} (raw: "${countText}")`);
 
                 const cluster = TARGET_CLUSTERS[city];
                 if (totalResults > 200) {
                     useCluster = true;
                     Logger.info(`      🚀 HIGH VOLUME DETECTED (>200). ACTIVATING CLUSTER STRATEGY.`);
-                } else if (totalResults === 0 && !!cluster) {
-                    // Barrier check selector failed to read PG total — err on the side of full coverage.
-                    useCluster = true;
-                    Logger.info(`      ⚠️  Barrier check unreadable. Defaulting to CLUSTER STRATEGY for full coverage.`);
                 } else {
                     Logger.info(`      📉 Low volume (${totalResults}). Scanned only main city.`);
                 }
