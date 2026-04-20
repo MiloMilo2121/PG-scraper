@@ -180,35 +180,25 @@ async function main() {
 
                 // 2. THE BARRIER CHECK (PagineGialle Total Results)
                 let useCluster = false;
-                const pgUrl = `https://www.paginegialle.it/ricerca/${encodeURIComponent(keyword)}/${encodeURIComponent(city)}`;
+                // Use /p-1 so PG renders the full results SPA (base URL serves a different page)
+                const pgUrl = `https://www.paginegialle.it/ricerca/${encodeURIComponent(keyword)}/${encodeURIComponent(city)}/p-1`;
 
                 await page.goto(pgUrl, { waitUntil: 'domcontentloaded' });
                 await CookieConsent.handle(page); // 🍪 Smash cookies
 
-                // Wait for PG to render results — .search-itm is the reliable React-rendered element.
-                // Once listings are in the DOM, the count text is also rendered.
-                await page.waitForSelector('.search-itm', { timeout: 12000 }).catch(() => {});
+                // Wait until PG has rendered the result count text in the body
+                await page.waitForFunction(
+                    () => /risultat/i.test(document.body.innerText),
+                    { timeout: 15000, polling: 500 }
+                ).catch(() => {});
 
                 // Parse Total Count — PG shows "più di 200 risultati" or "1.247 risultati"
                 const countText = await page.evaluate(() => {
-                    const selectors = [
-                        '.listing-res__numresults span',
-                        '.listing-res__numresults',
-                        '.search-ind__res',
-                        '[class*="numresults"]',
-                        '[class*="num-results"]',
-                    ];
-                    for (const sel of selectors) {
-                        const el = document.querySelector(sel);
-                        const txt = el?.textContent?.trim() || '';
-                        // Only trust elements that actually contain a digit or "più di"
-                        if (txt && (/\d/.test(txt) || /pi[uù]\s+di/i.test(txt))) return txt;
-                    }
                     const body = document.body.innerText;
-                    // Preserve "più di X risultati" so the caller can parse it correctly.
+                    // "più di 200 risultati" — preserve full phrase for caller parsing
                     const piuMatch = body.match(/pi[uù]\s+di\s+[\d.]+\s*risultat[^\n]*/i);
                     if (piuMatch) return piuMatch[0];
-                    // Plain number: "1.247 risultati"
+                    // "1.247 risultati"
                     const numMatch = body.match(/\d[\d.]*\s+risultat/i);
                     if (numMatch) return numMatch[0];
                     return '0';
