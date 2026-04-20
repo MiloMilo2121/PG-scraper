@@ -6,14 +6,11 @@ import { BrowserFactory } from './core/browser/factory_v2';
 import { Page } from 'playwright';
 import { Deduplicator } from './utils/deduplicator';
 import { CompanyInput } from './types';
-import { GoogleMapsProvider } from './providers/maps';
 import { Logger } from './utils/logger';
-import { CookieConsent } from './core/browser/cookie_consent';
 import { EnvValidator } from './utils/env_validator';
 
 // --- CONFIGURATION ---
 const MAX_PAGES_PG = 5;
-const RETRY_ATTEMPTS = 3;
 const OUTPUT_DIR = 'output/campaigns';
 
 // Ensure output dir exists
@@ -113,17 +110,6 @@ const COMPANY_LIMIT = limitArg ? parseInt(limitArg, 10) : Infinity;
 
 // Helpers
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-async function retry<T>(fn: () => Promise<T>, retries = RETRY_ATTEMPTS): Promise<T | null> {
-    for (let i = 0; i < retries; i++) {
-        try { return await fn(); }
-        catch (e) {
-            if (i === retries - 1) return null;
-            await delay(2000 * (i + 1));
-        }
-    }
-    return null;
-}
 
 async function main() {
     // Catch silent crashes
@@ -229,7 +215,8 @@ async function main() {
                             await browserFactory.close();
                             page = await browserFactory.newPage();
                         } catch (refreshErr) {
-                            Logger.warn(`      Browser refresh failed: ${(refreshErr as Error).message}`);
+                            Logger.error(`      Browser refresh failed — aborting run`, (refreshErr as Error).message);
+                            throw refreshErr; // bubble up to main catch
                         }
                     }
                     navCount++;
@@ -239,12 +226,6 @@ async function main() {
                     // --- SOURCE A: PAGINE GIALLE ---
                     totalGlobalFound = await scrapePG(page, keyword, loc, deduplicator, cityCompanies, totalGlobalFound, COMPANY_LIMIT);
 
-                    // Check limit after PG
-                    if (totalGlobalFound >= COMPANY_LIMIT) {
-                        Logger.info(`🛑 LIMIT REACHED after PG: ${totalGlobalFound} companies. Stopping.`);
-                        break;
-                    }
-
                     // Incremental save after each location — survives mid-run crashes
                     if (cityCompanies.length > 0) {
                         if (!csvInitialized) {
@@ -253,8 +234,8 @@ async function main() {
                         } else {
                             await csvWriterAppend.writeRecords(cityCompanies);
                         }
-                        Logger.info(`      💾 Saved batch (${cityCompanies.length} total for ${city})`);
-                        cityCompanies.length = 0; // clear flushed records
+                        Logger.info(`      💾 Saved ${cityCompanies.length} records (${totalGlobalFound} cumulative)`);
+                        cityCompanies.length = 0;
                     }
 
                     if (totalGlobalFound >= COMPANY_LIMIT) {
