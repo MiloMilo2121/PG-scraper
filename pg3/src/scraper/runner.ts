@@ -126,6 +126,16 @@ async function retry<T>(fn: () => Promise<T>, retries = RETRY_ATTEMPTS): Promise
 }
 
 async function main() {
+    // Catch silent crashes
+    process.on('uncaughtException', (err) => {
+        Logger.error('💥 uncaughtException', err.message + '\n' + err.stack);
+        process.exit(1);
+    });
+    process.on('unhandledRejection', (reason) => {
+        Logger.error('💥 unhandledRejection', String(reason));
+        process.exit(1);
+    });
+
     Logger.info(`🚀 UNIFIED CAMPAIGN GENERATOR v4.1 (Robust)`);
 
     // 0. Safety Check
@@ -142,9 +152,10 @@ async function main() {
     }
 
     const browserFactory = BrowserFactory.getInstance();
-    const page = await browserFactory.newPage();
+    let page = await browserFactory.newPage();
 
     let totalGlobalFound = 0;
+    let navCount = 0; // tracks navigations for periodic browser restart
 
     try {
         for (const city of citiesToScan) {
@@ -211,6 +222,18 @@ async function main() {
 
                 // 3. EXECUTE SEARCH
                 for (const loc of locations) {
+                    // Restart browser every 8 locations to prevent state accumulation
+                    if (navCount > 0 && navCount % 8 === 0) {
+                        Logger.info(`      🔄 Browser refresh (${navCount} locations done)...`);
+                        try {
+                            await browserFactory.close();
+                            page = await browserFactory.newPage();
+                        } catch (refreshErr) {
+                            Logger.warn(`      Browser refresh failed: ${(refreshErr as Error).message}`);
+                        }
+                    }
+                    navCount++;
+
                     Logger.info(`      📍 Scanning Location: ${loc}`);
 
                     // --- SOURCE A: PAGINE GIALLE ---
