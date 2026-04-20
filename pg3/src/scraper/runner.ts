@@ -20,45 +20,93 @@ const OUTPUT_DIR = 'output/campaigns';
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
 // --- CLUSTERS ---
+// Each key is the PG search term (= province capital).
+// The array is the satellite municipality list activated when PG returns >200 results.
+// Municipalities are ordered roughly by population to maximise early yield.
 const TARGET_CLUSTERS: Record<string, string[]> = {
-    "Verona": ["Verona", "Villafranca di Verona", "San Giovanni Lupatoto", "Bussolengo", "San Bonifacio", "Legnago", "Peschiera del Garda"],
-    "Brescia": ["Brescia", "Desenzano del Garda", "Montichiari", "Lumezzane", "Palazzolo sull'Oglio", "Rovato", "Ghedi"],
-    "Vicenza": ["Vicenza", "Bassano del Grappa", "Schio", "Thiene", "Arzignano", "Montecchio Maggiore"],
-    "Padova": ["Padova", "Albignasego", "Selvazzano Dentro", "Vigonza", "Cittadella", "Abano Terme"],
-    "Mantova": ["Mantova", "Castiglione delle Stiviere", "Suzzara", "Viadana"],
-    // Treviso is often low volume on PG for niche queries; scan nearby municipalities to satisfy small fixed limits.
+
+    // ── VENETO ─────────────────────────────────────────────────────────────
+    "Verona": [
+        "Verona",
+        "Villafranca di Verona", "San Giovanni Lupatoto", "Bussolengo",
+        "Negrar di Valpolicella", "Pescantina", "Grezzana",
+        "San Martino Buon Albergo", "Zevio", "Caldiero",
+        "San Bonifacio", "Soave", "Cologna Veneta",
+        "Legnago", "Isola della Scala", "Vigasio",
+        "Castel d'Azzano", "Peschiera del Garda",
+        "Bardolino", "Lazise", "Garda",
+        "Valeggio sul Mincio", "Mozzecane"
+    ],
+    "Venezia": [
+        "Venezia",
+        "Mestre", "Marghera", "Spinea", "Mirano",
+        "Dolo", "Mira", "Noale", "Vigonovo", "Pianiga",
+        "Marcon", "Quarto d'Altino",
+        "Chioggia", "Cavarzere",
+        "San Donà di Piave", "Musile di Piave", "Eraclea",
+        "Jesolo", "Caorle",
+        "Portogruaro", "San Michele al Tagliamento", "Gruaro"
+    ],
+    "Padova": [
+        "Padova",
+        "Albignasego", "Selvazzano Dentro", "Vigonza",
+        "Rubano", "Cadoneghe", "Limena", "Saonara",
+        "Noventa Padovana", "Ponte San Nicolò",
+        "Cittadella", "Camposampiero", "Piazzola sul Brenta",
+        "Abano Terme", "Montegrotto Terme",
+        "Monselice", "Este", "Conselve", "Montagnana"
+    ],
+    "Vicenza": [
+        "Vicenza",
+        "Bassano del Grappa", "Schio", "Thiene",
+        "Arzignano", "Montecchio Maggiore", "Valdagno",
+        "Lonigo", "Noventa Vicentina",
+        "Marostica", "Sandrigo",
+        "Brendola", "Montorso Vicentino",
+        "Asiago", "Gallio"
+    ],
     "Treviso": [
         "Treviso",
-        "Villorba",
-        "Silea",
-        "Paese",
-        "Preganziol",
-        "Quinto di Treviso",
-        "Ponzano Veneto",
-        "Mogliano Veneto",
-        "Roncade",
-        "Carbonera",
-        "Casier",
-        "Spresiano",
-        "Arcade",
-        "San Biagio di Callalta",
-        "Ponte di Piave",
-        "Oderzo",
-        "Conegliano",
-        "Susegana",
-        "Pieve di Soligo",
-        "Vittorio Veneto",
-        "Nervesa della Battaglia",
-        "Giavera del Montello",
-        "Montebelluna",
-        "Valdobbiadene",
-        "Castelfranco Veneto"
-    ]
+        "Villorba", "Silea", "Paese", "Preganziol",
+        "Quinto di Treviso", "Ponzano Veneto", "Mogliano Veneto",
+        "Roncade", "Carbonera", "Casier",
+        "Spresiano", "Arcade", "San Biagio di Callalta",
+        "Ponte di Piave", "Oderzo",
+        "Conegliano", "Susegana",
+        "Pieve di Soligo", "Vittorio Veneto",
+        "Nervesa della Battaglia", "Giavera del Montello",
+        "Montebelluna", "Asolo", "Crocetta del Montello",
+        "Valdobbiadene", "Castelfranco Veneto"
+    ],
+    "Rovigo": [
+        "Rovigo",
+        "Adria", "Badia Polesine", "Lendinara",
+        "Occhiobello", "Porto Viro", "Villadose",
+        "Castelmassa", "Ariano nel Polesine",
+        "Ficarolo", "Pontecchio Polesine"
+    ],
+    "Belluno": [
+        "Belluno",
+        "Feltre", "Sedico", "Ponte nelle Alpi",
+        "Pieve di Cadore", "Agordo", "Mel",
+        "Longarone", "Cortina d'Ampezzo"
+    ],
+
+    // ── EXTRA (kept for backward-compat) ──────────────────────────────────
+    "Brescia": [
+        "Brescia", "Desenzano del Garda", "Montichiari",
+        "Lumezzane", "Palazzolo sull'Oglio", "Rovato", "Ghedi"
+    ],
+    "Mantova": ["Mantova", "Castiglione delle Stiviere", "Suzzara", "Viadana"],
 };
 
 // --- DEFAULT ARGS ---
 const args = process.argv.slice(2);
-const specificCategory = args.find(a => a.startsWith('--category='))?.split('=')[1];
+// --category accepts a single value or comma-separated list: --category="a,b,c"
+const categoryArg = args.find(a => a.startsWith('--category='))?.split('=')[1];
+const specificCategories = categoryArg
+    ? categoryArg.split(',').map(s => s.trim()).filter(Boolean)
+    : null;
 const specificCity = args.find(a => a.startsWith('--city='))?.split('=')[1];
 const limitArg = args.find(a => a.startsWith('--limit='))?.split('=')[1];
 const COMPANY_LIMIT = limitArg ? parseInt(limitArg, 10) : Infinity;
@@ -86,7 +134,7 @@ async function main() {
 
     // 1. Determine Scope
     const citiesToScan = specificCity ? [specificCity] : Object.keys(TARGET_CLUSTERS);
-    const keywords = specificCategory ? [specificCategory] : ["meccatronica", "automazione industriale"]; // Default
+    const keywords = specificCategories ?? ["centro estetico", "epilazione laser", "beauty center"];
 
     Logger.info(`🎯 Scope: ${citiesToScan.join(', ')} | Keywords: ${keywords.join(', ')}`);
     if (COMPANY_LIMIT !== Infinity) {
@@ -145,15 +193,19 @@ async function main() {
                 const totalResults = parseInt(countText?.replace(/\./g, '') || '0', 10);
                 Logger.info(`      📊 PG Total Results: ${totalResults}`);
 
+                const cluster = TARGET_CLUSTERS[city];
                 if (totalResults > 200) {
                     useCluster = true;
                     Logger.info(`      🚀 HIGH VOLUME DETECTED (>200). ACTIVATING CLUSTER STRATEGY.`);
+                } else if (totalResults === 0 && !!cluster) {
+                    // Barrier check selector failed to read PG total — err on the side of full coverage.
+                    useCluster = true;
+                    Logger.info(`      ⚠️  Barrier check unreadable. Defaulting to CLUSTER STRATEGY for full coverage.`);
                 } else {
-                    Logger.info(`      📉 Low volume. Scanned only main city.`);
+                    Logger.info(`      📉 Low volume (${totalResults}). Scanned only main city.`);
                 }
 
                 // Define Locations based on Cluster Decision
-                const cluster = TARGET_CLUSTERS[city];
                 const needMoreThanCity =
                     COMPANY_LIMIT !== Infinity &&
                     Number.isFinite(COMPANY_LIMIT) &&
