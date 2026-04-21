@@ -210,7 +210,8 @@ async function scrapePG(
 
             const { items, nextHref } = await page.evaluate(({ loc, key }) => {
                 const rows = Array.from(document.querySelectorAll('.search-itm')).map(el => {
-                    const name = el.querySelector('.search-itm__rag')?.textContent?.trim();
+                    const raw  = el.querySelector('.search-itm__rag')?.textContent ?? '';
+                    const name = raw.replace(/[\s\u00a0]+/g, ' ').trim();
                     if (!name) return null;
 
                     const adr    = el.querySelector('.search-itm__adr') as HTMLElement | null;
