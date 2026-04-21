@@ -28,3 +28,4 @@ data/browser-sessions/
 search_profile_scraper/
 data/*.db-wal
 data/*.db-shm
+dump.rdb

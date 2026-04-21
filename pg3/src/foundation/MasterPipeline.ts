@@ -11,6 +11,7 @@ import { BrowserPool } from './BrowserPool';
 import { CostRouter } from './CostRouter';
 import { EnrichmentPostProcessor } from './EnrichmentPostProcessor';
 import { PecHunter } from './PecHunter';
+import { HunterClient } from '../enricher/utils/hunter_client';
 import { InputWebsiteCandidate } from './InputWebsiteCandidate';
 import { FatturatoItaliaHarvester } from '../enricher/core/directories/fatturato_italia';
 import { PagineGialleHarvester } from '../enricher/core/directories/paginegialle';
@@ -54,7 +55,8 @@ export class MasterPipeline {
         browserPool: BrowserPool,
         costRouter: CostRouter,
         postProcessor: EnrichmentPostProcessor,
-        pecHunter: PecHunter
+        pecHunter: PecHunter,
+        hunterClient?: HunterClient,
     }) {
         this.normalizer = deps.normalizer;
         this.registry = deps.registry;
@@ -74,6 +76,7 @@ export class MasterPipeline {
             linkedinSniper: deps.linkedinSniper,
             postProcessor: deps.postProcessor,
             pecHunter: deps.pecHunter,
+            hunterClient: deps.hunterClient,
         });
     }
 

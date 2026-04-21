@@ -250,8 +250,12 @@ export class BrowserFactory {
                 isMobile: geneConfig.isMobile,
                 hasTouch: geneConfig.isMobile,
                 ignoreHTTPSErrors: true,
+                locale: 'it-IT',
+                timezoneId: 'Europe/Rome',
+                geolocation: { latitude: 45.4642, longitude: 12.3314 }, // Venezia
+                permissions: ['geolocation'],
                 extraHTTPHeaders: {
-                    'Accept-Language': geneConfig.acceptLanguage,
+                    'Accept-Language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
                     'Upgrade-Insecure-Requests': '1',
                     ...geneConfig.clientHintsHeaders,
                 }
@@ -354,7 +358,13 @@ export class BrowserFactory {
             }
 
             try {
-                await browserToClose.close();
+                // Timeout-wrapped close: if Chromium hangs, fall back to forceKill after 10s
+                await Promise.race([
+                    browserToClose.close(),
+                    new Promise((_, reject) =>
+                        setTimeout(() => reject(new Error('browser.close() timeout')), 10_000)
+                    ),
+                ]);
             } catch {
                 await this.forceKill(browserToClose);
             }

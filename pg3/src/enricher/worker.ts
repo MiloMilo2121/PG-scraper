@@ -107,6 +107,7 @@ function persistSuccess(job: EnrichmentJobData, pipelineResult: any, durationMs:
             address: job.address,
             website: pipelineResult.website?.url,
             email: pipelineResult.email,
+            pec: pipelineResult.pec,
             discovery_confidence: pipelineResult.website?.confidence,
         } as any);
 
