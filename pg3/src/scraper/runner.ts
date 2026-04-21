@@ -8,8 +8,9 @@ import { Deduplicator } from './utils/deduplicator';
 import { CompanyInput } from './types';
 import { Logger } from './utils/logger';
 import { EnvValidator } from './utils/env_validator';
+import { GoogleMapsProvider } from './providers/maps';
 
-const MAX_PAGES_PG        = 20;
+const MAX_PAGES_PG        = 30;
 const BROWSER_REFRESH_EVERY = 5;
 const OUTPUT_DIR          = 'output/campaigns';
 
@@ -169,6 +170,8 @@ function saveCheckpoint(file: string, cp: Checkpoint): void {
 }
 
 // ─── SCRAPER ────────────────────────────────────────────────────────────────
+interface ScrapeResult { count: number; overflow: boolean }
+
 async function scrapePG(
     page: Page,
     keyword: string,
@@ -177,10 +180,11 @@ async function scrapePG(
     sink: CompanyInput[],
     count: number,
     limit: number,
-): Promise<number> {
+): Promise<ScrapeResult> {
     const kwSlug  = pgSlug(keyword);
     const locSlug = pgSlug(location);
     let pageNum   = 1;
+    let overflow  = false;
 
     try {
         // Navigate to page 1
@@ -205,85 +209,144 @@ async function scrapePG(
         let consecutiveEmpty = 0;
 
         while (pageNum <= MAX_PAGES_PG && count < limit) {
-            // Wait for results to render (React SPA); silently skip if 0-result page
-            await page.waitForSelector('.search-itm', { timeout: 6000 }).catch(() => {});
+            // Wait for results to render (React SPA); direct connection is fast
+            const rendered = await page.waitForSelector('.search-itm, .card-listing', { timeout: 15000 })
+                .then(() => true).catch(() => false);
 
-            const { items, nextHref } = await page.evaluate(({ loc, key }) => {
-                const rows = Array.from(document.querySelectorAll('.search-itm')).map(el => {
+            const { items, pageOverflow } = await page.evaluate(({ loc, key }) => {
+                // Detect PG "overflow" banner on first page — "più di 200 risultati" / "oltre 200"
+                const bodyTxt = document.body.innerText || '';
+                const pageOverflow = /pi[uù]\s+di\s+200\s+risultat|oltre\s+200\s+risultat|more\s+than\s+200\s+result/i.test(bodyTxt);
+
+                const items = Array.from(document.querySelectorAll('.search-itm')).map(el => {
                     const raw  = el.querySelector('.search-itm__rag')?.textContent ?? '';
                     const name = raw.replace(/[\s\u00a0]+/g, ' ').trim();
                     if (!name) return null;
 
                     const adr    = el.querySelector('.search-itm__adr') as HTMLElement | null;
                     const addr   = adr?.textContent?.replace(/\s+/g, ' ').trim();
-                    const spans  = adr
-                        ? Array.from(adr.querySelectorAll('span'))
-                            .map(s => s.textContent?.trim() ?? '')
-                            .filter(Boolean)
-                        : [];
+
+                    // Phone: first phone number found; normalize whitespace and keep only leading number
+                    const phoneEl = el.querySelector('.search-itm__phone-item, .search-itm__phone');
+                    const phoneRaw = phoneEl?.textContent?.replace(/\s+/g, ' ').trim() || '';
+                    // Keep only first phone: split on whitespace runs and rejoin digits until we hit a 2nd "number start"
+                    const phoneMatch = phoneRaw.match(/^[\+\d][\d\s\-\/\.\(\)]{5,20}/);
+                    const phone = phoneMatch?.[0]?.trim().replace(/\s+/g, ' ') || undefined;
+
+                    // Website: external http link (skip paginegialle internal)
+                    const extLink = Array.from(el.querySelectorAll('a[href^="http"]'))
+                        .map(a => a.getAttribute('href') || '')
+                        .find(h => h && !/paginegialle\.it|italiaonline\.it|plug\.it/.test(h));
+
+                    // CAP: 5-digit ZIP from address text
+                    const zipMatch = addr?.match(/\b(\d{5})\b/);
+                    // City: text between ZIP and "(PROV)" in address
+                    const cityMatch = addr?.match(/\d{5}\s+([^\(]+?)\s*\(/);
 
                     return {
                         company_name: name,
-                        phone:    el.querySelector('.search-itm__phone')?.textContent?.trim() ?? undefined,
-                        website:  el.querySelector('.search-itm__url')?.getAttribute('href') ?? undefined,
+                        phone,
+                        website:  extLink || undefined,
                         pg_url:   (el.querySelector('a.remove_blank_for_app') as HTMLAnchorElement | null)?.href ?? undefined,
-                        address:  addr || spans[0] || undefined,
-                        zip_code: spans[1] || undefined,
-                        city:     spans[2] || loc,
+                        address:  addr || undefined,
+                        zip_code: zipMatch?.[1] ?? undefined,
+                        city:     cityMatch?.[1]?.trim() || loc,
                         province: addr?.match(/\(([A-Z]{2})\)/)?.[1] ?? undefined,
                         category: key,
                         source:   'PG',
                     };
                 }).filter((x): x is NonNullable<typeof x> => x !== null);
 
-                // Find next-page link — multiple selector fallbacks
-                const nextEl = document.querySelector<HTMLAnchorElement>(
-                    '.search-pagi__next:not(.disabled), a[rel="next"], [class*="pagi"][class*="next"]:not([class*="disabled"])'
-                );
-                const href = nextEl?.href ?? null;
-                // Discard JS pseudo-links
-                const nextHref = (href && !href.includes('javascript:') && href !== window.location.href)
-                    ? href : null;
-
-                return { items: rows, nextHref };
+                return { items, pageOverflow };
             }, { loc: location, key: keyword });
 
+            if (pageNum === 1 && pageOverflow) overflow = true;
+
             let added = 0;
+            let merged = 0;
             for (const item of items as CompanyInput[]) {
                 if (count >= limit) break;
-                if (!dedup.checkDuplicate(item)) {
+                const existing = dedup.checkDuplicate(item);
+                if (!existing) {
                     dedup.add(item);
                     sink.push(item);
                     count++;
                     added++;
+                } else {
+                    // Enrich the existing record with any fresher fields
+                    dedup.merge(existing, item);
+                    merged++;
                 }
             }
 
-            Logger.info(`         p${pageNum}: ${items.length} items, +${added} new → ${count} | next=${nextHref ? 'yes' : 'no'}`);
+            const emptyReason = items.length === 0
+                ? (rendered ? ' [EMPTY]' : ' [TIMEOUT]')
+                : '';
+            Logger.info(`         p${pageNum}: ${items.length} items, +${added} new, ~${merged} merged → ${count}${emptyReason}`);
 
             if (items.length === 0) {
                 consecutiveEmpty++;
-                if (consecutiveEmpty >= 2) break; // two blank pages in a row = truly done
+                // Render timeout on p1: abort this location — don't waste time on p2+
+                if (!rendered && pageNum === 1) break;
+                // Two consecutive empties or timeouts: stop paginating
+                if (consecutiveEmpty >= 2) break;
             } else {
                 consecutiveEmpty = 0;
             }
 
-            if (!nextHref || count >= limit) break;
+            if (count >= limit) break;
+            if (pageNum >= MAX_PAGES_PG) break;
 
-            // Navigate using the actual href from the DOM (most reliable)
-            try {
-                await page.goto(nextHref, { waitUntil: 'domcontentloaded', timeout: 30000 });
-            } catch (e) {
-                throw new BrowserCorruptedError(`goto [${location} p${pageNum + 1}]: ${(e as Error).message}`);
-            }
+            // PG no longer exposes a next-page link; iterate /p-N URLs directly.
+            // Pause between page fetches to avoid triggering rate limiting on direct connection.
             pageNum++;
-            await delay(1200);
+            await delay(3000);
+            const nextUrl = `https://www.paginegialle.it/ricerca/${kwSlug}/${locSlug}/p-${pageNum}`;
+            try {
+                await page.goto(nextUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            } catch (e) {
+                throw new BrowserCorruptedError(`goto [${location} p${pageNum}]: ${(e as Error).message}`);
+            }
         }
     } catch (e) {
         if (e instanceof BrowserCorruptedError) throw e;
         Logger.error(`PG [${location}]`, (e as Error).message);
     }
 
+    return { count, overflow };
+}
+
+// ─── GOOGLE MAPS SCRAPER ───────────────────────────────────────────────────
+async function scrapeMaps(
+    page: Page,
+    keyword: string,
+    city: string,
+    dedup: Deduplicator,
+    sink: CompanyInput[],
+    count: number,
+    limit: number,
+): Promise<number> {
+    try {
+        const results = await GoogleMapsProvider.fetchDeepResults(page, city, keyword);
+        let added = 0, merged = 0;
+        for (const item of results) {
+            if (count >= limit) break;
+            if (!item.company_name) continue;
+            const existing = dedup.checkDuplicate(item);
+            if (!existing) {
+                dedup.add(item);
+                sink.push(item);
+                count++;
+                added++;
+            } else {
+                dedup.merge(existing, item);
+                merged++;
+            }
+        }
+        Logger.info(`         maps: ${results.length} items, +${added} new, ~${merged} merged → ${count}`);
+    } catch (e) {
+        Logger.warn(`      ⚠️ Maps [${city}/${keyword}] failed: ${(e as Error).message}`);
+    }
     return count;
 }
 
@@ -338,57 +401,86 @@ async function main() {
                 batch.length = 0;
             };
 
-            const locations = TARGET_CLUSTERS[city] ?? [city];
-            Logger.info(`   ${locations.length} locations × ${keywords.length} keywords`);
+            const clusterLocations = TARGET_CLUSTERS[city] ?? [city];
+            // Comuni = cluster minus the province capital (we scrape that at province level first)
+            const comuni = clusterLocations.filter(l => l.toLowerCase() !== city.toLowerCase());
+
+            Logger.info(`   🧠 smart scan: province-first; split into ${comuni.length} comuni only on overflow (>200)`);
+
+            // scrapeOne: wraps scrapePG with BrowserCorruptedError retry + checkpoint + delay
+            const scrapeOne = async (keyword: string, loc: string): Promise<ScrapeResult | null> => {
+                const key = cpKey(keyword, loc);
+                if (cp[key]) { Logger.info(`      ⏩ ${loc}`); return null; }
+
+                if (navCount > 0 && navCount % BROWSER_REFRESH_EVERY === 0) {
+                    Logger.info(`      🔄 Proactive restart (#${navCount})`);
+                    page = await restartBrowser(factory);
+                } else {
+                    page = await ensurePage(factory, page);
+                }
+                navCount++;
+
+                let result: ScrapeResult | null = null;
+                for (let attempt = 0; attempt <= 2; attempt++) {
+                    try {
+                        result = await scrapePG(page, keyword, loc, dedup, batch, cityTotal, COMPANY_LIMIT);
+                        break;
+                    } catch (e) {
+                        if (e instanceof BrowserCorruptedError && attempt < 2) {
+                            Logger.warn(`      🔄 BrowserCorruptedError at ${loc}, retry ${attempt + 1}`);
+                            page = await restartBrowser(factory);
+                        } else {
+                            Logger.error(`      Fatal [${loc}]`, (e as Error).message);
+                            break;
+                        }
+                    }
+                }
+
+                await flush();
+                if (result) {
+                    cityTotal = result.count;
+                    cp[key] = true;
+                    saveCheckpoint(cpFile, cp);
+                }
+                await delay(2000);
+                return result;
+            };
 
             outer: for (let ki = 0; ki < keywords.length; ki++) {
                 const keyword = keywords[ki];
                 Logger.info(`   🔎 [${ki + 1}/${keywords.length}] "${keyword}"`);
 
-                for (let li = 0; li < locations.length; li++) {
-                    const loc = locations[li];
-                    const key = cpKey(keyword, loc);
-                    if (cp[key]) { Logger.info(`      ⏩ ${loc}`); continue; }
+                // Step 1: scrape province-level (uses city as location)
+                Logger.info(`      🏛️  province scan: ${city}`);
+                const provResult = await scrapeOne(keyword, city);
 
-                    // Proactive browser restart before memory accumulates
-                    if (navCount > 0 && navCount % BROWSER_REFRESH_EVERY === 0) {
-                        Logger.info(`      🔄 Proactive restart (#${navCount})`);
-                        page = await restartBrowser(factory);
-                    } else {
-                        page = await ensurePage(factory, page);
-                    }
-                    navCount++;
+                if (cityTotal >= COMPANY_LIMIT) {
+                    Logger.info(`🛑 Limit reached: ${cityTotal}`);
+                    break outer;
+                }
 
-                    Logger.info(`      [${li + 1}/${locations.length}] ${loc}`);
-
-                    let scrapeOk = false;
-                    for (let attempt = 0; attempt <= 2; attempt++) {
-                        try {
-                            cityTotal = await scrapePG(page, keyword, loc, dedup, batch, cityTotal, COMPANY_LIMIT);
-                            scrapeOk = true;
-                            break;
-                        } catch (e) {
-                            if (e instanceof BrowserCorruptedError && attempt < 2) {
-                                Logger.warn(`      🔄 BrowserCorruptedError at ${loc}, retry ${attempt + 1}`);
-                                page = await restartBrowser(factory);
-                            } else {
-                                Logger.error(`      Fatal [${loc}]`, (e as Error).message);
-                                break;
-                            }
+                // Step 2: if PG signaled "più di 200 risultati", drill down by comune
+                if (provResult?.overflow) {
+                    Logger.info(`      🔽 OVERFLOW (>200) — splitting by ${comuni.length} comuni`);
+                    for (let li = 0; li < comuni.length; li++) {
+                        const loc = comuni[li];
+                        Logger.info(`      [${li + 1}/${comuni.length}] ${loc}`);
+                        await scrapeOne(keyword, loc);
+                        if (cityTotal >= COMPANY_LIMIT) {
+                            Logger.info(`🛑 Limit reached: ${cityTotal}`);
+                            break outer;
                         }
                     }
+                } else if (provResult) {
+                    Logger.info(`      ✓ low volume (${provResult.count} cumulative) — skipping comuni split`);
+                }
 
+                // Step 3: Maps sweep at city level (wrapped, safe on failure)
+                if (cityTotal < COMPANY_LIMIT) {
+                    Logger.info(`   🗺️  Maps sweep for "${keyword}" in ${city}`);
+                    page = await ensurePage(factory, page);
+                    cityTotal = await scrapeMaps(page, keyword, city, dedup, batch, cityTotal, COMPANY_LIMIT);
                     await flush();
-
-                    if (scrapeOk) {
-                        cp[key] = true;
-                        saveCheckpoint(cpFile, cp);
-                    }
-
-                    if (cityTotal >= COMPANY_LIMIT) {
-                        Logger.info(`🛑 Limit reached: ${cityTotal}`);
-                        break outer;
-                    }
                 }
             }
 
