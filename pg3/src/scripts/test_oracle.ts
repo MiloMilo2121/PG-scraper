@@ -16,7 +16,7 @@ async function runTest() {
         console.log(`======================================================`);
 
         try {
-            console.log(`[TEST] Invocando Python Oracle su porta 8000 per bypass Javascript...`);
+            console.log(`[TEST] Invocando Python Oracle su porta ${process.env.ORACLE_PORT || '8765'} per bypass Javascript...`);
             console.time('OracleFetch');
 
             const result = await OracleClient.fetchHtmlStealth(target, 45000); // 45 sec timeout per permettere al mouse AI di muoversi

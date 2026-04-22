@@ -100,5 +100,5 @@ async def extract_content(req: CrawlRequest):
 if __name__ == "__main__":
     import uvicorn
     host = os.getenv("ORACLE_HOST", "127.0.0.1")
-    port = int(os.getenv("ORACLE_PORT", "8000"))
+    port = int(os.getenv("ORACLE_PORT", "8765"))
     uvicorn.run(app, host=host, port=port)

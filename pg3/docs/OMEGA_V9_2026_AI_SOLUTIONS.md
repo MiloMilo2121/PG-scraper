@@ -35,4 +35,4 @@ Se non vogliamo gestire cluster di headless browser e proxy, queste sono le API 
 
 ## 3. NEXT STEPS ARCHITETTURALI
 1. Abbiamo già applicato il fix Scrape.do (`render=true`) ai provider SERP base per ripristinare il tasso di successo immediato al 60%.
-2. Il prossimo step architetturale puro per **abbattere i costi Proxy** è la costruzione del **"Python Oracle"**. OMEGA manderà gli URL pesanti a uno script Python locale che gira con **Crawl4AI**. Essendo Node.js non compatibile direttamente con le librerie Python top-tier, un microservizio interno su porta locale (es. `localhost:8000`) fungerà da ponte.
+2. Il prossimo step architetturale puro per **abbattere i costi Proxy** è la costruzione del **"Python Oracle"**. OMEGA manderà gli URL pesanti a uno script Python locale che gira con **Crawl4AI**. Essendo Node.js non compatibile direttamente con le librerie Python top-tier, un microservizio interno su porta locale (`localhost:8765`, cambiata da 8000 il 2026-04-22 per evitare conflitto MCP) fungerà da ponte.

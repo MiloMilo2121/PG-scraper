@@ -28,7 +28,7 @@ export class OracleClient {
         }
 
         const host = (process.env.ORACLE_HOST || '127.0.0.1').trim();
-        const port = Number(process.env.ORACLE_PORT || '8000');
+        const port = Number(process.env.ORACLE_PORT || '8765');
         const protocol = (process.env.ORACLE_PROTOCOL || 'http').trim().replace(/:$/, '');
 
         return `${protocol}://${host}:${port}/api/v1`;

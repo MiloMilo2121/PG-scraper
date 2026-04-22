@@ -36,6 +36,8 @@ screen -d -m -S PYTHON_ORACLE bash -c 'cd /root/PG-scraper/pg3/ops/oracle && sou
 ```
 
 ## 🔌 ARCHITETTURA DI RETE
-Il server si mette in ascolto sulla porta locale `127.0.0.1:8000`. 
+Il server si mette in ascolto sulla porta locale `127.0.0.1:8765` (cambiata da 8000 il 2026-04-22 per evitare conflitto con MCP google-workspace).
 Non esporre questa porta su internet per motivi di sicurezza. OMEGA (Node.js) vi accederà solo tramite interfaccia di loopback sicura chiamando:
-`POST http://127.0.0.1:8000/api/v1/extract`
+`POST http://127.0.0.1:8765/api/v1/extract`
+
+Override via env var: `ORACLE_PORT=XXXX` (rispettato sia dal server Python che dal client Node).

@@ -29,3 +29,6 @@ search_profile_scraper/
 data/*.db-wal
 data/*.db-shm
 dump.rdb
+
+# Refactor backups (safety net, not committed)
+*.bak.*

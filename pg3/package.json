@@ -49,6 +49,7 @@
     "neo4j-driver": "^6.0.1",
     "openai": "^6.16.0",
     "p-limit": "^7.2.0",
+    "patchright": "^1.59.4",
     "playwright": "^1.58.2",
     "playwright-extra": "^4.3.6",
     "poolifier": "^5.1.7",

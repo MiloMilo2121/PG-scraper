@@ -1,6 +1,4 @@
 import { Browser, BrowserContext, Page } from 'playwright';
-import { chromium } from 'playwright-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -14,10 +12,21 @@ import { config } from '../../config';
 import { BrowserEvasion } from './evasion';
 import { CookieConsent } from './cookie_consent';
 
-// 🛡️ Stealth Plugin: Re-enabled with safety valve (Law 308: Fingerprint Spoofing)
-// Original disable was for ERR_INVALID_AUTH_CREDENTIALS (proxy-auth conflict).
-if (process.env.DISABLE_STEALTH !== 'true') {
-    chromium.use(StealthPlugin());
+// BROWSER_ENGINE feature flag: "patchright" | "playwright-extra" (default).
+// playwright-extra stays default until A/B validated; patchright is opt-in per M3 plan.
+const BROWSER_ENGINE = (process.env.BROWSER_ENGINE || 'playwright-extra').toLowerCase();
+
+let chromium: any;
+if (BROWSER_ENGINE === 'patchright') {
+    chromium = require('patchright').chromium;
+    Logger.info('[BrowserFactory] 🛡️  Engine: patchright (C++ stealth, no stealth plugin)');
+} else {
+    chromium = require('playwright-extra').chromium;
+    if (process.env.DISABLE_STEALTH !== 'true') {
+        const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+        chromium.use(StealthPlugin());
+    }
+    Logger.info('[BrowserFactory] Engine: playwright-extra + stealth plugin');
 }
 
 function getSandboxArgs(): string[] {
