@@ -2,7 +2,7 @@ import { Page } from 'playwright';
 import { request } from 'undici';
 import { Logger } from '../logging/Logger';
 
-const CAPTCHA_API_KEY = process.env.CAPTCHA_2_API_KEY || process.env.TWOCAPTCHA_API_KEY;
+const CAPTCHA_API_KEY = process.env.CAPTCHA_2_API_KEY || process.env.TWOCAPTCHA_API_KEY || process.env['2CAPTCHA_API_KEY'];
 const CAPTCHA_MAX_ATTEMPTS = Number.parseInt(process.env.CAPTCHA_MAX_ATTEMPTS || '30', 10);
 
 export class CaptchaSolver {

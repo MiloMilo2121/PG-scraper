@@ -3,8 +3,9 @@ import { SearchProvider } from './search_provider';
 import { SerpResult } from './serp_analyzer';
 import { Logger } from '../../utils/logger';
 import { Retry } from '../../../utils/decorators';
-import { TorBrowser } from '../browser/tor_browser';
+import { TorBrowser } from '../../../scraper/core/browser/tor_browser';
 import { TorError } from '../../../utils/errors';
+import { CaptchaSolver } from '../../../shared-runtime/security/CaptchaSolver';
 
 export class SearXNGProvider implements SearchProvider {
     id = 'SEARXNG-NET-1';
@@ -87,7 +88,38 @@ export class SearXNGProvider implements SearchProvider {
             });
 
             if (processedResults.length === 0) {
-                Logger.warn(`[SearXNGProvider] Google blocked us (0 results). Throwing to rotate Tor IP.`);
+                Logger.warn(`[SearXNGProvider] Google blocked us. Attempting 2Captcha bypass...`);
+                const solved = await CaptchaSolver.neutralizeGatekeeper(page);
+                
+                if (solved) {
+                    Logger.info(`[SearXNGProvider] Captcha solved! Re-evaluating results...`);
+                    // Retry extracting natively
+                    const retryResults: SerpResult[] = await page.evaluate(() => {
+                        const results: any[] = [];
+                        const seen = new Set<string>();
+                        document.querySelectorAll('.g, .BNeawe').forEach((container) => {
+                            const anchor = container.querySelector('a');
+                            if (!anchor) return;
+                            const rawUrl = anchor.href;
+                            const titleEl = anchor.querySelector('h3') || container.querySelector('.BNeawe');
+                            const title = titleEl ? titleEl.textContent?.trim() : '';
+                            if (!rawUrl || !title || rawUrl.startsWith('/')) return;
+                            const cleanUrl = rawUrl.split('#')[0].split('?')[0].trim();
+                            if (cleanUrl.startsWith('http') && !cleanUrl.includes('google.com/url') && !seen.has(cleanUrl)) {
+                                seen.add(cleanUrl);
+                                results.push({ url: cleanUrl, title: title, source: 'searxng' });
+                            }
+                        });
+                        return results;
+                    });
+                    
+                    if (retryResults.length > 0) {
+                        Logger.info(`[SearXNGProvider] Recovery successful: ${retryResults.length} organic outcomes.`);
+                        return maxResults ? retryResults.slice(0, maxResults) : retryResults;
+                    }
+                }
+                
+                Logger.warn(`[SearXNGProvider] Bypass failed or 0 results still. Throwing to rotate Tor IP.`);
                 throw new Error(`SEARXNG_BLOCK: Google CAPTCHA or blocked IP detected.`);
             }
 

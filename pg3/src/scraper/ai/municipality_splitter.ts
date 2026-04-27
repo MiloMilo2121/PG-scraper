@@ -82,7 +82,7 @@ function sanitizeMunicipalityList(values: unknown, fallbackProvince?: string): s
         return [fallbackProvince];
     }
 
-    return sanitized.slice(0, 5);
+    return sanitized.slice(0, 20);
 }
 
 function getCacheAliases(rawKey: string): string[] {
@@ -170,12 +170,12 @@ function saveCache(cache: Map<string, string[]>) {
 }
 
 const SYSTEM_PROMPT = `You are an expert in Italian geography. 
-Given an Italian province name, return exactly 5 municipalities (comuni) that are 
+Given an Italian province name, return the top 20 most populated and important municipalities (comuni) that are 
 geographically well-distributed across the province to maximize territorial coverage.
 Choose municipalities that are spread out — north, south, east, west, and center — 
 to minimize overlap when scraping business directories.
 Prefer municipalities with higher population as they tend to have more businesses.
-Respond ONLY with a valid JSON object: {"municipalities": ["Name1", "Name2", "Name3", "Name4", "Name5"]}`;
+Respond ONLY with a valid JSON object: {"municipalities": ["Name1", "Name2", ... "Name20"]}`;
 
 export class MunicipalitySplitter {
 
@@ -234,8 +234,8 @@ export class MunicipalitySplitter {
 
                 municipalities = sanitizeMunicipalityList(municipalities, resolvedProvince);
 
-                if (municipalities.length < 3 || municipalities.length > 8) {
-                    throw new Error(`Expected 5 municipalities, got ${municipalities.length}: ${JSON.stringify(municipalities)}`);
+                if (municipalities.length < 3 || municipalities.length > 35) {
+                    throw new Error(`Expected ~20 municipalities, got ${municipalities.length}: ${JSON.stringify(municipalities)}`);
                 }
 
                 Logger.info(`[MunicipalitySplitter] ✅ ${resolvedProvince} → [${municipalities.join(', ')}]`);

@@ -30,7 +30,7 @@ export class MapsGridProvider {
         location: string
     ): Promise<CompanyInput[]> {
         const query = `${category} ${location}`;
-        const mapsUrl = `https://www.google.com/maps/search/${encodeURIComponent(query)}/@45.5,10.2,10z?hl=it`;
+        const mapsUrl = `https://www.google.com/maps/search/${encodeURIComponent(query)}?hl=it`;
 
         Logger.info(`[MapsGrid] 🗺️ Navigating: ${query}`);
 

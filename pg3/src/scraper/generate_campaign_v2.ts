@@ -46,7 +46,7 @@ dotenv.config();
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 const PG_OVERFLOW_THRESHOLD = 199;
-const MAX_PG_PAGES = 10;       // PG shows ~25/page, 10 pages = 250 max per location
+const MAX_PG_PAGES = 8;       // PG shows ~25/page, 8 pages = 200 max per location
 const PG_PAGE_DELAY_MS = 2000; // Respect rate limits (Law 305)
 const PG_LOCATION_DELAY_MS = 3000;
 const OUTPUT_DIR = 'output/campaigns';
@@ -1029,7 +1029,7 @@ async function main() {
             normalizedFinalList.push(cleaned);
         }
 
-        let finalList = normalizedFinalList.filter(isRecordEligible);
+        let finalList = normalizedFinalList; // Quality Gate DISATTIVATO per prendere tutto
         const droppedLowSignal = normalizedFinalList.length - finalList.length;
         const totalDropped = droppedInvalid + droppedLowSignal;
         if (totalDropped > 0) {
