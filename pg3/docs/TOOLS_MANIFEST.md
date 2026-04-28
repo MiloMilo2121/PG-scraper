@@ -1,8 +1,15 @@
 # THE OMEGA CODEX: TOOLS MANIFEST
 
+> **STATUS 2026-04-28:** questo manifest descrive la vecchia superficie
+> `src/agent_tools/*`. Il percorso ufficiale agent-first e ora
+> `src/agent/agent_scraper.ts` con `runScraper(...)`, esposto anche da CLI
+> `npm run agent` e dai tool MCP `agent_run` / `agent_inspect_run`. Usa
+> `docs/AGENT_FIRST_CONTRACT.md` come contratto primario; questo file resta
+> come riferimento storico per i micro-executors legacy.
+
 Questo documento descrive le interfacce strettamente governate (Micro-Executors) che l'Agente deve invocare per interagire con l'infrastruttura di PG3. Ogni tool esposto maschera la logica complessa sottostante (i veri file in `src/foundation/`) garantendo output prevedibili tramite CLI.
 
-Tutti gli entrypoints operativi si trovano nel path: `src/agent_tools/`.
+Gli entrypoint in questo manifest si trovano nel path legacy `src/agent_tools/`.
 
 > **⚠️ WIREUP NOTE:** Il futuro cablaggio dei micro-executors alla logica reale di PG3 DEVE passare per `createOmegaRuntime()` (definito in `src/enricher/runtime/runtime_factory.ts`). Non istanziare mai `MasterPipeline` manualmente: richiede 13 dipendenze iniettate, molte delle quali sono ancora stub.
 

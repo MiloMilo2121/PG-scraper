@@ -56,6 +56,16 @@ export function writeReportJson(paths: RunPaths, payload: unknown): void {
   fs.writeFileSync(paths.reportJson, JSON.stringify(payload, null, 2), 'utf-8');
 }
 
+export function appendRunLog(paths: RunPaths, event: string, payload?: unknown): void {
+  fs.mkdirSync(path.dirname(paths.logFile), { recursive: true });
+  const line = JSON.stringify({
+    ts: new Date().toISOString(),
+    event,
+    ...(payload === undefined ? {} : { payload }),
+  });
+  fs.appendFileSync(paths.logFile, `${line}\n`, 'utf-8');
+}
+
 export function copyInputCsv(sourceCsv: string, paths: RunPaths): string {
   if (!fs.existsSync(sourceCsv)) {
     throw new Error(`sourceCsv not found: ${sourceCsv}`);

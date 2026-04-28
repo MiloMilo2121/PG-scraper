@@ -41,6 +41,7 @@ describe('runScraper dispatch', () => {
     expect(result.stats.discovered).toBe(12);
     expect(result.stats.failed).toBe(1);
     expect(result.artifacts.outputCsv).toContain('campaign.csv');
+    expect(fs.existsSync(result.artifacts.logFile!)).toBe(true);
   });
 
   it("routes mode='enrichment' to the enrichment runner and reports queued", async () => {
@@ -103,5 +104,35 @@ describe('runScraper dispatch', () => {
     expect(result.status).toBe('queued');
     expect(result.stats.discovered).toBe(3);
     expect(result.stats.enriched).toBe(3);
+  });
+
+  it("expands region zone values before calling the campaign runner", async () => {
+    const combinedCsv = path.join(tmpRoot, 'veneto.csv');
+    fs.writeFileSync(combinedCsv, 'company_name\nFoo\n', 'utf-8');
+
+    const campaignRunner = vi.fn(async () => ({
+      count: 1,
+      combinedCsv,
+      perProvinceCsvs: [combinedCsv],
+      byProvince: { VR: 1 },
+      droppedInvalid: 0,
+      droppedLowSignal: 0,
+    }));
+
+    await runScraper(
+      {
+        runId: 'run-veneto',
+        mode: 'campaign',
+        sector: 'agenzie immobiliari',
+        zone: 'Veneto',
+      },
+      { rootDir: tmpRoot, campaignRunner }
+    );
+
+    expect(campaignRunner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provinceCodes: ['BL', 'PD', 'RO', 'TV', 'VE', 'VR', 'VI'],
+      })
+    );
   });
 });

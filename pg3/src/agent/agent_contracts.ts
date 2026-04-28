@@ -16,12 +16,11 @@ export const AgentScraperRequestSchema = z
     sector: z.string().trim().min(1).optional(),
     zone: z.string().trim().min(1).optional(),
     provinces: z.array(z.string().trim().min(1)).optional(),
-    cities: z.array(z.string().trim().min(1)).optional(),
     limit: z.number().int().positive().optional(),
     mode: AgentRunModeSchema,
     sourceCsv: z.string().trim().min(1).optional(),
-    outputDir: z.string().trim().min(1).optional(),
   })
+  .strict()
   .superRefine((req, ctx) => {
     if (req.mode === 'campaign' || req.mode === 'full') {
       if (!req.sector) {
@@ -33,13 +32,12 @@ export const AgentScraperRequestSchema = z
       }
       const hasGeo =
         (req.provinces && req.provinces.length > 0) ||
-        (req.cities && req.cities.length > 0) ||
         (req.zone && req.zone.length > 0);
       if (!hasGeo) {
         ctx.addIssue({
           code: 'custom',
           path: ['provinces'],
-          message: `mode='${req.mode}' requires at least one of 'provinces', 'cities' or 'zone'`,
+          message: `mode='${req.mode}' requires at least one of 'provinces' or 'zone'`,
         });
       }
     }

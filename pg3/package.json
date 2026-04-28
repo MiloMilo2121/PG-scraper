@@ -22,13 +22,11 @@
     "oracle": "source testenv/bin/activate && python ops/oracle/server.py",
     "benchmark": "npx tsx src/scripts/v8_benchmark.ts",
     "benchmark:wave": "npx tsx src/scripts/v8_benchmark_wave.ts",
-    "agent:run": "npx tsx src/agent/agent_scraper_cli.ts",
-    "agent:campaign": "npx tsx src/agent/agent_scraper_cli.ts --mode campaign",
-    "agent:enrich": "npx tsx src/agent/agent_scraper_cli.ts --mode enrichment",
-    "agent:full": "npx tsx src/agent/agent_scraper_cli.ts --mode full",
+    "agent": "npx tsx src/agent/agent_scraper_cli.ts",
     "agent:inspect": "npx tsx src/agent/agent_inspect_cli.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/fast-levenshtein": "^0.0.4",
@@ -70,6 +68,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/cheerio": "^0.22.35",
     "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
     "vitest": "^3.2.4"
   }
 }

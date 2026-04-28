@@ -3,6 +3,8 @@
 // Implementation Status: SCAFFOLDED — DB/Redis wireup not yet connected.
 // Usage: npx tsx src/agent_tools/inspect_run.ts --job-id "12345"
 
+export {};
+
 async function main() {
     const args = process.argv.slice(2);
     let jobId = '';

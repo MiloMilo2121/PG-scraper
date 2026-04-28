@@ -9,13 +9,13 @@ import {
 } from './agent_contracts';
 import {
   RunPaths,
+  appendRunLog,
   ensureRunDir,
   writeReportJson,
 } from './agent_artifacts';
 import { AgentRunRegistry } from './agent_run_registry';
-import { runCampaign, CampaignRunner } from './backends/campaign_backend';
-import { runEnrichment, EnrichmentRunner } from './backends/enrichment_backend';
-import { runFull } from './backends/full_backend';
+import type { CampaignRunner } from './backends/campaign_backend';
+import type { EnrichmentRunner } from './backends/enrichment_backend';
 
 export interface RunScraperDeps {
   registry?: AgentRunRegistry;
@@ -95,6 +95,7 @@ export async function runScraper(
   }
 
   registry.register(request, startedAt);
+  appendRunLog(paths, 'agent.run.started', { runId: request.runId, mode: request.mode });
 
   let status: AgentRunStatus = 'running';
   let stats = emptyStats();
@@ -106,16 +107,19 @@ export async function runScraper(
 
   try {
     if (request.mode === 'campaign') {
+      const { runCampaign } = await import('./backends/campaign_backend');
       const out = await runCampaign(request, paths, deps.campaignRunner);
       stats = out.stats;
       if (out.csvPath) artifacts.outputCsv = out.csvPath;
       status = 'completed';
     } else if (request.mode === 'enrichment') {
+      const { runEnrichment } = await import('./backends/enrichment_backend');
       const out = await runEnrichment(request, paths, deps.enrichmentRunner);
       stats = out.stats;
       artifacts.inputCsv = out.inputCsv;
       status = 'queued';
     } else {
+      const { runFull } = await import('./backends/full_backend');
       const out = await runFull(request, paths, {
         campaignRunner: deps.campaignRunner,
         enrichmentRunner: deps.enrichmentRunner,
@@ -128,6 +132,7 @@ export async function runScraper(
   } catch (err) {
     status = 'failed';
     error = toAgentRunError(err);
+    appendRunLog(paths, 'agent.run.failed', error);
   }
 
   const finishedAt = nowIso();
@@ -145,6 +150,12 @@ export async function runScraper(
 
   try {
     writeReportJson(paths, result);
+    appendRunLog(paths, 'agent.run.finished', {
+      status,
+      stats,
+      artifacts,
+      durationMs: result.durationMs,
+    });
   } catch {
     // Reporting must never crash the run; the registry below is the source of truth.
   }

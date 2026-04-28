@@ -25,7 +25,8 @@ The current PR introduces the new agent path additively. No legacy file is moved
 | `scraper/core/browser/factory_v2.ts` | Browser factory legacy | Sostituita da `factory_v9.ts` con feature flag `BROWSER_ENGINE` | none | archive-deferred |
 | `scraper/core/browser/factory_v9.ts` | Browser factory stabilizzata | Stays | existing | keep |
 | `scraper/core/browser/evasion.ts` | Anti-fingerprinting v3 (canvas/audio/webgl) | Stays — usata da factory_v9 | existing | keep |
-| `scraper/core/browser/genetic_fingerprinter.ts` | UA/viewport diversity pool | Stays | existing | keep |
+| `scraper/core/browser/ua_db.ts` | User-agent database | Re-export da `shared-runtime/browser/ua_db.ts` | typecheck | migrated |
+| `scraper/core/browser/genetic_fingerprinter.ts` | UA/viewport diversity pool | Stays; shared extraction deferred because logger/import semantics differ | existing | keep |
 | `scraper/core/browser/cookie_consent.ts` | Auto-clicker banner | Stays | existing | keep |
 | `scraper/core/browser/human_behavior.ts` | Mouse/scroll simulation | Stays | existing | keep |
 | `scraper/core/browser/proxy_manager.ts` | Tier-based proxy fallback | Stays | existing | keep |
@@ -72,7 +73,7 @@ The current PR introduces the new agent path additively. No legacy file is moved
 | `agent_tools/inspect_run.ts` | Sostituita da `agent/agent_inspect_cli.ts` con registry runId-based | archive-deferred |
 | `agent_tools/run_pipeline_module.ts` | Sostituita da `agent_scraper_cli.ts` | archive-deferred |
 
-MCP server — i 5 tool legacy in `mcp_server.ts` restano deprecated nella description ma funzionanti; i 4 nuovi tool in-process (`agent_scrape_target`, `agent_run_campaign`, `agent_enrich_campaign`, `agent_inspect_run`) sono il path ufficiale.
+MCP server — i 5 tool legacy in `mcp_server.ts` sono nascosti salvo `PG3_ENABLE_LEGACY_MCP_TOOLS=true`; i tool in-process ufficiali sono `agent_run` e `agent_inspect_run`.
 
 ---
 
@@ -97,7 +98,7 @@ MCP server — i 5 tool legacy in `mcp_server.ts` restano deprecated nella descr
 
 Tutti i moduli sotto `shared-runtime/` restano dove sono e sono il backbone del runtime. Stato: `keep` (nessuna azione richiesta).
 
-- `browser/BrowserPool.ts`, `browser/tls_policy.ts`
+- `browser/BrowserPool.ts`, `browser/tls_policy.ts`, `browser/ua_db.ts`
 - `cache/MemoryFirstCache.ts`
 - `routing/CostRouter.ts`, `routing/provider_catalog.ts`, `routing/provider_adapter.ts`
 - `ai/LLMService.ts`

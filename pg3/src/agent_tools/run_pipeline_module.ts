@@ -2,6 +2,8 @@
 // Purpose: Trigger a standard pipeline batch run from a CSV.
 // Usage: npx tsx src/agent_tools/run_pipeline_module.ts --source "path/to.csv" --preset "B2B_Lombardia"
 
+export {};
+
 async function main() {
     const args = process.argv.slice(2);
     let source = '';

@@ -53,6 +53,7 @@ Per le operazioni di Business Intelligence e qualificazione lead, stiamo cercand
 ---
 
 ## 4. COME OPERARE TECNICAMENTE CON PG3
-*   Non creare mega-script "quick and dirty" in `src/scripts/` per processare liste intere in modo non governato. 
-*   **Usa i Micro-Executors:** Le operazioni standardizzate devono passare da `src/agent_tools/`. 
-*   **Leggi il Manifest:** Fai riferimento al file `docs/TOOLS_MANIFEST.md` per conoscere la signature esatta (Input, Output, Failure Modes) di ogni micro-executor a tua disposizione.
+*   Non creare mega-script "quick and dirty" in `src/scripts/` per processare liste intere in modo non governato.
+*   **Usa il contratto agent-first:** le operazioni standardizzate devono passare da `src/agent/agent_scraper.ts` tramite `runScraper({ runId, mode, sector, zone, provinces, limit, sourceCsv })`.
+*   **Usa i tool MCP `agent_*`:** `agent_run` e `agent_inspect_run` sono il percorso ufficiale. I vecchi tool `pg3_*` e `src/agent_tools/*` restano solo per retrocompatibilita e sono nascosti salvo flag legacy.
+*   **Leggi il contratto:** fai riferimento a `docs/AGENT_FIRST_CONTRACT.md` prima di usare CLI o MCP. `docs/TOOLS_MANIFEST.md` descrive i vecchi micro-executors e non e piu la fonte primaria.

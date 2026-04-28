@@ -1,7 +1,16 @@
 # .dockerignore - Reduce Docker context size
 node_modules
 dist
+build
+logs
 *.log
+testenv
+temp_profiles
+search_profile_scraper
+output_server
+*.log
+*.pid
+cost_ledger*.jsonl
 .git
 .gitignore
 .env
@@ -17,3 +26,10 @@ __tests__
 .idea
 output/
 data/*.db
+data/*.db-wal
+data/*.db-shm
+data/browser-sessions/
+.omega_browser_sessions/
+brain/
+.gemini/
+dump.rdb

@@ -23,6 +23,9 @@ const RESET_KEYS = [
   'MAX_COST_PER_COMPANY_EUR',
   'LOCAL_BROWSER_NAV_COST_EUR',
   'LOCAL_ORACLE_FETCH_COST_EUR',
+  'PROXY_RESIDENTIAL_URL',
+  'PROXY_DATACENTER_URL',
+  'PROXY_MOBILE_URL',
 ];
 const NUMERIC_RESET_KEYS = new Set([
   'MAX_COST_PER_COMPANY_EUR',
@@ -102,5 +105,18 @@ describe('config defaults', () => {
     expect(config.llm.openrouter.smartModel).toBe('google/gemini-2.5-flash-lite');
     expect(config.search.exa.apiKey).toBe('exa-test-key');
     expect(config.search.firecrawl.apiKey).toBe('fc-test-key');
+  });
+
+  it('surfaces legacy proxy URLs through the shared config shim', async () => {
+    const config = await loadConfig({
+      OPENAI_API_KEY: 'test-openai-key',
+      PROXY_RESIDENTIAL_URL: 'http://res.local:9000',
+      PROXY_DATACENTER_URL: 'http://dc.local:8000',
+      PROXY_MOBILE_URL: 'http://mobile.local:10000',
+    });
+
+    expect(config.proxy.residentialUrl).toBe('http://res.local:9000');
+    expect(config.proxy.datacenterUrl).toBe('http://dc.local:8000');
+    expect(config.proxy.mobileUrl).toBe('http://mobile.local:10000');
   });
 });

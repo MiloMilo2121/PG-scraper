@@ -1,6 +1,7 @@
 import * as crypto from 'crypto';
-import { runScraper } from './agent_scraper';
 import { AgentRunMode } from './agent_contracts';
+import { initializeRuntimeEnvironment } from '../shared-runtime/config/runtime_bootstrap';
+import { initializeRuntimeConfig } from '../shared-runtime/config/runtime_config';
 
 interface ParsedFlags {
   mode?: AgentRunMode;
@@ -8,10 +9,8 @@ interface ParsedFlags {
   sector?: string;
   zone?: string;
   provinces?: string[];
-  cities?: string[];
   limit?: number;
   sourceCsv?: string;
-  outputDir?: string;
   json?: string;
 }
 
@@ -43,12 +42,6 @@ function parseArgs(argv: string[]): ParsedFlags {
           .map((s) => s.trim())
           .filter(Boolean);
         break;
-      case '--cities':
-        out.cities = (consume() ?? '')
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean);
-        break;
       case '--limit': {
         const value = consume();
         if (value !== undefined) {
@@ -59,9 +52,6 @@ function parseArgs(argv: string[]): ParsedFlags {
       }
       case '--source-csv':
         out.sourceCsv = consume();
-        break;
-      case '--output-dir':
-        out.outputDir = consume();
         break;
       case '--json':
         out.json = consume();
@@ -87,16 +77,17 @@ function buildRequest(flags: ParsedFlags): Record<string, unknown> {
     sector: flags.sector,
     zone: flags.zone,
     provinces: flags.provinces,
-    cities: flags.cities,
     limit: flags.limit,
     sourceCsv: flags.sourceCsv,
-    outputDir: flags.outputDir,
   };
 }
 
 async function main(): Promise<number> {
+  initializeRuntimeEnvironment();
+  initializeRuntimeConfig();
   const flags = parseArgs(process.argv.slice(2));
   const request = buildRequest(flags);
+  const { runScraper } = await import('./agent_scraper');
   const result = await runScraper(request);
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   return result.status === 'failed' ? 1 : 0;

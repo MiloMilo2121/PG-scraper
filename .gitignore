@@ -2,5 +2,16 @@
 **/node_modules
 **/dist
 **/.DS_Store
+**/build
+**/coverage
+**/*.log
+**/*.pid
+**/logs/
+**/cost_ledger*.jsonl
+**/temp_profiles
+**/search_profile_scraper
+**/output_server
+**/testenv
+pg3/output
 pg3/data
 pg3/worker.pid

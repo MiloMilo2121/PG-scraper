@@ -21,10 +21,13 @@ const BLACKLIST_DOMAINS = [
 
 class IPRoyalDDGProvider {
     async search(query: string) {
-        const proxyUrl = process.env.PROXY_RESIDENTIAL_URL || 'http://vfHrjaXd8Cn6x0h1:ZwNw3AK4mhv2hHPq@geo.iproyal.com:12321';
+        const proxyUrl = process.env.PROXY_RESIDENTIAL_URL?.trim();
+        if (!proxyUrl) {
+            throw new Error('PROXY_RESIDENTIAL_URL is required for recover_websites');
+        }
         const dispatcher = new ProxyAgent({
-          uri: proxyUrl,
-          connect: { rejectUnauthorized: false }
+            uri: proxyUrl,
+            connect: { rejectUnauthorized: false }
         });
         
         const rng = Math.random().toString(36).substring(7);

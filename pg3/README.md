@@ -7,31 +7,29 @@ both call `runScraper()` — there is no need to choose between runner, schedule
 mission, benchmark or manual scripts.
 
 ```ts
-import { runScraper } from './src/agent/agent_scraper';
+import { runScraper } from './src/agent';
 
 const result = await runScraper({
   runId: 'crm-2026-04-28',
   mode: 'full',                // 'campaign' | 'enrichment' | 'full'
   sector: 'agenzie immobiliari',
-  zone: 'Veneto',
-  provinces: ['VR', 'VE', 'PD'],
+  zone: 'Veneto',              // Italian region, province name, or province code
+  provinces: ['VR', 'VE', 'PD'], // optional when zone is enough
   limit: 500,
 });
 // → { runId, status, stats, artifacts: { outputCsv, reportJson, logFile } }
 ```
 
-Equivalent CLI commands:
+Equivalent canonical CLI command:
 
 ```bash
-npm run agent:campaign -- --sector "agenzie immobiliari" --provinces "VR,VE"
-npm run agent:enrich   -- --source-csv output/runs/<id>/output.csv
-npm run agent:full     -- --sector "dentisti"            --zone "Lombardia"
-npm run agent:inspect  -- --run-id <id>
+npm run agent -- --json '{"runId":"crm-2026-04-28","mode":"full","sector":"dentisti","zone":"Lombardia","limit":500}'
+npm run agent:inspect -- --run-id crm-2026-04-28
 ```
 
-MCP tools exposing the same path: `agent_scrape_target`, `agent_run_campaign`,
-`agent_enrich_campaign`, `agent_inspect_run`. Legacy `pg3_*` MCP tools are kept
-for back-compat and marked `[DEPRECATED]`.
+MCP exposes the same path through one action tool, `agent_run`, plus the
+read-only `agent_inspect_run`. Legacy `pg3_*` MCP tools are hidden unless
+`PG3_ENABLE_LEGACY_MCP_TOOLS=true`.
 
 Run artifacts live under `output/runs/{runId}/` (override with
 `AGENT_RUNS_ROOT`):
@@ -44,6 +42,8 @@ Run artifacts live under `output/runs/{runId}/` (override with
 
 Migration status of legacy modules is tracked in
 [`docs/refactor/LEGACY_EXTRACTION_MAP.md`](docs/refactor/LEGACY_EXTRACTION_MAP.md).
+The exact agent contract is documented in
+[`docs/AGENT_FIRST_CONTRACT.md`](docs/AGENT_FIRST_CONTRACT.md).
 
 ## Overview
 
@@ -63,7 +63,7 @@ The actual runtime surface in use is:
 
 ## Prerequisites
 
-- Node.js 20+
+- Node.js 22.14.0 (`.nvmrc`); CI and Docker pin the same runtime
 - Redis (local or remote, as the `BullMQ` backend)
 - `OPENAI_API_KEY` configured
 

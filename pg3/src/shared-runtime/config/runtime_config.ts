@@ -65,6 +65,9 @@ const EnvSchema = z.object({
 
 
   BRIGHTDATA_WEB_UNLOCKER_URL: z.string().optional(),
+  PROXY_RESIDENTIAL_URL: z.string().optional(),
+  PROXY_DATACENTER_URL: z.string().optional(),
+  PROXY_MOBILE_URL: z.string().optional(),
   PROXY_FAILURE_COOLDOWN_MS: z.coerce.number().min(1000).default(300000), // 5 min
 
   // 📍 DISCOVERY THRESHOLDS
@@ -339,6 +342,9 @@ function buildConfig(env: Env) {
       maxKnownCompanies: env.DEDUPLICATOR_MAX_COMPANIES,
     },
     proxy: {
+      residentialUrl: env.PROXY_RESIDENTIAL_URL || '',
+      datacenterUrl: env.PROXY_DATACENTER_URL || '',
+      mobileUrl: env.PROXY_MOBILE_URL || '',
       failureCooldownMs: env.PROXY_FAILURE_COOLDOWN_MS,
     },
     brightData: {

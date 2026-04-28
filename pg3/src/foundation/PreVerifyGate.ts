@@ -168,6 +168,107 @@ export class PreVerifyGate {
         });
     }
 
+    private async checkJinaForPiva(url: string, piva: string): Promise<'VERIFIED' | 'CF_DETECTED' | 'MISS'> {
+        const body = await this.fetchJinaReader(url, 'PIVA');
+        if (body.status !== 'OK') {
+            return body.status;
+        }
+
+        const cleanPiva = piva.replace(/[^0-9]/g, '');
+        const bodyNumbers = body.text.replace(/[^0-9]/g, '');
+        return cleanPiva.length === 11 && bodyNumbers.includes(cleanPiva) ? 'VERIFIED' : 'MISS';
+    }
+
+    private async checkSemanticNameMatch(url: string, companyName: string): Promise<'VERIFIED_SEMANTIC' | 'MISS'> {
+        const body = await this.fetchJinaReader(url, 'SEMANTIC');
+        if (body.status !== 'OK') {
+            return 'MISS';
+        }
+
+        const normalizedBody = body.text.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const normalizedName = companyName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return normalizedName.length >= 4 && normalizedBody.includes(normalizedName)
+            ? 'VERIFIED_SEMANTIC'
+            : 'MISS';
+    }
+
+    private fetchJinaReader(url: string, taskType: string): Promise<{ status: 'OK'; text: string } | { status: 'CF_DETECTED' | 'MISS' }> {
+        const start = Date.now();
+        return new Promise((resolve) => {
+            let resolved = false;
+            const safeResolve = async (
+                result: { status: 'OK'; text: string } | { status: 'CF_DETECTED' | 'MISS' },
+                ledgerPatch: Partial<Parameters<CostLedger['log']>[0]>
+            ) => {
+                if (resolved) return;
+                resolved = true;
+                await this.ledger.log({
+                    timestamp: new Date().toISOString(),
+                    module: 'PreVerifyGate',
+                    provider: 'jina-reader',
+                    tier: 1,
+                    task_type: taskType,
+                    cost_eur: 0,
+                    cache_hit: false,
+                    cache_level: 'MISS',
+                    duration_ms: Date.now() - start,
+                    success: true,
+                    ...ledgerPatch,
+                });
+                resolve(result);
+            };
+
+            const jinaUrl = `https://r.jina.ai/http://${url.replace(/^https?:\/\//, '')}`;
+            const req = https.request(jinaUrl, { method: 'GET', timeout: 5000 }, (res) => {
+                let data = '';
+                res.on('data', (chunk) => {
+                    data += chunk;
+                });
+                res.on('end', () => {
+                    if (data.includes('Checking your browser') || data.includes('Just a moment...')) {
+                        safeResolve(
+                            { status: 'CF_DETECTED' },
+                            {
+                                success: false,
+                                error: 'CF_DETECTED',
+                                error_class: 'provider_block',
+                                punitive: true,
+                            }
+                        );
+                        return;
+                    }
+                    safeResolve({ status: 'OK', text: data }, { success: true });
+                });
+            });
+
+            req.on('timeout', () => {
+                req.destroy();
+                safeResolve(
+                    { status: 'MISS' },
+                    {
+                        success: false,
+                        error: 'TIMEOUT',
+                        error_class: 'transport',
+                        punitive: true,
+                    }
+                );
+            });
+            req.on('error', () => {
+                safeResolve(
+                    { status: 'MISS' },
+                    {
+                        success: false,
+                        error: 'NET_ERROR',
+                        error_class: 'transport',
+                        punitive: true,
+                    }
+                );
+            });
+            req.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+            req.end();
+        });
+    }
+
     /**
      * STAGE 2.5: THE GOLDEN GATE
      * Downloads raw HTML (fast) to run zero-cost heuristics without AI or external APIs.

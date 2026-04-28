@@ -46,7 +46,7 @@ describe('AgentScraperRequestSchema', () => {
     ).toThrow(/sector/);
   });
 
-  it('rejects campaign without provinces / cities / zone', () => {
+  it('rejects campaign without provinces / zone', () => {
     expect(() =>
       AgentScraperRequestSchema.parse({
         runId: 'run-005',
@@ -54,6 +54,17 @@ describe('AgentScraperRequestSchema', () => {
         sector: 'dentisti',
       })
     ).toThrow(/provinces/);
+  });
+
+  it('rejects unsupported geo fields instead of silently ignoring them', () => {
+    expect(() =>
+      AgentScraperRequestSchema.parse({
+        runId: 'run-geo-extra',
+        mode: 'campaign',
+        sector: 'dentisti',
+        cities: ['Milano'],
+      })
+    ).toThrow();
   });
 
   it('rejects enrichment without sourceCsv', () => {

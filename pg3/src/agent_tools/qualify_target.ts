@@ -2,6 +2,8 @@
 // Purpose: Calculate the Visual-Product ICP score using LLMs and VisionExtractor heuristics.
 // Usage: npx tsx src/agent_tools/qualify_target.ts --data-path "./enriched_lead.json"
 
+export {};
+
 async function main() {
     const args = process.argv.slice(2);
     let dataPath = '';

@@ -1,7 +1,10 @@
 const { ProxyAgent, request } = require('undici');
 
 async function run() {
-  const proxyUrl = 'http://vfHrjaXd8Cn6x0h1:ZwNw3AK4mhv2hHPq@geo.iproyal.com:12321';
+  const proxyUrl = process.env.PROXY_RESIDENTIAL_URL;
+  if (!proxyUrl) {
+    throw new Error('PROXY_RESIDENTIAL_URL is required to run this proxy check');
+  }
   const agent = new ProxyAgent({ uri: proxyUrl, requestTls: { rejectUnauthorized: false } });
   
   try {
