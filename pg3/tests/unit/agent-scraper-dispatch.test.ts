@@ -78,6 +78,10 @@ describe('runScraper dispatch', () => {
     );
 
     expect(enrichmentRunner).toHaveBeenCalledTimes(1);
+    expect(enrichmentRunner).toHaveBeenCalledWith(
+      result.artifacts.inputCsv,
+      { runId: 'run-enrich' }
+    );
     expect(result.status).toBe('queued');
     expect(result.stats).toEqual({ loaded: 10, discovered: 0, enriched: 8, failed: 2 });
     expect(result.artifacts.inputCsv).toBeTruthy();
@@ -120,6 +124,10 @@ describe('runScraper dispatch', () => {
 
     expect(campaignRunner).toHaveBeenCalledTimes(1);
     expect(enrichmentRunner).toHaveBeenCalledTimes(1);
+    expect(enrichmentRunner).toHaveBeenCalledWith(
+      result.artifacts.inputCsv,
+      { runId: 'run-full' }
+    );
     expect(result.status).toBe('queued');
     expect(result.stats.discovered).toBe(3);
     expect(result.stats.enriched).toBe(3);

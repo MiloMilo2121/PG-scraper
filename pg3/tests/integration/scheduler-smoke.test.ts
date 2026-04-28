@@ -72,7 +72,8 @@ describe('Scheduler smoke', () => {
     const fixturePath = path.resolve(__dirname, '../fixtures/scheduler-input.csv');
     const { runScheduler } = await import('../../src/enricher/scheduler');
 
-    const summary = await runScheduler(fixturePath);
+    const runId = `scheduler-smoke-${Date.now()}`;
+    const summary = await runScheduler(fixturePath, { runId });
 
     expect(summary.loaded).toBe(3);
     expect(summary.skipped).toBe(1);
@@ -94,6 +95,9 @@ describe('Scheduler smoke', () => {
       const counts = await queue.getJobCounts();
       expect(counts.waiting).toBe(2);
       expect(counts.active).toBe(0);
+      const waiting = await queue.getWaiting();
+      expect(waiting.map((job) => job.data.run_id)).toEqual([runId, runId]);
+      expect(waiting.every((job) => job.data.correlation_id === `${runId}:${job.data.company_id}`)).toBe(true);
     } finally {
       await queue.close();
       await redis.quit();

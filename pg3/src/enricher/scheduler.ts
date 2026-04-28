@@ -45,6 +45,10 @@ export interface SchedulerSummary {
   durationMs: number;
 }
 
+export interface SchedulerRunOptions {
+  runId?: string;
+}
+
 function deterministicCompanyId(company: CSVCompany): string {
   if (company.company_id && company.company_id.trim() !== '') {
     return company.company_id.trim();
@@ -212,10 +216,13 @@ async function releaseSchedulerLock(lockToken: string): Promise<void> {
   await redisConnection.eval(RELEASE_LOCK_SCRIPT, 1, SCHEDULER_LOCK_KEY, lockToken);
 }
 
-export async function runScheduler(csvPath?: string): Promise<SchedulerSummary> {
+export async function runScheduler(
+  csvPath?: string,
+  opts: SchedulerRunOptions = {}
+): Promise<SchedulerSummary> {
     const startedAt = Date.now();
     const inputFile = csvPath || INPUT_FILE;
-    const runId = `run-${startedAt}-${crypto.randomUUID().slice(0, 8)}`;
+    const runId = opts.runId ?? `run-${startedAt}-${crypto.randomUUID().slice(0, 8)}`;
     let events: QueueEvents | null = null;
     let lockToken: string | null = null;
 

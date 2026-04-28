@@ -260,22 +260,9 @@ export function registerAgentMcpTools(server: McpLikeServer): void {
       runId: z.string().describe('Run identifier returned by an earlier agent_run call'),
     },
     async ({ runId }: { runId: string }) => {
-      const { AgentRunRegistry } = await import('../agent/agent_run_registry.js');
-      const registry = new AgentRunRegistry();
-      const entry = registry.get(runId);
-      if (!entry) {
-        return asMcpJson({ runId, found: false }, true);
-      }
-      const reportPath = entry.result?.artifacts?.reportJson;
-      let report: unknown = null;
-      if (reportPath && fs.existsSync(reportPath)) {
-        try {
-          report = JSON.parse(fs.readFileSync(reportPath, 'utf-8'));
-        } catch {
-          report = null;
-        }
-      }
-      return asMcpJson({ entry, report });
+      const { inspectAgentRun } = await import('../agent/agent_inspection.js');
+      const payload = inspectAgentRun(runId);
+      return asMcpJson(payload, 'found' in payload && payload.found === false);
     }
   );
 }

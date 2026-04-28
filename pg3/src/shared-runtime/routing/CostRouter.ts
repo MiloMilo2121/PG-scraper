@@ -191,6 +191,8 @@ export class CostRouter {
         skipCache?: boolean;
         abortSignal?: AbortSignal;
         companyId?: string;
+        runId?: string;
+        correlationId?: string;
     }): Promise<RouteResult<T>> {
         const cacheKey = JSON.stringify({ taskType, payload });
 
@@ -314,6 +316,8 @@ export class CostRouter {
                 error_class: classification.errorClass,
                 punitive: classification.punitive,
                 company_id: options?.companyId,
+                run_id: options?.runId,
+                correlation_id: options?.correlationId,
             });
 
             if (!success) {
@@ -345,8 +349,25 @@ export class CostRouter {
 
             const freeProviders = Array.from(this.providers.entries()).filter(([id, adapter]) => adapter.tier <= 1 && !failures.find(f => f.provider === id && f.error !== 'Unhealthy'));
             for (const [providerId, adapter] of freeProviders) {
+                const start = Date.now();
                 try {
                     const resultData = await adapter.execute<T>(payload, options);
+                    await this.ledger.log({
+                        timestamp: new Date().toISOString(),
+                        module: 'CostRouter',
+                        provider: `${providerId}_FREE_FALLBACK`,
+                        tier: adapter.tier,
+                        task_type: taskType,
+                        cost_eur: 0,
+                        cache_hit: false,
+                        cache_level: 'MISS',
+                        duration_ms: Date.now() - start,
+                        success: true,
+                        punitive: false,
+                        company_id: options?.companyId,
+                        run_id: options?.runId,
+                        correlation_id: options?.correlationId,
+                    });
                     return {
                         data: resultData,
                         provider: providerId + '_FREE_FALLBACK',
@@ -356,8 +377,24 @@ export class CostRouter {
                         cache_hit: false,
                         cache_level: 'MISS'
                     };
-                } catch (e) {
-                    // Ignore free fallback errors
+                } catch (err: any) {
+                    await this.ledger.log({
+                        timestamp: new Date().toISOString(),
+                        module: 'CostRouter',
+                        provider: `${providerId}_FREE_FALLBACK`,
+                        tier: adapter.tier,
+                        task_type: taskType,
+                        cost_eur: 0,
+                        cache_hit: false,
+                        cache_level: 'MISS',
+                        duration_ms: Date.now() - start,
+                        success: false,
+                        error: err?.message || String(err),
+                        punitive: false,
+                        company_id: options?.companyId,
+                        run_id: options?.runId,
+                        correlation_id: options?.correlationId,
+                    });
                 }
             }
         }

@@ -71,6 +71,13 @@ Run artifacts live under `output/runs/{runId}/` (override with
 `within_budget`, `warning`, or `exceeded`; exceeded budgets fail the run with a
 structured `BudgetExceededError`.
 
+For asynchronous enrichment/full runs, queued jobs keep the same agent `runId`
+as `run_id` and carry stable `company_id` / `correlation_id` values. Runtime
+provider ledgers use the same IDs. Run `npm run agent:inspect -- --run-id <id>`
+after workers finish to refresh `costSummary` from both
+`output/runs/{runId}/cost_ledger.jsonl` and the runtime ledger
+(`COST_LEDGER_PATH` or `RUNTIME_DATA_DIR/cost_ledger.jsonl`).
+
 Migration status of legacy modules is tracked in
 [`docs/refactor/LEGACY_EXTRACTION_MAP.md`](docs/refactor/LEGACY_EXTRACTION_MAP.md).
 The exact agent contract is documented in

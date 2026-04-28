@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import {
   CostLedger,
   LedgerEntry,
@@ -19,6 +20,14 @@ interface CostSummaryInput {
   durationMs: number;
   totalCostEur: number;
   externalCalls: number;
+}
+
+interface LedgerRollupInput {
+  runId: string;
+  ledgerPaths: string[];
+  budget?: AgentRunBudget;
+  stats: AgentStats;
+  durationMs: number;
 }
 
 interface FinalizeCostInput {
@@ -54,6 +63,25 @@ function sumCost(entries: LedgerEntry[]): number {
 
 function countExternalCalls(entries: LedgerEntry[]): number {
   return entries.filter((entry) => entry.module !== AGENT_GOVERNANCE_MODULE).length;
+}
+
+function readLedgerEntries(filePath: string): LedgerEntry[] {
+  if (!fs.existsSync(filePath)) {
+    return [];
+  }
+
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  const entries: LedgerEntry[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      entries.push(JSON.parse(trimmed) as LedgerEntry);
+    } catch {
+      // Ignore partially written JSONL lines; ledgers are append-only.
+    }
+  }
+  return entries;
 }
 
 export function emptyCostSummary(budget?: AgentRunBudget): AgentCostSummary {
@@ -122,6 +150,32 @@ export function budgetExceededError(summary: AgentCostSummary): Error {
   const err = new Error(summary.warnings.join('; ') || 'Agent budget exceeded');
   err.name = 'BudgetExceededError';
   return err;
+}
+
+export function rollupCostSummaryFromLedgers(input: LedgerRollupInput): AgentCostSummary {
+  const seen = new Set<string>();
+  const entries: LedgerEntry[] = [];
+
+  for (const ledgerPath of input.ledgerPaths) {
+    if (seen.has(ledgerPath)) continue;
+    seen.add(ledgerPath);
+
+    const allEntries = readLedgerEntries(ledgerPath);
+    const isRunLocalLedger = ledgerPath.endsWith('/cost_ledger.jsonl')
+      && ledgerPath.includes(`/${input.runId}/`);
+
+    entries.push(
+      ...allEntries.filter((entry) => isRunLocalLedger || entry.run_id === input.runId)
+    );
+  }
+
+  return evaluateCostSummary({
+    budget: input.budget,
+    stats: input.stats,
+    durationMs: input.durationMs,
+    totalCostEur: sumCost(entries),
+    externalCalls: countExternalCalls(entries),
+  });
 }
 
 export class AgentCostTracker {
@@ -202,6 +256,8 @@ export class AgentCostTracker {
       success: input.success,
       error: input.error,
       company_id: this.request.runId,
+      run_id: this.request.runId,
+      correlation_id: this.request.context?.traceId,
     });
   }
 }

@@ -14,6 +14,7 @@ import { LeadScorer } from './utils/lead_scorer';
 import { Logger } from './utils/logger';
 import { MetricsServer } from './observability/metrics_server';
 import { startHealthServer } from './health';
+import { withRuntimeTraceContext } from '../shared-runtime/observability/run_context';
 
 function deterministicResultId(companyId: string): string {
     return `enrichment:${companyId}`;
@@ -158,36 +159,47 @@ function persistSuccess(job: EnrichmentJobData, pipelineResult: any, durationMs:
 async function processJob(job: Job<EnrichmentJobData>, runtime: OmegaRuntime): Promise<JobResult> {
     const startedAt = Date.now();
     const attempt = job.attemptsMade + 1;
+    const traceContext = {
+        runId: job.data.run_id,
+        companyId: job.data.company_id,
+        correlationId: job.data.correlation_id,
+    };
 
-    try {
-        const pipelineResult = await runtime.pipeline.processCompany(jobToPipelineInput(job.data), 0);
-        const durationMs = Date.now() - startedAt;
-        return persistSuccess(job.data, pipelineResult, durationMs, attempt);
-    } catch (error) {
-        const err = error as Error;
-        const durationMs = Date.now() - startedAt;
-        const maxAttempts = typeof job.opts.attempts === 'number' ? job.opts.attempts : config.queue.retryAttempts;
-        const status = attempt >= maxAttempts ? 'FAILED' : 'RETRYING';
+    return withRuntimeTraceContext(traceContext, async () => {
+        try {
+            const pipelineResult = await runtime.pipeline.processCompany(
+                jobToPipelineInput(job.data),
+                0,
+                traceContext
+            );
+            const durationMs = Date.now() - startedAt;
+            return persistSuccess(job.data, pipelineResult, durationMs, attempt);
+        } catch (error) {
+            const err = error as Error;
+            const durationMs = Date.now() - startedAt;
+            const maxAttempts = typeof job.opts.attempts === 'number' ? job.opts.attempts : config.queue.retryAttempts;
+            const status = attempt >= maxAttempts ? 'FAILED' : 'RETRYING';
 
-        logJobResult(
-            job.data.company_id,
-            status,
-            durationMs,
-            attempt,
-            err.message,
-            Logger.categorizeError(err),
-            'WORKER_EXCEPTION',
-            undefined,
-            job.data.run_id,
-            status === 'FAILED' ? 'WORKER_EXCEPTION' : undefined
-        );
+            logJobResult(
+                job.data.company_id,
+                status,
+                durationMs,
+                attempt,
+                err.message,
+                Logger.categorizeError(err),
+                'WORKER_EXCEPTION',
+                undefined,
+                job.data.run_id,
+                status === 'FAILED' ? 'WORKER_EXCEPTION' : undefined
+            );
 
-        if (status === 'FAILED') {
-            MetricsServer.recordTechnicalFailure();
+            if (status === 'FAILED') {
+                MetricsServer.recordTechnicalFailure();
+            }
+
+            throw err;
         }
-
-        throw err;
-    }
+    });
 }
 
 export async function startWorker(): Promise<void> {

@@ -115,6 +115,11 @@ Se un budget configurato viene superato, `runScraper()` non lancia eccezioni:
 ritorna `status='failed'`, `error.name='BudgetExceededError'`, aggiorna
 `report.json`, registra `agent.budget.exceeded` in `run.log`, e scrive il ledger.
 
+Nei run `enrichment` e `full`, il `runId` agent-first viene propagato nella
+queue BullMQ come `run_id`. Ogni job mantiene anche `company_id` stabile e
+`correlation_id = runId:companyId`. Le entry di costo prodotte da `CostRouter`,
+`BrowserPool` e componenti runtime ereditano automaticamente questi ID.
+
 ### Modalità
 
 | mode | Richiede | Restituisce | Status atteso |
@@ -159,7 +164,7 @@ npm run agent:inspect -- --run-id mio-run-001
 | Tool | Uso |
 |---|---|
 | `agent_run` | Tutti i mode: campaign / enrichment / full |
-| `agent_inspect_run` | Leggi stato + report.json di un runId |
+| `agent_inspect_run` | Leggi stato + report.json di un runId, con `costSummary` ricalcolato dai ledger |
 
 I tool `pg3_*` sono **DEPRECATED** — funzionano per back-compat (abilitati con `PG3_ENABLE_LEGACY_MCP_TOOLS=true`) ma non usarli per nuovi flussi.
 
@@ -189,6 +194,11 @@ output/runs/
 ```
 
 Override root: variabile `AGENT_RUNS_ROOT` (default: `output/runs/` relativa al cwd).
+
+Il ledger provider/runtime globale vive in `COST_LEDGER_PATH`, oppure in
+`RUNTIME_DATA_DIR/cost_ledger.jsonl`. Dopo che i worker hanno processato i job,
+usa sempre `npm run agent:inspect -- --run-id <id>` o `agent_inspect_run`: il
+report letto in inspect ricalcola `costSummary` da entrambi i ledger.
 
 ### Come avviare Redis per i test smoke
 

@@ -58,6 +58,11 @@ agent callers. New automation should pass it explicitly.
 | `maxExternalCalls` | Maximum counted provider calls allowed. |
 | `maxRunDurationMs` | Maximum wall-clock runtime before the run is marked failed. |
 
+For enrichment/full runs, `runId` is propagated into every queued BullMQ job as
+`run_id`; each job also carries a stable `company_id` and `correlation_id`.
+Provider ledger entries written by `CostRouter`, `BrowserPool`, and other
+runtime components inherit that context automatically.
+
 ## Modes
 
 | Mode | Required fields | Result |
@@ -136,6 +141,11 @@ Default root: `output/runs/{runId}/`.
 
 Override the root with `AGENT_RUNS_ROOT`.
 
+Provider/runtime costs are written to the runtime ledger configured by
+`COST_LEDGER_PATH` or, by default, `RUNTIME_DATA_DIR/cost_ledger.jsonl`.
+Every entry related to an agent run carries `run_id`, `company_id`, and
+`correlation_id`.
+
 `report.json` includes `costSummary`:
 
 ```json
@@ -151,6 +161,11 @@ Override the root with `AGENT_RUNS_ROOT`.
 `budgetStatus` is one of `not_configured`, `within_budget`, `warning`, or
 `exceeded`. If a configured budget is exceeded, the run is marked `failed` with
 `error.name = "BudgetExceededError"`.
+
+Because enrichment workers run asynchronously, the initial `report.json` may
+only include the enqueue-time cost view. Use `npm run agent:inspect` or the MCP
+`agent_inspect_run` tool after workers complete; inspection refreshes
+`costSummary` from both the per-run ledger and the runtime provider ledger.
 
 ## Golden Smoke
 

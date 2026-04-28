@@ -15,7 +15,14 @@ export interface EnrichmentBackendOutput {
   summary: SchedulerSummary;
 }
 
-export type EnrichmentRunner = (csvPath: string) => Promise<SchedulerSummary>;
+export interface EnrichmentRunnerOptions {
+  runId?: string;
+}
+
+export type EnrichmentRunner = (
+  csvPath: string,
+  opts?: EnrichmentRunnerOptions
+) => Promise<SchedulerSummary>;
 
 export async function runEnrichment(
   req: AgentScraperRequest,
@@ -33,7 +40,7 @@ export async function runEnrichment(
 
   const inputCsv = copyInputCsv(sourceCsv, paths);
   const effectiveRunner = runner ?? (await import('../../enricher/scheduler')).runScheduler;
-  const summary = await effectiveRunner(inputCsv);
+  const summary = await effectiveRunner(inputCsv, { runId: req.runId });
 
   const stats: AgentStats = {
     loaded: summary.loaded,

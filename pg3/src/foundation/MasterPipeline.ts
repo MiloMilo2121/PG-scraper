@@ -20,6 +20,10 @@ import { RdapValidator } from '../enricher/core/discovery/rdap_validator';
 import { ContentFilter } from '../enricher/core/discovery/content_filter';
 import { PostDiscoveryEnrichmentStage } from '../enricher/runtime/stages/post_discovery_enrichment_stage';
 import { RuntimeStageOutcome, RuntimeStageStatus } from '../enricher/runtime/stages/stage_types';
+import {
+    RuntimeTraceContext,
+    withRuntimeTraceContext,
+} from '../shared-runtime/observability/run_context';
 import crypto from 'crypto';
 
 export class MasterPipeline {
@@ -80,10 +84,23 @@ export class MasterPipeline {
         });
     }
 
-    public async processCompany(rawInput: Record<string, string>, companyIdx: number): Promise<any> {
-        return this.valve.execute(async () => {
+    public async processCompany(
+        rawInput: Record<string, string>,
+        companyIdx: number,
+        traceContext: RuntimeTraceContext = {}
+    ): Promise<any> {
+        const effectiveCompanyId = traceContext.companyId ?? crypto.randomUUID();
+        const effectiveTraceContext: RuntimeTraceContext = {
+            ...traceContext,
+            companyId: effectiveCompanyId,
+            correlationId: traceContext.correlationId
+                ?? (traceContext.runId ? `${traceContext.runId}:${effectiveCompanyId}` : undefined),
+        };
+
+        return this.valve.execute(
+            () => withRuntimeTraceContext(effectiveTraceContext, async () => {
             const start = Date.now();
-            const companyId = crypto.randomUUID();
+            const companyId = effectiveCompanyId;
             const layersAttempted: string[] = [];
             type CheckUrlOutcome = { matched: boolean; error?: string; timedOut: boolean };
             type CheckAttemptState = { expired: boolean; startedAt: number; timeoutMs: number };
@@ -795,7 +812,9 @@ export class MasterPipeline {
                 start,
                 reasonCode
             );
-        }, 1); // Priority 1 (Core Pipeline)
+            }),
+            1
+        ); // Priority 1 (Core Pipeline)
     }
 
     private buildResult(

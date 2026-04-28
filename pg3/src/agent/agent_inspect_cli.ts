@@ -1,5 +1,5 @@
-import * as fs from 'fs';
 import { AgentRunRegistry } from './agent_run_registry';
+import { inspectAgentRun } from './agent_inspection';
 
 interface InspectFlags {
   runId?: string;
@@ -64,26 +64,9 @@ async function main(): Promise<number> {
     return 1;
   }
 
-  const entry = registry.get(flags.runId);
-  if (!entry) {
-    process.stdout.write(JSON.stringify({ runId: flags.runId, found: false }, null, 2) + '\n');
-    return 1;
-  }
-
-  const reportPath = entry.result?.artifacts?.reportJson;
-  let report: unknown = null;
-  if (reportPath && fs.existsSync(reportPath)) {
-    try {
-      report = JSON.parse(fs.readFileSync(reportPath, 'utf-8'));
-    } catch {
-      report = null;
-    }
-  }
-
-  process.stdout.write(
-    JSON.stringify({ entry, report }, null, 2) + '\n'
-  );
-  return 0;
+  const payload = inspectAgentRun(flags.runId, { rootDir: flags.rootDir });
+  process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
+  return 'found' in payload && payload.found === false ? 1 : 0;
 }
 
 if (require.main === module) {

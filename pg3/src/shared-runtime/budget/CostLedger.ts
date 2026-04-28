@@ -1,8 +1,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { getRuntimeTraceContext } from '../observability/run_context';
 
 export interface LedgerEntry {
     timestamp: string;
+    run_id?: string;
+    correlation_id?: string;
     module: string;
     provider: string;
     tier: number;
@@ -80,8 +83,12 @@ export class CostLedger {
     }
 
     public async log(entry: LedgerEntry): Promise<void> {
+        const trace = getRuntimeTraceContext();
         const normalized: LedgerEntry = {
             ...entry,
+            run_id: entry.run_id ?? trace.runId,
+            company_id: entry.company_id ?? trace.companyId,
+            correlation_id: entry.correlation_id ?? trace.correlationId,
             punitive: entry.punitive ?? !entry.success,
         };
 
