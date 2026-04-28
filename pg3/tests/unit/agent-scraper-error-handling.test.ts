@@ -24,6 +24,16 @@ describe('runScraper error handling', () => {
     expect(result.error?.name).toBe('ZodError');
   });
 
+  it('preserves the user-supplied mode in the failed result for diagnostics', async () => {
+    const result = await runScraper(
+      { runId: 'run-bad-enrich', mode: 'enrichment' },
+      { rootDir: tmpRoot }
+    );
+    expect(result.status).toBe('failed');
+    expect(result.input.mode).toBe('enrichment');
+    expect(result.input.runId).toBe('run-bad-enrich');
+  });
+
   it('returns a failed result when the runId is unsafe', async () => {
     const result = await runScraper(
       {

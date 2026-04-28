@@ -56,16 +56,20 @@ export async function runScraper(
   try {
     request = AgentScraperRequestSchema.parse(raw);
   } catch (err) {
-    const safeRunId =
-      raw && typeof raw === 'object' && 'runId' in raw
-        ? String((raw as { runId?: unknown }).runId ?? 'invalid')
-        : 'invalid';
+    const rawObj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    const safeRunId = rawObj.runId !== undefined ? String(rawObj.runId) : 'invalid';
+    const rawMode = rawObj.mode;
+    const fallbackMode: AgentScraperRequest['mode'] =
+      rawMode === 'campaign' || rawMode === 'enrichment' || rawMode === 'full'
+        ? rawMode
+        : 'campaign';
     const fallback: AgentScraperResult = {
       runId: safeRunId,
       status: 'failed',
       input: {
+        ...rawObj,
         runId: safeRunId,
-        mode: 'campaign',
+        mode: fallbackMode,
       } as AgentScraperRequest,
       stats: emptyStats(),
       artifacts: {},
