@@ -11,6 +11,8 @@
     "scripts",
     "src/scripts",
     "src/enricher/tests",
-    "src/foundation/__tests__"
+    "src/foundation/__tests__",
+    "src/mcp_server.ts",
+    "src/agent_tools"
   ]
 }

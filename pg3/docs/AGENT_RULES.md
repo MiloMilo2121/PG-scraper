@@ -57,3 +57,114 @@ Per le operazioni di Business Intelligence e qualificazione lead, stiamo cercand
 *   **Usa il contratto agent-first:** le operazioni standardizzate devono passare da `src/agent/agent_scraper.ts` tramite `runScraper({ runId, mode, sector, zone, provinces, limit, sourceCsv })`.
 *   **Usa i tool MCP `agent_*`:** `agent_run` e `agent_inspect_run` sono il percorso ufficiale. I vecchi tool `pg3_*` e `src/agent_tools/*` restano solo per retrocompatibilita e sono nascosti salvo flag legacy.
 *   **Leggi il contratto:** fai riferimento a `docs/AGENT_FIRST_CONTRACT.md` prima di usare CLI o MCP. `docs/TOOLS_MANIFEST.md` descrive i vecchi micro-executors e non e piu la fonte primaria.
+
+---
+
+## 5. AGENT-FIRST RUNBOOK (canale ufficiale da usare dal 2026-04-28)
+
+### Entrypoint unico
+
+Ogni campagna o arricchimento deve passare da `runScraper()`. Non usare runner, scheduler o script separati.
+
+```ts
+import { runScraper } from './src/agent/agent_scraper';
+
+const result = await runScraper({
+  runId: 'crm-2026-04-28',   // alfanumerico + trattini/underscore, max 128 car.
+  mode: 'full',               // 'campaign' | 'enrichment' | 'full'
+  sector: 'agenzie immobiliari',
+  zone: 'Veneto',
+  provinces: ['VR', 'VE', 'PD'],
+  limit: 500,
+});
+// result.status: 'success' | 'queued' | 'failed'
+// result.error: { name, message, stack } oppure undefined
+// result.artifacts: { inputCsv?, outputCsv?, reportJson, logFile }
+```
+
+### Modalità
+
+| mode | Richiede | Restituisce | Status atteso |
+|---|---|---|---|
+| `campaign` | `sector` + (`provinces` o `zone`) | `outputCsv` con aziende trovate | `success` |
+| `enrichment` | `sourceCsv` (path assoluto esistente) | `inputCsv` copiato nel run dir | `queued` (worker BullMQ out-of-band) |
+| `full` | `sector` + geo | campaign → enrichment chained | `queued` |
+
+### CLI canonici
+
+```bash
+# Campagna discovery
+npm run agent:campaign -- --sector "dentisti" --zone "Lombardia" --run-id mio-run-001
+
+# Enrichment da CSV esistente
+npm run agent:enrich -- --source-csv /path/to/input.csv --run-id enrich-001
+
+# Full pipeline
+npm run agent:full -- --sector "agenzie" --provinces "MI,BG" --run-id full-001
+
+# Ispezione run precedente
+npm run agent:inspect -- --run-id mio-run-001
+```
+
+### MCP tools canonici
+
+| Tool | Uso |
+|---|---|
+| `agent_run` | Tutti i mode: campaign / enrichment / full |
+| `agent_inspect_run` | Leggi stato + report.json di un runId |
+
+I tool `pg3_*` sono **DEPRECATED** — funzionano per back-compat (abilitati con `PG3_ENABLE_LEGACY_MCP_TOOLS=true`) ma non usarli per nuovi flussi.
+
+### Dove vivono gli artifacts
+
+```
+output/runs/
+  <runId>/
+    input.csv      ← copia immutabile del CSV sorgente (mode=enrichment/full)
+    output.csv     ← CSV risultato del campaign (mode=campaign/full)
+    report.json    ← AgentScraperResult serializzato
+    run.log        ← log stream del run
+  _registry.jsonl  ← append-only, tutti i run mai eseguiti
+```
+
+Override root: variabile `AGENT_RUNS_ROOT` (default: `output/runs/` relativa al cwd).
+
+### Come avviare Redis per i test smoke
+
+Redis è necessario per `npm run test:smoke` (BullMQ). Opzioni:
+
+```bash
+# Opzione A: redis-server locale (se installato)
+redis-server --port 6379 --daemonize yes --maxmemory-policy noeviction --save ""
+
+# Opzione B: Docker (quando il daemon è disponibile)
+docker compose up -d redis   # usa il docker-compose.yml in pg3/
+
+# Verifica connessione
+redis-cli ping   # → PONG
+```
+
+Poi esegui lo smoke:
+
+```bash
+OPENAI_API_KEY=test-key REDIS_URL=redis://127.0.0.1:6379/15 npm run test:smoke
+```
+
+### Quality gate (ordine raccomandato)
+
+```bash
+npm run typecheck          # tsc strict, zero errori
+npm run test:unit          # 279 test, 4 fallimenti noti in preverify-gate.test.ts (pre-esistenti)
+npm run test:smoke         # richiede Redis
+npm run build              # produce dist/
+```
+
+### Cosa NON usare
+
+- `src/scraper/runner.ts` — legacy Veneto cluster, non governato
+- `src/scraper/scrape_immobiliare_agencies.ts` — script one-shot
+- `src/agent_tools/*.ts` — CLI deprecati (exec-based), usare i backend diretti
+- `LANDING/` endpoint `/launch` — chiama RunnerV6 legacy, verrà migrato in PR successiva
+- Qualsiasi `process.exit()` dentro `src/agent/` — vietato, tutti gli errori finiscono in `result.error`
+
+Stato di migrazione di ogni modulo: vedi `docs/refactor/LEGACY_EXTRACTION_MAP.md`.

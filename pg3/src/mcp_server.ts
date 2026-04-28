@@ -117,7 +117,7 @@ server.tool(
         file_path: z.string().describe("Path to the log file (e.g. 'logs/error.log' or 'benchmark_wave_results.log')"),
         lines: z.number().default(100).describe("Number of lines to tail from the end of the file")
     },
-    async ({ file_path, lines }) => {
+    async ({ file_path, lines }: { file_path: string; lines: number }) => {
         try {
             const absolutePath = path.resolve(__dirname, "..", file_path);
             // Basic security: ensure the path is within the pg3 directory
@@ -143,7 +143,7 @@ server.tool(
     {
         query: z.string().describe("A valid SQL SELECT query. Example: 'SELECT * FROM job_log ORDER BY id DESC LIMIT 5'")
     },
-    async ({ query }) => {
+    async ({ query }: { query: string }) => {
         if (!query.trim().toUpperCase().startsWith("SELECT")) {
             return { content: [{ type: "text" as const, text: "ERROR: Only SELECT queries are allowed for security." }], isError: true };
         }
@@ -195,7 +195,7 @@ server.tool(
         limit: z.number().int().positive().optional().describe("Max companies to keep"),
         sourceCsv: z.string().optional().describe("Required for enrichment"),
     },
-    async (args) => {
+    async (args: { runId?: string; mode: 'campaign' | 'enrichment' | 'full'; sector?: string; zone?: string; provinces?: string[]; limit?: number; sourceCsv?: string }) => {
         const { runScraper } = await import("./agent/agent_scraper.js");
         const result = await runScraper({
             runId: args.runId ?? newRunId(`agent-${args.mode}`),
@@ -216,7 +216,7 @@ server.tool(
     {
         runId: z.string().describe("Run identifier returned by an earlier agent_run call"),
     },
-    async ({ runId }) => {
+    async ({ runId }: { runId: string }) => {
         const { AgentRunRegistry } = await import("./agent/agent_run_registry.js");
         const registry = new AgentRunRegistry();
         const entry = registry.get(runId);
@@ -250,7 +250,7 @@ server.tool(
         url: z.string().optional().describe("Website URL"),
         piva: z.string().optional().describe("VAT number (Partita IVA)")
     },
-    async ({ query, url, piva }) => {
+    async ({ query, url, piva }: { query?: string; url?: string; piva?: string }) => {
         let args = "";
         if (query) args += ` --query "${query}"`;
         if (url) args += ` --url "${url}"`;
@@ -269,7 +269,7 @@ server.tool(
         piva: z.string().optional().describe("VAT number"),
         city: z.string().optional().describe("City")
     },
-    async ({ url, modules, company_name, piva, city }) => {
+    async ({ url, modules, company_name, piva, city }: { url: string; modules: string; company_name?: string; piva?: string; city?: string }) => {
         let args = ` --url "${url}" --modules "${modules}"`;
         if (company_name) args += ` --company-name "${company_name}"`;
         if (piva) args += ` --piva "${piva}"`;
@@ -284,7 +284,7 @@ server.tool(
     {
         data_path: z.string().describe("Path to the enriched lead JSON file")
     },
-    async ({ data_path }) => {
+    async ({ data_path }: { data_path: string }) => {
         return runTool(`npx tsx src/agent_tools/qualify_target.ts --data-path "${data_path}"`);
     }
 );
@@ -295,7 +295,7 @@ server.tool(
     {
         job_id: z.string().describe("The job ID to inspect")
     },
-    async ({ job_id }) => {
+    async ({ job_id }: { job_id: string }) => {
         return runTool(`npx tsx src/agent_tools/inspect_run.ts --job-id "${job_id}"`);
     }
 );
@@ -307,7 +307,7 @@ server.tool(
         source: z.string().describe("Path to the source CSV file"),
         preset: z.string().optional().describe("Preset to use, e.g., 'B2B_Lombardia'")
     },
-    async ({ source, preset }) => {
+    async ({ source, preset }: { source: string; preset?: string }) => {
         let args = ` --source "${source}"`;
         if (preset) args += ` --preset "${preset}"`;
         return runTool(`npx tsx src/agent_tools/run_pipeline_module.ts${args}`);
