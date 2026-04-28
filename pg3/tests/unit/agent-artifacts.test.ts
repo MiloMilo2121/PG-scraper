@@ -26,6 +26,7 @@ describe('agent_artifacts', () => {
     expect(a).toEqual(b);
     expect(a.runDir).toBe(path.resolve(tmpRoot, 'run-1'));
     expect(a.outputCsv).toBe(path.join(a.runDir, 'output.csv'));
+    expect(a.costLedger).toBe(path.join(a.runDir, 'cost_ledger.jsonl'));
   });
 
   it('rejects malicious runId values that try to escape the runs root', () => {

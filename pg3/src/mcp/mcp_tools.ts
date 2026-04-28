@@ -40,6 +40,30 @@ function newRunId(prefix: string): string {
   return `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
+type AgentRunArgs = {
+  contractVersion?: string;
+  runId?: string;
+  mode: 'campaign' | 'enrichment' | 'full';
+  sector?: string;
+  zone?: string;
+  provinces?: string[];
+  limit?: number;
+  sourceCsv?: string;
+  context?: {
+    workspaceId?: string;
+    agentId?: string;
+    sessionId?: string;
+    actorType?: 'human' | 'agent' | 'system' | 'ci';
+    traceId?: string;
+  };
+  budget?: {
+    maxCostPerRun?: number;
+    maxCostPerCompany?: number;
+    maxExternalCalls?: number;
+    maxRunDurationMs?: number;
+  };
+};
+
 function readProjectFile(projectRoot: string, relativePath: string, missing: string): string {
   const filePath = path.resolve(projectRoot, relativePath);
   return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : missing;
@@ -181,8 +205,9 @@ export function registerPg3SensorTools(
 export function registerAgentMcpTools(server: McpLikeServer): void {
   server.tool(
     'agent_run',
-    'Agent-first canonical action. Calls runScraper({runId, mode, sector, zone, provinces, limit, sourceCsv}) in-process.',
+    'Agent-first canonical action. Calls runScraper({contractVersion, runId, mode, context, budget, sector, zone, provinces, limit, sourceCsv}) in-process.',
     {
+      contractVersion: z.string().optional().describe("Agent contract version. Defaults to 'agent.v1'."),
       runId: z.string().optional().describe('Stable run id. Auto-generated if omitted.'),
       mode: z.enum(['campaign', 'enrichment', 'full']).describe('campaign | enrichment | full'),
       sector: z.string().optional().describe('Required for campaign/full'),
@@ -190,10 +215,30 @@ export function registerAgentMcpTools(server: McpLikeServer): void {
       provinces: z.array(z.string()).optional().describe("Province codes or names, e.g. ['VR','VE']"),
       limit: z.number().int().positive().optional().describe('Max companies to keep'),
       sourceCsv: z.string().optional().describe('Required for enrichment'),
+      context: z
+        .object({
+          workspaceId: z.string().optional(),
+          agentId: z.string().optional(),
+          sessionId: z.string().optional(),
+          actorType: z.enum(['human', 'agent', 'system', 'ci']).optional(),
+          traceId: z.string().optional(),
+        })
+        .optional()
+        .describe('Agent/run trace context for auditability.'),
+      budget: z
+        .object({
+          maxCostPerRun: z.number().nonnegative().optional(),
+          maxCostPerCompany: z.number().nonnegative().optional(),
+          maxExternalCalls: z.number().int().nonnegative().optional(),
+          maxRunDurationMs: z.number().int().positive().optional(),
+        })
+        .optional()
+        .describe('Per-run guardrails checked before report persistence.'),
     },
-    async (args: { runId?: string; mode: 'campaign' | 'enrichment' | 'full'; sector?: string; zone?: string; provinces?: string[]; limit?: number; sourceCsv?: string }) => {
+    async (args: AgentRunArgs) => {
       const { runScraper } = await import('../agent/agent_scraper.js');
       const result = await runScraper({
+        contractVersion: args.contractVersion,
         runId: args.runId ?? newRunId(`agent-${args.mode}`),
         mode: args.mode,
         sector: args.sector,
@@ -201,6 +246,8 @@ export function registerAgentMcpTools(server: McpLikeServer): void {
         provinces: args.provinces,
         limit: args.limit,
         sourceCsv: args.sourceCsv,
+        context: args.context,
+        budget: args.budget,
       });
       return asMcp(result);
     }

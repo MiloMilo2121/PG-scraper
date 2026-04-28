@@ -94,6 +94,17 @@ describe('runScraper enrichment smoke', () => {
         runId,
         mode: 'enrichment',
         sourceCsv: fixturePath,
+        context: {
+          workspaceId: 'smoke-workspace',
+          agentId: 'vitest-agent',
+          sessionId: 'smoke-session',
+          actorType: 'ci',
+          traceId: `trace-${runId}`,
+        },
+        budget: {
+          maxCostPerRun: 0,
+          maxExternalCalls: 0,
+        },
       },
       { rootDir: runsRoot }
     );
@@ -106,14 +117,22 @@ describe('runScraper enrichment smoke', () => {
     expect(result.artifacts.inputCsv).toBeTruthy();
     expect(result.artifacts.reportJson).toBeTruthy();
     expect(result.artifacts.logFile).toBeTruthy();
+    expect(result.artifacts.costLedger).toBeTruthy();
 
     expect(fs.existsSync(result.artifacts.inputCsv!)).toBe(true);
     expect(fs.existsSync(result.artifacts.reportJson!)).toBe(true);
     expect(fs.existsSync(result.artifacts.logFile!)).toBe(true);
+    expect(fs.existsSync(result.artifacts.costLedger!)).toBe(true);
 
     const reportContent = JSON.parse(fs.readFileSync(result.artifacts.reportJson!, 'utf-8'));
     expect(reportContent.runId).toBe(runId);
     expect(reportContent.status).toBe('queued');
+    expect(reportContent.input.context.traceId).toBe(`trace-${runId}`);
+    expect(reportContent.costSummary).toMatchObject({
+      totalCostEur: 0,
+      externalCalls: 0,
+      budgetStatus: 'within_budget',
+    });
 
     const runLog = fs
       .readFileSync(result.artifacts.logFile!, 'utf-8')
@@ -121,6 +140,17 @@ describe('runScraper enrichment smoke', () => {
       .split(/\r?\n/)
       .map((line) => JSON.parse(line));
     expect(runLog.map((entry) => entry.event)).toEqual([
+      'agent.run.started',
+      'agent.run.finished',
+    ]);
+    expect(runLog[0].payload.context.agentId).toBe('vitest-agent');
+
+    const costLedger = fs
+      .readFileSync(result.artifacts.costLedger!, 'utf-8')
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => JSON.parse(line));
+    expect(costLedger.map((entry) => entry.task_type)).toEqual([
       'agent.run.started',
       'agent.run.finished',
     ]);
@@ -157,6 +187,20 @@ describe('runScraper enrichment smoke', () => {
         fixturePath,
         '--run-id',
         runId,
+        '--workspace-id',
+        'cli-workspace',
+        '--agent-id',
+        'cli-agent',
+        '--session-id',
+        'cli-session',
+        '--actor-type',
+        'agent',
+        '--trace-id',
+        `trace-${runId}`,
+        '--max-cost-per-run',
+        '0',
+        '--max-external-calls',
+        '0',
       ],
       { cwd: projectRoot, env }
     );
@@ -171,6 +215,19 @@ describe('runScraper enrichment smoke', () => {
     expect(fs.existsSync(result.artifacts.inputCsv)).toBe(true);
     expect(fs.existsSync(result.artifacts.reportJson)).toBe(true);
     expect(fs.existsSync(result.artifacts.logFile)).toBe(true);
+    expect(fs.existsSync(result.artifacts.costLedger)).toBe(true);
+    expect(result.input.context).toMatchObject({
+      workspaceId: 'cli-workspace',
+      agentId: 'cli-agent',
+      sessionId: 'cli-session',
+      actorType: 'agent',
+      traceId: `trace-${runId}`,
+    });
+    expect(result.costSummary).toMatchObject({
+      totalCostEur: 0,
+      externalCalls: 0,
+      budgetStatus: 'within_budget',
+    });
 
     const inspect = await execFileAsync(
       'npm',
@@ -192,5 +249,6 @@ describe('runScraper enrichment smoke', () => {
     expect(inspected.entry.status).toBe('queued');
     expect(inspected.report.runId).toBe(runId);
     expect(inspected.report.stats.enriched).toBe(2);
+    expect(inspected.report.costSummary.budgetStatus).toBe('within_budget');
   });
 });

@@ -3,7 +3,10 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentRunRegistry } from '../../src/agent/agent_run_registry';
-import { AgentScraperRequest } from '../../src/agent/agent_contracts';
+import {
+  AGENT_CONTRACT_VERSION,
+  AgentScraperRequest,
+} from '../../src/agent/agent_contracts';
 
 describe('AgentRunRegistry', () => {
   let tmpRoot: string;
@@ -18,6 +21,7 @@ describe('AgentRunRegistry', () => {
 
   function sampleRequest(runId: string): AgentScraperRequest {
     return {
+      contractVersion: AGENT_CONTRACT_VERSION,
       runId,
       mode: 'enrichment',
       sourceCsv: '/tmp/x.csv',

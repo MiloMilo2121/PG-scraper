@@ -10,14 +10,28 @@ mission, benchmark or manual scripts.
 import { runScraper } from './src/agent';
 
 const result = await runScraper({
+  contractVersion: 'agent.v1',
   runId: 'crm-2026-04-28',
   mode: 'full',                // 'campaign' | 'enrichment' | 'full'
   sector: 'agenzie immobiliari',
   zone: 'Veneto',              // Italian region, province name, or province code
   provinces: ['VR', 'VE', 'PD'], // optional when zone is enough
   limit: 500,
+  context: {
+    workspaceId: 'crm-prod',
+    agentId: 'codex-cloud',
+    sessionId: 'session-001',
+    actorType: 'agent',
+    traceId: 'trace-001',
+  },
+  budget: {
+    maxCostPerRun: 1,
+    maxCostPerCompany: 0.01,
+    maxExternalCalls: 300,
+    maxRunDurationMs: 600000,
+  },
 });
-// → { runId, status, stats, artifacts: { outputCsv, reportJson, logFile } }
+// → { runId, status, stats, costSummary, artifacts: { outputCsv, reportJson, logFile, costLedger } }
 ```
 
 Equivalent canonical CLI command:
@@ -48,7 +62,14 @@ Run artifacts live under `output/runs/{runId}/` (override with
 - `output/runs/{runId}/output.csv` — discovered / combined CSV (campaign / full)
 - `output/runs/{runId}/report.json` — final `AgentScraperResult`
 - `output/runs/{runId}/run.log` — log stream
+- `output/runs/{runId}/cost_ledger.jsonl` — per-run cost/governance ledger
 - `output/runs/_registry.jsonl` — append-only registry of every run
+
+`report.json` always carries the request `context` when provided and a
+`costSummary` with `totalCostEur`, `costPerCompanyEur`, `externalCalls`,
+`budgetStatus`, and `warnings`. Budget status can be `not_configured`,
+`within_budget`, `warning`, or `exceeded`; exceeded budgets fail the run with a
+structured `BudgetExceededError`.
 
 Migration status of legacy modules is tracked in
 [`docs/refactor/LEGACY_EXTRACTION_MAP.md`](docs/refactor/LEGACY_EXTRACTION_MAP.md).

@@ -1,5 +1,6 @@
 import { ZodError } from 'zod';
 import {
+  AGENT_CONTRACT_VERSION,
   AgentRunError,
   AgentRunStatus,
   AgentScraperRequest,
@@ -13,6 +14,11 @@ import {
   ensureRunDir,
   writeReportJson,
 } from './agent_artifacts';
+import {
+  AgentCostTracker,
+  budgetExceededError,
+  emptyCostSummary,
+} from './agent_costs';
 import { AgentRunRegistry } from './agent_run_registry';
 import type { CampaignRunner } from './backends/campaign_backend';
 import type { EnrichmentRunner } from './backends/enrichment_backend';
@@ -68,11 +74,13 @@ export async function runScraper(
       status: 'failed',
       input: {
         ...rawObj,
+        contractVersion: AGENT_CONTRACT_VERSION,
         runId: safeRunId,
         mode: fallbackMode,
       } as AgentScraperRequest,
       stats: emptyStats(),
       artifacts: {},
+      costSummary: emptyCostSummary(),
       startedAt,
       finishedAt: nowIso(),
       durationMs: Date.now() - startedAtMs,
@@ -91,6 +99,7 @@ export async function runScraper(
       input: request,
       stats: emptyStats(),
       artifacts: {},
+      costSummary: emptyCostSummary(request.budget),
       startedAt,
       finishedAt: nowIso(),
       durationMs: Date.now() - startedAtMs,
@@ -98,14 +107,23 @@ export async function runScraper(
     };
   }
 
+  const costTracker = new AgentCostTracker(paths, request);
   registry.register(request, startedAt);
-  appendRunLog(paths, 'agent.run.started', { runId: request.runId, mode: request.mode });
+  await costTracker.recordStarted(startedAt);
+  appendRunLog(paths, 'agent.run.started', {
+    runId: request.runId,
+    mode: request.mode,
+    contractVersion: request.contractVersion,
+    context: request.context,
+    budget: request.budget,
+  });
 
   let status: AgentRunStatus = 'running';
   let stats = emptyStats();
   const artifacts: AgentScraperResult['artifacts'] = {
     reportJson: paths.reportJson,
     logFile: paths.logFile,
+    costLedger: paths.costLedger,
   };
   let error: AgentRunError | undefined;
 
@@ -140,15 +158,39 @@ export async function runScraper(
   }
 
   const finishedAt = nowIso();
+  const durationMs = Date.now() - startedAtMs;
+  let costSummary = emptyCostSummary(request.budget);
+  try {
+    costSummary = await costTracker.finalize({
+      stats,
+      durationMs,
+      success: status !== 'failed',
+      errorMessage: error?.message,
+    });
+  } catch {
+    costTracker.cleanup();
+  }
+
+  if (status !== 'failed' && costSummary.budgetStatus === 'exceeded') {
+    status = 'failed';
+    error = toAgentRunError(budgetExceededError(costSummary));
+    appendRunLog(paths, 'agent.run.failed', error);
+  }
+
+  if (costSummary.budgetStatus === 'warning' || costSummary.budgetStatus === 'exceeded') {
+    appendRunLog(paths, `agent.budget.${costSummary.budgetStatus}`, costSummary);
+  }
+
   const result: AgentScraperResult = {
     runId: request.runId,
     status,
     input: request,
     stats,
     artifacts,
+    costSummary,
     startedAt,
     finishedAt,
-    durationMs: Date.now() - startedAtMs,
+    durationMs,
     error,
   };
 

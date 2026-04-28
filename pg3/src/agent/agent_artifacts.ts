@@ -9,6 +9,7 @@ export interface RunPaths {
   outputCsv: string;
   reportJson: string;
   logFile: string;
+  costLedger: string;
 }
 
 export function defaultRunsRoot(): string {
@@ -42,6 +43,7 @@ export function resolveRunPaths(runId: string, opts?: { rootDir?: string }): Run
     outputCsv: path.join(resolvedRunDir, 'output.csv'),
     reportJson: path.join(resolvedRunDir, 'report.json'),
     logFile: path.join(resolvedRunDir, 'run.log'),
+    costLedger: path.join(resolvedRunDir, 'cost_ledger.jsonl'),
   };
 }
 

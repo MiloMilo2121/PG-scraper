@@ -42,6 +42,8 @@ describe('runScraper dispatch', () => {
     expect(result.stats.failed).toBe(1);
     expect(result.artifacts.outputCsv).toContain('campaign.csv');
     expect(fs.existsSync(result.artifacts.logFile!)).toBe(true);
+    expect(fs.existsSync(result.artifacts.costLedger!)).toBe(true);
+    expect(result.costSummary?.budgetStatus).toBe('not_configured');
   });
 
   it("routes mode='enrichment' to the enrichment runner and reports queued", async () => {
@@ -60,6 +62,17 @@ describe('runScraper dispatch', () => {
         runId: 'run-enrich',
         mode: 'enrichment',
         sourceCsv,
+        context: {
+          workspaceId: 'workspace-a',
+          agentId: 'codex-a',
+          sessionId: 'session-a',
+          actorType: 'agent',
+          traceId: 'trace-a',
+        },
+        budget: {
+          maxExternalCalls: 0,
+          maxCostPerRun: 0,
+        },
       },
       { rootDir: tmpRoot, enrichmentRunner }
     );
@@ -68,6 +81,12 @@ describe('runScraper dispatch', () => {
     expect(result.status).toBe('queued');
     expect(result.stats).toEqual({ loaded: 10, discovered: 0, enriched: 8, failed: 2 });
     expect(result.artifacts.inputCsv).toBeTruthy();
+    expect(result.input.context?.traceId).toBe('trace-a');
+    expect(result.costSummary).toMatchObject({
+      totalCostEur: 0,
+      externalCalls: 0,
+      budgetStatus: 'within_budget',
+    });
   });
 
   it("routes mode='full' through campaign then enrichment", async () => {

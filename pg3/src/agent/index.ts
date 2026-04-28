@@ -1,7 +1,13 @@
 export { runScraper } from './agent_scraper';
 export type { RunScraperDeps } from './agent_scraper';
 export {
+  AGENT_CONTRACT_VERSION,
+  AgentActorTypeSchema,
   AgentArtifactsSchema,
+  AgentBudgetStatusSchema,
+  AgentCostSummarySchema,
+  AgentRunBudgetSchema,
+  AgentRunContextSchema,
   AgentRunErrorSchema,
   AgentRunModeSchema,
   AgentRunStatusSchema,
@@ -12,7 +18,12 @@ export {
   mergeStats,
 } from './agent_contracts';
 export type {
+  AgentActorType,
   AgentArtifacts,
+  AgentBudgetStatus,
+  AgentCostSummary,
+  AgentRunBudget,
+  AgentRunContext,
   AgentRunError,
   AgentRunMode,
   AgentRunStatus,

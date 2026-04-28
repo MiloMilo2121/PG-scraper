@@ -22,6 +22,7 @@ describe('runScraper error handling', () => {
     );
     expect(result.status).toBe('failed');
     expect(result.error?.name).toBe('ZodError');
+    expect(result.costSummary?.budgetStatus).toBe('not_configured');
   });
 
   it('preserves the user-supplied mode in the failed result for diagnostics', async () => {
@@ -100,5 +101,39 @@ describe('runScraper error handling', () => {
     );
     expect(result.status).toBe('failed');
     expect(result.error?.name).toBe('UnknownError');
+  });
+
+  it('marks the run failed when a configured runtime budget is exceeded', async () => {
+    const campaignCsv = path.join(tmpRoot, 'budget.csv');
+    fs.writeFileSync(campaignCsv, 'company_name\nFoo\n', 'utf-8');
+    const campaignRunner = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return {
+        count: 1,
+        combinedCsv: campaignCsv,
+        perProvinceCsvs: [campaignCsv],
+        byProvince: { VR: 1 },
+        droppedInvalid: 0,
+        droppedLowSignal: 0,
+      };
+    });
+
+    const result = await runScraper(
+      {
+        runId: 'run-budget-exceeded',
+        mode: 'campaign',
+        sector: 'dentisti',
+        provinces: ['VR'],
+        budget: {
+          maxRunDurationMs: 1,
+        },
+      },
+      { rootDir: tmpRoot, campaignRunner }
+    );
+
+    expect(result.status).toBe('failed');
+    expect(result.error?.name).toBe('BudgetExceededError');
+    expect(result.costSummary?.budgetStatus).toBe('exceeded');
+    expect(result.costSummary?.warnings[0]).toContain('maxRunDurationMs exceeded');
   });
 });

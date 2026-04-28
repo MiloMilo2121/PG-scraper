@@ -41,6 +41,8 @@ describe('MCP agent-first tool registration', () => {
 
     expect(server.tools.has('agent_run')).toBe(true);
     expect(server.tools.has('agent_inspect_run')).toBe(true);
+    expect(server.tools.get('agent_run')!.schema.context).toBeTruthy();
+    expect(server.tools.get('agent_run')!.schema.budget).toBeTruthy();
   });
 
   it('keeps legacy actuator tools hidden by default', () => {
@@ -74,6 +76,16 @@ describe('MCP agent-first tool registration', () => {
     const result = await server.tools.get('agent_run')!.handler({
       runId: 'mcp-bad-enrich',
       mode: 'enrichment',
+      context: {
+        workspaceId: 'workspace-mcp',
+        agentId: 'codex-mcp',
+        sessionId: 'session-mcp',
+        actorType: 'agent',
+        traceId: 'trace-mcp',
+      },
+      budget: {
+        maxExternalCalls: 0,
+      },
     });
 
     expect(result).toMatchObject({ isError: true });
@@ -84,6 +96,12 @@ describe('MCP agent-first tool registration', () => {
       input: {
         mode: 'enrichment',
         runId: 'mcp-bad-enrich',
+        context: {
+          traceId: 'trace-mcp',
+        },
+        budget: {
+          maxExternalCalls: 0,
+        },
       },
       error: {
         name: 'ZodError',

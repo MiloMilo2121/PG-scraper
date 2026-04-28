@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AGENT_CONTRACT_VERSION,
   AgentScraperRequestSchema,
   emptyStats,
   mergeStats,
 } from '../../src/agent/agent_contracts';
+import { emptyCostSummary } from '../../src/agent/agent_costs';
 
 describe('AgentScraperRequestSchema', () => {
   it('accepts a valid campaign request', () => {
@@ -14,6 +16,7 @@ describe('AgentScraperRequestSchema', () => {
       provinces: ['VR', 'VE'],
       limit: 100,
     });
+    expect(parsed.contractVersion).toBe(AGENT_CONTRACT_VERSION);
     expect(parsed.mode).toBe('campaign');
     expect(parsed.provinces).toEqual(['VR', 'VE']);
   });
@@ -25,6 +28,44 @@ describe('AgentScraperRequestSchema', () => {
       sourceCsv: '/tmp/input.csv',
     });
     expect(parsed.sourceCsv).toBe('/tmp/input.csv');
+  });
+
+  it('accepts agent governance context and budget guardrails', () => {
+    const parsed = AgentScraperRequestSchema.parse({
+      runId: 'run-governed',
+      mode: 'enrichment',
+      sourceCsv: '/tmp/input.csv',
+      context: {
+        workspaceId: 'workspace-1',
+        agentId: 'codex-1',
+        sessionId: 'session-1',
+        actorType: 'agent',
+        traceId: 'trace-1',
+      },
+      budget: {
+        maxCostPerRun: 1,
+        maxCostPerCompany: 0.01,
+        maxExternalCalls: 10,
+        maxRunDurationMs: 60_000,
+      },
+    });
+
+    expect(parsed.context?.actorType).toBe('agent');
+    expect(parsed.budget?.maxExternalCalls).toBe(10);
+  });
+
+  it('rejects unknown governance fields instead of silently ignoring them', () => {
+    expect(() =>
+      AgentScraperRequestSchema.parse({
+        runId: 'run-governance-extra',
+        mode: 'enrichment',
+        sourceCsv: '/tmp/input.csv',
+        context: {
+          workspaceId: 'workspace-1',
+          randomField: 'nope',
+        },
+      })
+    ).toThrow();
   });
 
   it('rejects unknown mode', () => {
@@ -103,5 +144,12 @@ describe('stats helpers', () => {
       { loaded: 10, discovered: 20, enriched: 30, failed: 40 }
     );
     expect(merged).toEqual({ loaded: 11, discovered: 22, enriched: 33, failed: 44 });
+  });
+});
+
+describe('cost helpers', () => {
+  it('emptyCostSummary marks absent budget separately from zero cost within budget', () => {
+    expect(emptyCostSummary().budgetStatus).toBe('not_configured');
+    expect(emptyCostSummary({ maxCostPerRun: 0 }).budgetStatus).toBe('within_budget');
   });
 });

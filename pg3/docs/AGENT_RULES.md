@@ -54,7 +54,7 @@ Per le operazioni di Business Intelligence e qualificazione lead, stiamo cercand
 
 ## 4. COME OPERARE TECNICAMENTE CON PG3
 *   Non creare mega-script "quick and dirty" in `src/scripts/` per processare liste intere in modo non governato.
-*   **Usa il contratto agent-first:** le operazioni standardizzate devono passare da `src/agent/agent_scraper.ts` tramite `runScraper({ runId, mode, sector, zone, provinces, limit, sourceCsv })`.
+*   **Usa il contratto agent-first:** le operazioni standardizzate devono passare da `src/agent/agent_scraper.ts` tramite `runScraper({ contractVersion, runId, mode, context, budget, sector, zone, provinces, limit, sourceCsv })`.
 *   **Usa i tool MCP `agent_*`:** `agent_run` e `agent_inspect_run` sono il percorso ufficiale. I vecchi tool `pg3_*` e `src/agent_tools/*` restano solo per retrocompatibilita e sono nascosti salvo flag legacy.
 *   **Leggi il contratto:** fai riferimento a `docs/AGENT_FIRST_CONTRACT.md` prima di usare CLI o MCP. `docs/TOOLS_MANIFEST.md` descrive i vecchi micro-executors e non e piu la fonte primaria.
 
@@ -70,17 +70,50 @@ Ogni campagna o arricchimento deve passare da `runScraper()`. Non usare runner, 
 import { runScraper } from './src/agent/agent_scraper';
 
 const result = await runScraper({
+  contractVersion: 'agent.v1',
   runId: 'crm-2026-04-28',   // alfanumerico + trattini/underscore, max 128 car.
   mode: 'full',               // 'campaign' | 'enrichment' | 'full'
   sector: 'agenzie immobiliari',
   zone: 'Veneto',
   provinces: ['VR', 'VE', 'PD'],
   limit: 500,
+  context: {
+    workspaceId: 'workspace-prod',
+    agentId: 'codex-cloud',
+    sessionId: 'session-2026-04-28',
+    actorType: 'agent',
+    traceId: 'trace-2026-04-28-001',
+  },
+  budget: {
+    maxCostPerRun: 1,
+    maxCostPerCompany: 0.01,
+    maxExternalCalls: 300,
+    maxRunDurationMs: 600000,
+  },
 });
 // result.status: 'completed' | 'queued' | 'running' | 'failed'
 // result.error: { name, message, stack } oppure undefined
-// result.artifacts: { inputCsv?, outputCsv?, reportJson, logFile }
+// result.artifacts: { inputCsv?, outputCsv?, reportJson, logFile, costLedger }
+// result.costSummary: { totalCostEur, costPerCompanyEur, externalCalls, budgetStatus, warnings }
 ```
+
+### Governance obbligatoria per agenti cloud/coworker
+
+Ogni run avviato da un agente esterno deve includere:
+
+| Campo | Regola |
+|---|---|
+| `contractVersion` | Sempre `agent.v1` finche il contratto non cambia. |
+| `context.workspaceId` | Workspace, cliente o tenant proprietario del run. |
+| `context.agentId` | Identita dell'agente chiamante. |
+| `context.sessionId` | Sessione operativa collegata al task. |
+| `context.actorType` | `agent` per Codex/Claude/Gemini, `human` per operatore manuale, `ci` per test. |
+| `context.traceId` | Correlation id leggibile anche fuori dal repo. |
+| `budget.*` | Sempre presente nei run non banali; usare limiti realistici invece di lasciare budget aperto. |
+
+Se un budget configurato viene superato, `runScraper()` non lancia eccezioni:
+ritorna `status='failed'`, `error.name='BudgetExceededError'`, aggiorna
+`report.json`, registra `agent.budget.exceeded` in `run.log`, e scrive il ledger.
 
 ### Modalità
 
@@ -101,6 +134,21 @@ npm run agent -- --mode enrichment --source-csv /path/to/input.csv --run-id enri
 
 # Full pipeline
 npm run agent -- --mode full --sector "agenzie" --provinces "MI,BG" --run-id full-001
+
+# Run agent-first con governance/costi
+npm run agent -- \
+  --mode enrichment \
+  --source-csv /path/to/input.csv \
+  --run-id enrich-governed-001 \
+  --workspace-id crm-prod \
+  --agent-id codex-cloud \
+  --session-id session-001 \
+  --actor-type agent \
+  --trace-id trace-001 \
+  --max-cost-per-run 1 \
+  --max-cost-per-company 0.01 \
+  --max-external-calls 300 \
+  --max-run-duration-ms 600000
 
 # Ispezione run precedente
 npm run agent:inspect -- --run-id mio-run-001
@@ -136,6 +184,7 @@ output/runs/
     output.csv     ← CSV risultato del campaign (mode=campaign/full)
     report.json    ← AgentScraperResult serializzato
     run.log        ← log stream del run
+    cost_ledger.jsonl ← ledger costi/governance del run
   _registry.jsonl  ← append-only, tutti i run mai eseguiti
 ```
 
