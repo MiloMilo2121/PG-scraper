@@ -204,6 +204,27 @@ export function registerPg3SensorTools(
 
 export function registerAgentMcpTools(server: McpLikeServer): void {
   server.tool(
+    'agent_doctor',
+    'Agent-first readiness check. Verifies canonical scripts, docs, artifacts, cost ledger writability, hidden legacy MCP tools, and optional Redis connectivity.',
+    {
+      projectRoot: z.string().optional().describe('Project root. Defaults to the MCP server cwd.'),
+      rootDir: z.string().optional().describe('Agent runs root. Defaults to AGENT_RUNS_ROOT or output/runs.'),
+      checkRedis: z.boolean().optional().describe('When true, PING Redis using redisUrl or REDIS_URL.'),
+      redisUrl: z.string().optional().describe('Redis URL used when checkRedis=true.'),
+    },
+    async (args: { projectRoot?: string; rootDir?: string; checkRedis?: boolean; redisUrl?: string }) => {
+      const { runAgentDoctor } = await import('../agent/agent_doctor.js');
+      const result = await runAgentDoctor({
+        projectRoot: args.projectRoot,
+        rootDir: args.rootDir,
+        checkRedis: args.checkRedis,
+        redisUrl: args.redisUrl,
+      });
+      return asMcpJson(result, result.status === 'failed');
+    }
+  );
+
+  server.tool(
     'agent_run',
     'Agent-first canonical action. Calls runScraper({contractVersion, runId, mode, context, budget, sector, zone, provinces, limit, sourceCsv}) in-process.',
     {

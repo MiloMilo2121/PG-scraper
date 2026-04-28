@@ -1,3 +1,6 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   McpLikeServer,
@@ -39,8 +42,10 @@ describe('MCP agent-first tool registration', () => {
     const server = new FakeMcpServer();
     registerPg3McpTools(server, { enableLegacyTools: false });
 
+    expect(server.tools.has('agent_doctor')).toBe(true);
     expect(server.tools.has('agent_run')).toBe(true);
     expect(server.tools.has('agent_inspect_run')).toBe(true);
+    expect(server.tools.get('agent_doctor')!.schema.checkRedis).toBeTruthy();
     expect(server.tools.get('agent_run')!.schema.context).toBeTruthy();
     expect(server.tools.get('agent_run')!.schema.budget).toBeTruthy();
   });
@@ -122,6 +127,37 @@ describe('MCP agent-first tool registration', () => {
       runId: 'missing-run',
       found: false,
     });
+  });
+
+  it('registers doctor as a structured readiness tool', async () => {
+    const server = new FakeMcpServer();
+    registerPg3McpTools(server, { enableLegacyTools: false });
+    const runsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pg3-mcp-doctor-runs-'));
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pg3-mcp-doctor-runtime-'));
+    const originalRuntimeDataDir = process.env.RUNTIME_DATA_DIR;
+    process.env.RUNTIME_DATA_DIR = runtimeRoot;
+
+    try {
+      const result = await server.tools.get('agent_doctor')!.handler({
+        projectRoot: process.cwd(),
+        rootDir: runsRoot,
+      });
+
+      expect(result).not.toMatchObject({ isError: true });
+      expect(parseTextPayload(result)).toMatchObject({
+        projectRoot: process.cwd(),
+        runsRoot,
+        status: expect.stringMatching(/^(ok|warning)$/),
+      });
+    } finally {
+      if (originalRuntimeDataDir === undefined) {
+        delete process.env.RUNTIME_DATA_DIR;
+      } else {
+        process.env.RUNTIME_DATA_DIR = originalRuntimeDataDir;
+      }
+      fs.rmSync(runsRoot, { recursive: true, force: true });
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
   });
 
   it('registers documented MCP resources', () => {

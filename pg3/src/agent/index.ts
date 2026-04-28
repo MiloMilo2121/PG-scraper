@@ -2,6 +2,13 @@ export { runScraper } from './agent_scraper';
 export type { RunScraperDeps } from './agent_scraper';
 export { inspectAgentRun } from './agent_inspection';
 export type { AgentInspectPayload } from './agent_inspection';
+export { runAgentDoctor } from './agent_doctor';
+export type {
+  AgentDoctorCheck,
+  AgentDoctorOptions,
+  AgentDoctorResult,
+  AgentDoctorStatus,
+} from './agent_doctor';
 export {
   AGENT_CONTRACT_VERSION,
   AgentActorTypeSchema,

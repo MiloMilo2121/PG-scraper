@@ -55,7 +55,7 @@ Per le operazioni di Business Intelligence e qualificazione lead, stiamo cercand
 ## 4. COME OPERARE TECNICAMENTE CON PG3
 *   Non creare mega-script "quick and dirty" in `src/scripts/` per processare liste intere in modo non governato.
 *   **Usa il contratto agent-first:** le operazioni standardizzate devono passare da `src/agent/agent_scraper.ts` tramite `runScraper({ contractVersion, runId, mode, context, budget, sector, zone, provinces, limit, sourceCsv })`.
-*   **Usa i tool MCP `agent_*`:** `agent_run` e `agent_inspect_run` sono il percorso ufficiale. I vecchi tool `pg3_*` e `src/agent_tools/*` restano solo per retrocompatibilita e sono nascosti salvo flag legacy.
+*   **Usa i tool MCP `agent_*`:** `agent_doctor`, `agent_run` e `agent_inspect_run` sono il percorso ufficiale. I vecchi tool `pg3_*` e `src/agent_tools/*` restano solo per retrocompatibilita e sono nascosti salvo flag legacy.
 *   **Leggi il contratto:** fai riferimento a `docs/AGENT_FIRST_CONTRACT.md` prima di usare CLI o MCP. `docs/TOOLS_MANIFEST.md` descrive i vecchi micro-executors e non e piu la fonte primaria.
 
 ---
@@ -157,12 +157,17 @@ npm run agent -- \
 
 # Ispezione run precedente
 npm run agent:inspect -- --run-id mio-run-001
+
+# Readiness prima di consegnare il repo a un agent cloud/coworker
+npm run agent:doctor
+npm run agent:doctor -- --check-redis
 ```
 
 ### MCP tools canonici
 
 | Tool | Uso |
 |---|---|
+| `agent_doctor` | Verifica readiness: script canonici, docs, artifacts, cost ledger, legacy flag, Redis opzionale |
 | `agent_run` | Tutti i mode: campaign / enrichment / full |
 | `agent_inspect_run` | Leggi stato + report.json di un runId, con `costSummary` ricalcolato dai ledger |
 
@@ -224,6 +229,7 @@ OPENAI_API_KEY=test-key REDIS_URL=redis://127.0.0.1:6379/15 npm run test:smoke
 ### Quality gate (ordine raccomandato)
 
 ```bash
+npm run agent:doctor       # readiness agent-first; aggiungi -- --check-redis se Redis deve servire
 npm run typecheck          # tsc strict, zero errori
 npm run test:unit          # unit deterministici
 npm run test:smoke         # richiede Redis

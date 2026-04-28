@@ -39,11 +39,12 @@ Equivalent canonical CLI command:
 ```bash
 npm run agent -- --json '{"runId":"crm-2026-04-28","mode":"full","sector":"dentisti","zone":"Lombardia","limit":500}'
 npm run agent:inspect -- --run-id crm-2026-04-28
+npm run agent:doctor
 ```
 
-MCP exposes the same path through one action tool, `agent_run`, plus the
-read-only `agent_inspect_run`. Legacy `pg3_*` MCP tools are hidden unless
-`PG3_ENABLE_LEGACY_MCP_TOOLS=true`.
+MCP exposes the same path through `agent_doctor`, one action tool
+`agent_run`, plus the read-only `agent_inspect_run`. Legacy `pg3_*` MCP tools
+are hidden unless `PG3_ENABLE_LEGACY_MCP_TOOLS=true`.
 
 MCP is a `tsx` runtime, not a production `dist` target:
 
@@ -77,6 +78,17 @@ provider ledgers use the same IDs. Run `npm run agent:inspect -- --run-id <id>`
 after workers finish to refresh `costSummary` from both
 `output/runs/{runId}/cost_ledger.jsonl` and the runtime ledger
 (`COST_LEDGER_PATH` or `RUNTIME_DATA_DIR/cost_ledger.jsonl`).
+
+Before handing the repo to a cloud coworker agent, run:
+
+```bash
+npm run agent:doctor
+npm run agent:doctor -- --check-redis
+```
+
+The doctor is non-destructive. It validates the canonical scripts, docs,
+runtime files, writable artifact roots, runtime cost ledger parent, hidden
+legacy MCP tools, configured `OPENAI_API_KEY`, and optional Redis connectivity.
 
 Migration status of legacy modules is tracked in
 [`docs/refactor/LEGACY_EXTRACTION_MAP.md`](docs/refactor/LEGACY_EXTRACTION_MAP.md).
@@ -141,6 +153,8 @@ The actual runtime surface in use is:
   - `npm run test:smoke`
 - Agent CLI smoke:
   - covered by `npm run test:smoke`
+- Agent operational readiness:
+  - `npm run agent:doctor`
 - Full test gate:
   - `npm test`
 - Build:

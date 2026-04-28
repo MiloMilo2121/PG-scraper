@@ -24,6 +24,7 @@
     "benchmark:wave": "npx tsx src/scripts/v8_benchmark_wave.ts",
     "agent": "npx tsx src/agent/agent_scraper_cli.ts",
     "agent:inspect": "npx tsx src/agent/agent_inspect_cli.ts",
+    "agent:doctor": "npx tsx src/agent/agent_doctor_cli.ts",
     "mcp": "npx tsx src/mcp_server.ts"
   },
   "dependencies": {

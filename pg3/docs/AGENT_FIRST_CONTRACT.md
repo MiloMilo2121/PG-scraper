@@ -81,6 +81,7 @@ npm run agent -- --run-id veneto-agencies --mode campaign --sector "agenzie immo
 npm run agent -- --run-id veneto-enrich --mode enrichment --source-csv output/runs/veneto-agencies/output.csv
 npm run agent -- --run-id lombardia-dentisti --mode full --sector "dentisti" --zone "Lombardia"
 npm run agent:inspect -- --run-id lombardia-dentisti
+npm run agent:doctor
 ```
 
 For structured callers, pass a full JSON payload:
@@ -111,6 +112,7 @@ npm run agent -- \
 
 | Tool | Use |
 |---|---|
+| `agent_doctor` | Readiness check for scripts, docs, artifacts, cost ledger, legacy MCP flag, and optional Redis. |
 | `agent_run` | Canonical campaign, enrichment, or full run. |
 | `agent_inspect_run` | Read registry/report by `runId`. |
 
@@ -166,6 +168,23 @@ Because enrichment workers run asynchronously, the initial `report.json` may
 only include the enqueue-time cost view. Use `npm run agent:inspect` or the MCP
 `agent_inspect_run` tool after workers complete; inspection refreshes
 `costSummary` from both the per-run ledger and the runtime provider ledger.
+
+## Readiness Doctor
+
+Before a cloud coworker, Codex, or external MCP client starts real work, run:
+
+```bash
+npm run agent:doctor
+npm run agent:doctor -- --check-redis
+```
+
+`agent:doctor` exits with code `0` for `ok` and `warning`, and `1` for
+`failed`. The JSON response contains stable `checks[]` and `recommendations[]`
+fields so another agent can decide whether to continue, pause, or ask for
+operator action.
+
+Redis is optional because discovery-only and local inspection flows do not
+need it. Pass `--check-redis` before `enrichment`, `full`, or smoke tests.
 
 ## Golden Smoke
 
