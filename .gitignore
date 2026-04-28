@@ -4,3 +4,6 @@
 **/.DS_Store
 pg3/data
 pg3/worker.pid
+
+# Archive junk — prevent future runtime-generated junk from re-accumulating
+_archive/junk/

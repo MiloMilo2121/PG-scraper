@@ -15,13 +15,14 @@ temp/
 debug_fail_*.png
 debug_reportaziende.png
 # Keep the current input file if you want, but usually it's better to ignore and provide it separately
-# input_phase1_cleaned.csv 
+# input_phase1_cleaned.csv
 .gemini/
 brain/
 temp_profiles/
 output_server/
 *.pid
 cost_ledger.jsonl
+cost_ledger_test*.jsonl
 data/cost_ledger.jsonl
 data/browser-sessions/
 .omega_browser_sessions/
@@ -32,3 +33,13 @@ dump.rdb
 
 # Refactor backups (safety net, not committed)
 *.bak.*
+
+# Prevent re-accumulation of browser profiles (archived in _archive/junk/browser-profiles/)
+search_profile_scraper/
+**/browser_*/
+
+# Prevent re-accumulation of generated test files
+test_5_names.txt
+test_*.js
+debug_env.js
+test_proxy_axios.js
