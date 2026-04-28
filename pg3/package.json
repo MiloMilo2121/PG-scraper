@@ -21,7 +21,12 @@
     "start:server": "node dist/src/index.js server",
     "oracle": "source testenv/bin/activate && python ops/oracle/server.py",
     "benchmark": "npx tsx src/scripts/v8_benchmark.ts",
-    "benchmark:wave": "npx tsx src/scripts/v8_benchmark_wave.ts"
+    "benchmark:wave": "npx tsx src/scripts/v8_benchmark_wave.ts",
+    "agent:run": "npx tsx src/agent/agent_scraper_cli.ts",
+    "agent:campaign": "npx tsx src/agent/agent_scraper_cli.ts --mode campaign",
+    "agent:enrich": "npx tsx src/agent/agent_scraper_cli.ts --mode enrichment",
+    "agent:full": "npx tsx src/agent/agent_scraper_cli.ts --mode full",
+    "agent:inspect": "npx tsx src/agent/agent_inspect_cli.ts"
   },
   "dependencies": {
     "@types/cors": "^2.8.19",

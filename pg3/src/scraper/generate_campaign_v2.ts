@@ -871,9 +871,27 @@ async function scrapeImmobiliareLane(
     }
 }
 
-// ─── MAIN ────────────────────────────────────────────────────────────────────
-async function main() {
-    const { query, provinceCodes, resume, checkpointFile, limit: maxCompanies, includeImmobiliare } = parseCLI();
+// ─── PROGRAMMATIC ENTRYPOINT ────────────────────────────────────────────────
+export interface CampaignResult {
+    count: number;
+    combinedCsv?: string;
+    perProvinceCsvs: string[];
+    byProvince: Record<string, number>;
+    droppedInvalid: number;
+    droppedLowSignal: number;
+}
+
+/**
+ * Programmatic counterpart of main(). Same logic, no process.exit, returns a
+ * result object. Invoked by the agent-first entrypoint
+ * `src/agent/agent_scraper.ts` and by the legacy CLI wrapper at the bottom of
+ * this file.
+ */
+export async function runCampaignProgrammatic(
+    opts: CampaignCliOptions & { outputDir?: string }
+): Promise<CampaignResult> {
+    const { query, provinceCodes, resume, checkpointFile, limit: maxCompanies, includeImmobiliare } = opts;
+    const effectiveOutputDir = opts.outputDir ?? OUTPUT_DIR;
     const interimFile = checkpointFile;
     const useImmobiliareLane = includeImmobiliare && /immobil/i.test(query.toLowerCase());
 
@@ -901,13 +919,19 @@ async function main() {
 
     if (categories.length === 0) {
         Logger.error(`❌ No PG categories matched for "${query}". Aborting.`);
-        return;
+        return {
+            count: 0,
+            perProvinceCsvs: [],
+            byProvince: {},
+            droppedInvalid: 0,
+            droppedLowSignal: 0,
+        };
     }
 
     Logger.info(`✅ Resolved "${query}" → ${categories.length} PG categories`);
     Logger.info(`📋 Categories: [${categories.join(', ')}]\n`);
 
-    if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    if (!fs.existsSync(effectiveOutputDir)) fs.mkdirSync(effectiveOutputDir, { recursive: true });
 
     // 🔑 DIRECT BROWSER LAUNCH managed by getBrowser() helper
     Logger.info('[Browser] 🚀 Initializing browser...');
@@ -960,7 +984,13 @@ async function main() {
 
         if (targets.length === 0) {
             Logger.warn('⚠️ No targets generated. Check categories and provinces.');
-            return;
+            return {
+                count: 0,
+                perProvinceCsvs: [],
+                byProvince: {},
+                droppedInvalid: 0,
+                droppedLowSignal: 0,
+            };
         }
 
         // PHASE 2 + 3: Scrape each target
@@ -1045,8 +1075,7 @@ async function main() {
         if (finalList.length === 0) {
             Logger.warn('\n⚠️  SCRAPING FINISHED BUT NO COMPANIES FOUND.');
             Logger.warn('   This usually means all targets returned 0 results or browser crashes were systematic.');
-            Logger.error('❌ FATAL: Generation failed to produce any data.');
-            process.exit(1);
+            throw new Error('Campaign generation produced zero companies');
         }
 
         Logger.info(`\n${'═'.repeat(60)}`);
@@ -1064,9 +1093,12 @@ async function main() {
 
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 
+        const perProvinceCsvs: string[] = [];
+        const byProvinceCounts: Record<string, number> = {};
+
         for (const [prov, companies] of byProvince) {
             const filename = `campaign_${prov.toLowerCase()}_${timestamp}.csv`;
-            const filepath = path.join(OUTPUT_DIR, filename);
+            const filepath = path.join(effectiveOutputDir, filename);
 
             const csvWriter = createObjectCsvWriter({
                 path: filepath,
@@ -1075,10 +1107,12 @@ async function main() {
 
             await csvWriter.writeRecords(companies);
             Logger.info(`💾 Saved: ${filepath} (${companies.length} companies)`);
+            perProvinceCsvs.push(filepath);
+            byProvinceCounts[prov] = companies.length;
         }
 
         // Also save a combined CSV
-        const combinedFile = path.join(OUTPUT_DIR, `campaign_COMBINED_${timestamp}.csv`);
+        const combinedFile = path.join(effectiveOutputDir, `campaign_COMBINED_${timestamp}.csv`);
         const combinedWriter = createObjectCsvWriter({
             path: combinedFile,
             header: buildCampaignHeaders(useImmobiliareLane)
@@ -1097,10 +1131,28 @@ async function main() {
         Logger.info(`   PG only: ${pgCount} | Maps only: ${mapsCount} | Merged: ${mergedCount}`);
         Logger.info(`${'═'.repeat(60)}\n`);
 
-    } catch (error) {
-        Logger.error(`💀 FATAL: ${(error as Error).message}`);
+        return {
+            count: finalList.length,
+            combinedCsv: combinedFile,
+            perProvinceCsvs,
+            byProvince: byProvinceCounts,
+            droppedInvalid,
+            droppedLowSignal,
+        };
+
     } finally {
         if (browserInstance) await browserInstance.close().catch(() => { });
+    }
+}
+
+// ─── MAIN (CLI entrypoint, kept for back-compat) ────────────────────────────
+async function main() {
+    const opts = parseCLI();
+    try {
+        await runCampaignProgrammatic(opts);
+    } catch (error) {
+        Logger.error(`💀 FATAL: ${(error as Error).message}`);
+        process.exit(1);
     }
 }
 

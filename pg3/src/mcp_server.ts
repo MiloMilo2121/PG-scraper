@@ -3,12 +3,33 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { exec } from "child_process";
 import { promisify } from "util";
+import crypto from "crypto";
 import path from "path";
 import fs from "fs";
 
 // Import PG3 native dependencies for "God Mode" introspection
 import { getDb, initializeDatabase } from "./enricher/db/index.js";
 import { getQueueHealth } from "./enricher/queue/index.js";
+
+// Agent-first official path (in-process, no exec)
+import { runScraper } from "./agent/agent_scraper.js";
+import { AgentRunRegistry } from "./agent/agent_run_registry.js";
+import { AgentScraperResult } from "./agent/agent_contracts.js";
+
+function asMcpJson(payload: unknown, isError = false) {
+    return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+        isError,
+    };
+}
+
+function newRunId(prefix: string): string {
+    return `${prefix}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function asMcp(result: AgentScraperResult) {
+    return asMcpJson(result, result.status === 'failed');
+}
 
 const execAsync = promisify(exec);
 
@@ -155,11 +176,113 @@ server.tool(
 );
 
 
-// --- ACTUATORS (CLI Wrappers) ---
+// ==========================================
+// 🤖 AGENT-FIRST OFFICIAL PATH (in-process, no shell-out)
+// ==========================================
+// One contract: runScraper({runId, sector, zone, mode, ...}). Every campaign
+// or enrichment goes through here; the registry keeps every runId
+// inspectable. Legacy "pg3_*" tools below are kept for back-compat.
+
+server.tool(
+    "agent_scrape_target",
+    "Agent-first official entrypoint. Runs an end-to-end campaign+enrichment in one call (mode='full').",
+    {
+        sector: z.string().describe("Business sector / category query (e.g. 'agenzie immobiliari')"),
+        zone: z.string().optional().describe("Zone label (e.g. 'Veneto'); used when provinces are not specified"),
+        provinces: z.array(z.string()).optional().describe("Province codes or names (e.g. ['VR','VE'])"),
+        cities: z.array(z.string()).optional().describe("Optional city filter"),
+        limit: z.number().int().positive().optional().describe("Max companies to keep"),
+        runId: z.string().optional().describe("Optional explicit runId; auto-generated otherwise"),
+    },
+    async (args) => {
+        const result = await runScraper({
+            runId: args.runId ?? newRunId('agent-full'),
+            mode: 'full',
+            sector: args.sector,
+            zone: args.zone,
+            provinces: args.provinces,
+            cities: args.cities,
+            limit: args.limit,
+        });
+        return asMcp(result);
+    }
+);
+
+server.tool(
+    "agent_run_campaign",
+    "Agent-first: run only the campaign discovery step (no enrichment). Returns the discovered CSV path.",
+    {
+        sector: z.string().describe("Business sector / category query"),
+        zone: z.string().optional().describe("Zone label"),
+        provinces: z.array(z.string()).optional().describe("Province codes or names"),
+        cities: z.array(z.string()).optional().describe("Optional city filter"),
+        limit: z.number().int().positive().optional().describe("Max companies"),
+        runId: z.string().optional(),
+    },
+    async (args) => {
+        const result = await runScraper({
+            runId: args.runId ?? newRunId('agent-campaign'),
+            mode: 'campaign',
+            sector: args.sector,
+            zone: args.zone,
+            provinces: args.provinces,
+            cities: args.cities,
+            limit: args.limit,
+        });
+        return asMcp(result);
+    }
+);
+
+server.tool(
+    "agent_enrich_campaign",
+    "Agent-first: enqueue an existing CSV for enrichment via the BullMQ scheduler.",
+    {
+        sourceCsv: z.string().describe("Absolute path to the CSV produced by a campaign or external source"),
+        runId: z.string().optional(),
+    },
+    async (args) => {
+        const result = await runScraper({
+            runId: args.runId ?? newRunId('agent-enrich'),
+            mode: 'enrichment',
+            sourceCsv: args.sourceCsv,
+        });
+        return asMcp(result);
+    }
+);
+
+server.tool(
+    "agent_inspect_run",
+    "Agent-first: inspect a run by runId. Returns the registry entry plus the persisted report.json.",
+    {
+        runId: z.string().describe("Run identifier returned by an earlier agent_scrape/run/enrich call"),
+    },
+    async ({ runId }) => {
+        const registry = new AgentRunRegistry();
+        const entry = registry.get(runId);
+        if (!entry) {
+            return asMcpJson({ runId, found: false }, true);
+        }
+        const reportPath = entry.result?.artifacts?.reportJson;
+        let report: unknown = null;
+        if (reportPath && fs.existsSync(reportPath)) {
+            try {
+                report = JSON.parse(fs.readFileSync(reportPath, 'utf-8'));
+            } catch {
+                report = null;
+            }
+        }
+        return asMcpJson({ entry, report });
+    }
+);
+
+
+// ==========================================
+// LEGACY ACTUATORS (DEPRECATED — prefer agent_* tools above)
+// ==========================================
 
 server.tool(
     "pg3_discover_target",
-    "Normalize target input and assess a URL. Use this to validate a single lead before enrichment.",
+    "[DEPRECATED — use agent_scrape_target / agent_run_campaign] Normalize target input and assess a URL. Use this to validate a single lead before enrichment.",
     {
         query: z.string().optional().describe("Company name to search"),
         url: z.string().optional().describe("Website URL"),
@@ -176,7 +299,7 @@ server.tool(
 
 server.tool(
     "pg3_enrich_target",
-    "Trigger specific enrichment modules (financial, contacts, social) for a target. This launches the Omega runtime asynchronously.",
+    "[DEPRECATED — use agent_enrich_campaign for batch enrichment] Trigger specific enrichment modules (financial, contacts, social) for a target. This launches the Omega runtime asynchronously.",
     {
         url: z.string().describe("Target website URL. Must be valid."),
         modules: z.string().describe("Comma separated list of modules. Valid options: 'financial', 'pec', 'social', 'email', 'contacts', 'linkedin', 'decision_maker'"),
@@ -195,7 +318,7 @@ server.tool(
 
 server.tool(
     "pg3_qualify_target",
-    "Calculate the Visual-Product ICP score using LLMs and VisionExtractor heuristics. (Currently deferred in PG3)",
+    "[DEPRECATED — qualification is being migrated under the agent_* path] Calculate the Visual-Product ICP score using LLMs and VisionExtractor heuristics. (Currently deferred in PG3)",
     {
         data_path: z.string().describe("Path to the enriched lead JSON file")
     },
@@ -206,7 +329,7 @@ server.tool(
 
 server.tool(
     "pg3_inspect_run",
-    "Inspect the state of an ongoing batch or a specific target in the DB/Cache. (Note: use pg3_db_query for granular data)",
+    "[DEPRECATED — use agent_inspect_run for runId-based inspection] Inspect the state of an ongoing batch or a specific target in the DB/Cache. (Note: use pg3_db_query for granular data)",
     {
         job_id: z.string().describe("The job ID to inspect")
     },
@@ -217,7 +340,7 @@ server.tool(
 
 server.tool(
     "pg3_run_pipeline_module",
-    "Trigger a standard pipeline batch run from a CSV source. Use this to start a massive parallel run.",
+    "[DEPRECATED — use agent_enrich_campaign with a sourceCsv] Trigger a standard pipeline batch run from a CSV source. Use this to start a massive parallel run.",
     {
         source: z.string().describe("Path to the source CSV file"),
         preset: z.string().optional().describe("Preset to use, e.g., 'B2B_Lombardia'")
