@@ -73,7 +73,7 @@ The current PR introduces the new agent path additively. No legacy file is moved
 | `agent_tools/inspect_run.ts` | Sostituita da `agent/agent_inspect_cli.ts` con registry runId-based | archive-deferred |
 | `agent_tools/run_pipeline_module.ts` | Sostituita da `agent_scraper_cli.ts` | archive-deferred |
 
-MCP server — i 5 tool legacy in `mcp_server.ts` sono nascosti salvo `PG3_ENABLE_LEGACY_MCP_TOOLS=true`; i tool in-process ufficiali sono `agent_run` e `agent_inspect_run`.
+MCP server — i 5 actuator legacy sono registrati in `src/mcp/mcp_tools.ts` e restano nascosti salvo `PG3_ENABLE_LEGACY_MCP_TOOLS=true`; i tool in-process ufficiali sono `agent_run` e `agent_inspect_run`.
 
 ---
 

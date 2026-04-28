@@ -13,6 +13,7 @@
     "src/enricher/tests",
     "src/foundation/__tests__",
     "src/mcp_server.ts",
+    "src/mcp",
     "src/agent_tools"
   ]
 }

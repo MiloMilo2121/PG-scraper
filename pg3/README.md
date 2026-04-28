@@ -31,6 +31,16 @@ MCP exposes the same path through one action tool, `agent_run`, plus the
 read-only `agent_inspect_run`. Legacy `pg3_*` MCP tools are hidden unless
 `PG3_ENABLE_LEGACY_MCP_TOOLS=true`.
 
+MCP is a `tsx` runtime, not a production `dist` target:
+
+```bash
+npm run mcp
+```
+
+`src/mcp_server.ts`, `src/mcp/**`, and `src/agent_tools/**` are intentionally
+excluded from `tsconfig.build.json`. The built production bundle is for
+worker/server runtime.
+
 Run artifacts live under `output/runs/{runId}/` (override with
 `AGENT_RUNS_ROOT`):
 
@@ -101,6 +111,8 @@ The actual runtime surface in use is:
   - `npm run test:unit`
 - BullMQ/Redis smoke integration:
   - `npm run test:smoke`
+- Agent CLI smoke:
+  - covered by `npm run test:smoke`
 - Full test gate:
   - `npm test`
 - Build:

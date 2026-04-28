@@ -77,7 +77,7 @@ const result = await runScraper({
   provinces: ['VR', 'VE', 'PD'],
   limit: 500,
 });
-// result.status: 'success' | 'queued' | 'failed'
+// result.status: 'completed' | 'queued' | 'running' | 'failed'
 // result.error: { name, message, stack } oppure undefined
 // result.artifacts: { inputCsv?, outputCsv?, reportJson, logFile }
 ```
@@ -86,7 +86,7 @@ const result = await runScraper({
 
 | mode | Richiede | Restituisce | Status atteso |
 |---|---|---|---|
-| `campaign` | `sector` + (`provinces` o `zone`) | `outputCsv` con aziende trovate | `success` |
+| `campaign` | `sector` + (`provinces` o `zone`) | `outputCsv` con aziende trovate | `completed` |
 | `enrichment` | `sourceCsv` (path assoluto esistente) | `inputCsv` copiato nel run dir | `queued` (worker BullMQ out-of-band) |
 | `full` | `sector` + geo | campaign → enrichment chained | `queued` |
 
@@ -94,13 +94,13 @@ const result = await runScraper({
 
 ```bash
 # Campagna discovery
-npm run agent:campaign -- --sector "dentisti" --zone "Lombardia" --run-id mio-run-001
+npm run agent -- --mode campaign --sector "dentisti" --zone "Lombardia" --run-id mio-run-001
 
 # Enrichment da CSV esistente
-npm run agent:enrich -- --source-csv /path/to/input.csv --run-id enrich-001
+npm run agent -- --mode enrichment --source-csv /path/to/input.csv --run-id enrich-001
 
 # Full pipeline
-npm run agent:full -- --sector "agenzie" --provinces "MI,BG" --run-id full-001
+npm run agent -- --mode full --sector "agenzie" --provinces "MI,BG" --run-id full-001
 
 # Ispezione run precedente
 npm run agent:inspect -- --run-id mio-run-001
@@ -114,6 +114,18 @@ npm run agent:inspect -- --run-id mio-run-001
 | `agent_inspect_run` | Leggi stato + report.json di un runId |
 
 I tool `pg3_*` sono **DEPRECATED** — funzionano per back-compat (abilitati con `PG3_ENABLE_LEGACY_MCP_TOOLS=true`) ma non usarli per nuovi flussi.
+
+### Runtime policy: dist vs tsx
+
+`npm run build` produce il bundle production per worker/server sotto `dist/`.
+
+MCP e i micro-executor legacy non fanno parte del bundle production:
+
+- `src/mcp_server.ts` gira via `npm run mcp` come runtime stdio MCP.
+- `src/mcp/**` contiene la registrazione testabile dei tool MCP ed e escluso dal build production.
+- `src/agent_tools/*` gira solo via `tsx` per compatibilita legacy ed e escluso dal build production.
+
+Questa separazione e intenzionale: il core agent-first e `runScraper`, mentre MCP e legacy sono superfici operative esterne al worker production.
 
 ### Dove vivono gli artifacts
 
@@ -154,7 +166,7 @@ OPENAI_API_KEY=test-key REDIS_URL=redis://127.0.0.1:6379/15 npm run test:smoke
 
 ```bash
 npm run typecheck          # tsc strict, zero errori
-npm run test:unit          # 279 test, 4 fallimenti noti in preverify-gate.test.ts (pre-esistenti)
+npm run test:unit          # unit deterministici
 npm run test:smoke         # richiede Redis
 npm run build              # produce dist/
 ```

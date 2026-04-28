@@ -57,6 +57,16 @@ npm run agent -- --json '{"runId":"job-001","mode":"campaign","sector":"dentisti
 
 The legacy `pg3_*` MCP tools are hidden unless `PG3_ENABLE_LEGACY_MCP_TOOLS=true`.
 
+MCP is intentionally a `tsx` runtime, not part of the production `dist` bundle:
+
+```bash
+npm run mcp
+```
+
+`src/mcp_server.ts`, `src/mcp/**`, and `src/agent_tools/**` are excluded from
+`tsconfig.build.json`. The production build is for worker/server runtime; the
+agent contract remains `runScraper(...)`.
+
 ## Artifacts
 
 Default root: `output/runs/{runId}/`.
@@ -70,6 +80,19 @@ Default root: `output/runs/{runId}/`.
 | `_registry.jsonl` | Append-only registry under `output/runs/`. |
 
 Override the root with `AGENT_RUNS_ROOT`.
+
+## Golden Smoke
+
+Redis is required for integration smoke tests:
+
+```bash
+redis-server --port 6379 --daemonize yes --maxmemory-policy noeviction --save ""
+npm run test:smoke
+```
+
+The canonical fixture is `tests/fixtures/agent-enrichment-input.csv`. It is
+small, deterministic, and drives the agent enrichment smoke without browser or
+external API calls.
 
 ## Non-Goals
 

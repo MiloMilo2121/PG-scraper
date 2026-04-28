@@ -23,7 +23,8 @@
     "benchmark": "npx tsx src/scripts/v8_benchmark.ts",
     "benchmark:wave": "npx tsx src/scripts/v8_benchmark_wave.ts",
     "agent": "npx tsx src/agent/agent_scraper_cli.ts",
-    "agent:inspect": "npx tsx src/agent/agent_inspect_cli.ts"
+    "agent:inspect": "npx tsx src/agent/agent_inspect_cli.ts",
+    "mcp": "npx tsx src/mcp_server.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
