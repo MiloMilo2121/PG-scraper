@@ -13,10 +13,15 @@ const sqlitePath = path.join(tempDir, 'scheduler-smoke.sqlite');
 let redisAvailable = true;
 let originalRedisPolicy: string | null = null;
 
+import { resetRuntimeConfigForTests } from '../../src/shared-runtime/config/runtime_config';
+
 describe('Scheduler smoke', () => {
   beforeAll(async () => {
+    vi.resetModules();
     process.env.QUEUE_PREFIX = queuePrefix;
     process.env.SQLITE_PATH = sqlitePath;
+    process.env.REDIS_URL = redisUrl;
+    resetRuntimeConfigForTests();
     const client = new IORedis(redisUrl, {
       maxRetriesPerRequest: 1,
       enableReadyCheck: false,
