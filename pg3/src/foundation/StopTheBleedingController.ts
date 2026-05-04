@@ -19,10 +19,16 @@ export class StopTheBleedingController {
 
     public async evaluateStatus(totalCompaniesProcessed: number): Promise<boolean> {
         // Evaluate to check if we should enter or exit BLEEDING mode
-        const health = this.ledger.getHealthSnapshot(300, { punitiveOnly: true }); // 5 min rolling window
+        // ✅ FIX: Exclude CostRouter (SERP) errors — free SERP providers fail by design
+        const health = this.ledger.getHealthSnapshot(300, { punitiveOnly: true, excludeModules: ['CostRouter'] }); // 5 min rolling window
         const avgCost = totalCompaniesProcessed > 0 ? await this.ledger.getCostPerCompany(totalCompaniesProcessed) : 0;
         const valveMetrics = this.valve.getMetrics();
         const poolStatus = this.pool.getPoolStatus();
+
+        // ✅ FIX: Don't trigger bleeding with insufficient data (cold start)
+        if (health.total_calls < 10) {
+            return this.isBleeding;
+        }
 
         let shouldBleed = false;
         const reasons: string[] = [];

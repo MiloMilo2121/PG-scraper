@@ -181,7 +181,7 @@ export class FinancialService {
             Logger.info(`[Financial] 🔗 Found registry link: ${targetUrl}. Navigating via Tor...`);
 
             // Use TorBrowser to visit the found link
-            const torBrowser = (await import('../browser/tor_browser')).TorBrowser.getInstance();
+            const torBrowser = (await import('../../../scraper/core/browser/tor_browser')).TorBrowser.getInstance();
             const page = await torBrowser.getPage();
 
             try {

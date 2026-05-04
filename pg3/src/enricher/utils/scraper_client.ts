@@ -90,7 +90,9 @@ async function withRetry<T>(fn: () => Promise<T>, retries: number): Promise<T> {
 
 export class ScraperClient {
   public static isBrightDataEnabled(): boolean {
-    return !!(config.brightData?.webUnlockerUrl && config.brightData.webUnlockerUrl.trim().length > 0);
+    const hasProxyUrl = !!(config.brightData?.webUnlockerUrl && config.brightData.webUnlockerUrl.trim().length > 0);
+    const hasApiToken = !!(config.brightData?.apiToken && config.brightData.apiToken.trim().length > 0);
+    return hasProxyUrl || hasApiToken;
   }
 
   private static defaultHeaders(): Record<string, string> {
@@ -124,12 +126,39 @@ export class ScraperClient {
 
   private static async brightDataGet(targetUrl: string, options: ScraperClientOptions): Promise<ScraperClientResponse> {
     if (!this.isBrightDataEnabled()) {
-      throw new Error('BRIGHTDATA_WEB_UNLOCKER_URL missing');
+      throw new Error('BrightData Web Unlocker configuration missing');
     }
 
     const timeoutMs = options.timeoutMs ?? 30000;
 
-    // Web Unlocker operates via proxy authentication
+    // Use API Token approach if configured
+    if (config.brightData?.apiToken) {
+      const zone = config.brightData.webUnlockerZone || 'web_unlocker1';
+      const response = await fetch('https://api.brightdata.com/request', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.brightData.apiToken}`,
+        },
+        body: JSON.stringify({
+          zone: zone,
+          url: targetUrl,
+          format: 'raw',
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+
+      const dataObj = await response.text();
+      return {
+        via: 'brightdata',
+        status: response.status,
+        finalUrl: targetUrl,
+        headers: Object.fromEntries(response.headers.entries()),
+        data: dataObj,
+      };
+    }
+
+    // Fallback to Proxy URL approach
     const proxyUrl = config.brightData.webUnlockerUrl!;
     const proxyAgentOptions: Record<string, unknown> = {
       uri: proxyUrl,

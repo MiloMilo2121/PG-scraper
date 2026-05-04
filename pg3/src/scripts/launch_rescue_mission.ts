@@ -10,9 +10,9 @@ import { CompanyInput } from '../scraper/types';
 
 dotenv.config();
 
-const INPUT_FILE = path.join(process.cwd(), 'output_server/campaigns/FINAL_HETZNER_MERGED.csv');
+const INPUT_FILE = process.argv[2] ? path.resolve(process.cwd(), process.argv[2]) : path.join(process.cwd(), 'output_server/campaigns/FINAL_HETZNER_MERGED.csv');
 const TIMESTAMP = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-const OUTPUT_FILE = path.join(process.cwd(), 'output_server/campaigns', `RESCUE_SESSION_${TIMESTAMP}.csv`);
+const OUTPUT_FILE = path.join(process.cwd(), 'output/campaigns', `RESCUE_SESSION_${TIMESTAMP}.csv`);
 
 // Max concurrent valid checks
 const CONCURRENCY = 4; // Increased slightly as Nuclear handles its own rate limits

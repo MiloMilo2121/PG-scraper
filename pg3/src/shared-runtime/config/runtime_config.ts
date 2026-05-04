@@ -65,6 +65,8 @@ const EnvSchema = z.object({
 
 
   BRIGHTDATA_WEB_UNLOCKER_URL: z.string().optional(),
+  BRIGHTDATA_API_TOKEN: z.string().optional(),
+  BRIGHTDATA_WEB_UNLOCKER_ZONE: z.string().optional(),
   PROXY_FAILURE_COOLDOWN_MS: z.coerce.number().min(1000).default(300000), // 5 min
 
   // 📍 DISCOVERY THRESHOLDS
@@ -343,6 +345,8 @@ function buildConfig(env: Env) {
     },
     brightData: {
       webUnlockerUrl: env.BRIGHTDATA_WEB_UNLOCKER_URL,
+      apiToken: env.BRIGHTDATA_API_TOKEN,
+      webUnlockerZone: env.BRIGHTDATA_WEB_UNLOCKER_ZONE,
     },
     captcha: {
       maxAttempts: env.CAPTCHA_MAX_ATTEMPTS,

@@ -210,7 +210,8 @@ export class CostLedger {
     }
 
     public getProviderHealth(provider: string): { error_rate: number; avg_ms: number } {
-        const entries = this.ringBuffer.filter(e => e.provider === provider);
+        // ✅ FIX: only count punitive failures, not semantic_empty (e.g. SERP returning 0 results for obscure queries)
+        const entries = this.ringBuffer.filter(e => e.provider === provider && e.punitive !== false);
         if (entries.length === 0) return { error_rate: 0, avg_ms: 0 };
 
         let errors = 0;

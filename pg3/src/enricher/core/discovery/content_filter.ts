@@ -20,7 +20,14 @@ export class ContentFilter {
         'informazione-aziende.it', 'trovanumeri.com', 'reteimprese.it', 'area-clienti.com',
         'pagineimprese.it', 'aziende.virgilio.it', 'yelp.com', 'linkedin.it',
         'signalhire.com', 'rocketreach.co', 'zoominfo.com', 'apollo.io',
-        'lusha.com', 'arounddeal.com', 'datanyze.com', 'companywall.it'
+        'lusha.com', 'arounddeal.com', 'datanyze.com', 'companywall.it',
+        'visura.pro', 'registroaziende.it', 'wogha.com', 'fatturatoitalia.it', 
+        'prontoimprese.it', 'saikoo.ai', 'reportaziende.it',
+        'trovacasa.it', 'cheannunci.it', 'money.it', 'guidamonaci.it',
+        'abbrevia.it', 'immobiliare.it', 'idealista.it', 'casa.it',
+        'tuttocitta.it', 'dnb.com', 'cloudfront.net',
+        'soloaffitti.it', 'tecnocasa.it', 'immobiliare.info', 'annuncicase.it',
+        'cercasicasa.it', 'attico.it', 'wikicasa.it', 'caasa.it'
     ];
 
     // Task 16: Parking / Domain for Sale patterns
@@ -57,6 +64,23 @@ export class ContentFilter {
             return this.DIRECTORIES.some((blocked) => domain === blocked || domain.endsWith(`.${blocked}`));
         } catch {
             return true; // Invalid URL is junk
+        }
+    }
+
+    /**
+     * Checks if a URL belongs to a registry we can extract data from (Pivot Strategy).
+     */
+    static isExtractableRegistry(url: string): boolean {
+        try {
+            const withProtocol = url.startsWith('http://') || url.startsWith('https://') ? url : `https://${url}`;
+            const domain = new URL(withProtocol).hostname.replace(/^www\./, '').toLowerCase();
+            const extractable = [
+                'visura.pro', 'registroaziende.it', 'wogha.com', 'fatturatoitalia.it', 
+                'prontoimprese.it', 'saikoo.ai', 'reportaziende.it'
+            ];
+            return extractable.some((blocked) => domain === blocked || domain.endsWith(`.${blocked}`));
+        } catch {
+            return false;
         }
     }
 

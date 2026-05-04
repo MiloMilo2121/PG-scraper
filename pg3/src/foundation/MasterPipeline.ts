@@ -234,7 +234,8 @@ export class MasterPipeline {
             // Helper for Ultimate Golden Match (now with semantic name matching)
             const companyNameForGate = input.company_name;
             const checkUrl = async (url: string, layerName: string, attemptState: CheckAttemptState): Promise<boolean> => {
-                if (attemptState.expired || ContentFilter.isDirectoryOrSocial(url)) {
+                const isExtractableRegistry = ContentFilter.isExtractableRegistry(url);
+                if (attemptState.expired || (!isExtractableRegistry && ContentFilter.isDirectoryOrSocial(url))) {
                     return false;
                 }
 
@@ -268,8 +269,52 @@ export class MasterPipeline {
                             }
                         }
                     }
+
+                    // 🌟 OMEGA V9.1: If Oracle failed/offline and we are still BLOCKED, fallback to Bright Data Web Unlocker API
+                    const stillBlocked = nav.status === 'BLOCKED' || nav.status === 'CF_CHALLENGE' || nav.status === 'TIMEOUT';
+                    if (stillBlocked && !attemptState.expired) {
+                        const { ScraperClient } = require('../enricher/utils/scraper_client');
+                        if (ScraperClient.isBrightDataEnabled()) {
+                            console.log(`[MasterPipeline] 🛡️ Local bypasses failed. Escalating to Bright Data Web Unlocker API per ${url}...`);
+                            try {
+                                const bdResponse = await ScraperClient.fetchHtml(url, { mode: 'brightdata', timeoutMs: 30000 });
+                                if (bdResponse.status >= 200 && bdResponse.status < 300 && bdResponse.data && bdResponse.data.length > 500) {
+                                    console.log(`[MasterPipeline] 🌟 Bright Data Web Unlocker succeeded for ${url}`);
+                                    nav = { status: 'OK' as const, html: bdResponse.data, finalUrl: bdResponse.finalUrl || url, blocked_resources: 0, duration_ms: 0, browser_id: 'brightdata-api' };
+                                }
+                            } catch (bdErr: any) {
+                                console.warn(`[MasterPipeline] Bright Data Web Unlocker fallback failed: ${bdErr.message}`);
+                            }
+                        }
+                    }
                     if (!attemptState.expired && nav.status === 'OK' && nav.html) {
-                        // Try PIVA match first
+                        
+                        // 🌟 OMEGA V9.2: INLINE ENRICHMENT & PIVOT STRATEGY
+                        if (isExtractableRegistry) {
+                            console.log(`[MasterPipeline] 🕵️ Extracting opportunistic data from registry: ${url}`);
+                            const { OpportunisticExtractor } = require('./OpportunisticExtractor');
+                            const extracted = OpportunisticExtractor.extract(nav.html, url);
+                            
+                            if (extracted.financialData) {
+                                console.log(`[MasterPipeline] 💰 Extracted inline financials: Fatturato ${extracted.financialData.fatturato_current}`);
+                                (input as any).inline_financials = extracted.financialData;
+                            }
+                            
+                            (input as any).inline_extra = {
+                                pec: extracted.pec,
+                                ateco: extracted.ateco,
+                                dipendenti: extracted.dipendenti
+                            };
+                            
+                            if (extracted.websiteUrl) {
+                                console.log(`[MasterPipeline] 🔄 PIVOT! Registry points to: ${extracted.websiteUrl}`);
+                                return await checkUrl(extracted.websiteUrl, layerName + '_PIVOT', attemptState);
+                            }
+                            
+                            return false; // Registry is never the official website
+                        }
+
+                        // Try PIVA match first (for normal websites)
                         if (piva) {
                             const cleanPiva = piva.replace(/[^0-9]/g, '');
                             const bodyText = nav.html.replace(/[^0-9]/g, '');

@@ -76,11 +76,15 @@ export class BackpressureValve {
     private adjustConcurrency() {
         if (this.isPaused) return;
 
-        const health = this.ledger.getHealthSnapshot(30, { punitiveOnly: true });
+        // ✅ FIX: Exclude CostRouter (SERP) errors from backpressure calculation.
+        // Free SERP providers (DDG, CrtSh, Tor) fail by design (rate-limited, captcha'd).
+        // Only browser pool, paid API, and infrastructure errors should trigger throttling.
+        const health = this.ledger.getHealthSnapshot(30, { punitiveOnly: true, excludeModules: ['CostRouter'] });
 
-        // Safety net: Redis down or MemoryFirstCache issues? 
-        // We simulate a strict cap if things are really broken, but we don't strictly have Redis state here.
-        // We just use error rates.
+        if (health.total_calls < 3) {
+            // Not enough non-SERP data to make a decision — hold steady
+            return;
+        }
 
         if (health.error_rate > BackpressureValve.EMERGENCY_ERROR_RATE) {
             // Emergency Mode

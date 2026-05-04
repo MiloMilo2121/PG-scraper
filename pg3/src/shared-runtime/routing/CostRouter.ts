@@ -486,7 +486,7 @@ export class CostRouter {
 
         const entries = (await ledgerWithRecentEntries.getRecentEntries(200))
             .filter((entry) => entry.provider === provider)
-            .filter((entry) => entry.success || entry.punitive !== false);
+            .filter((entry) => entry.punitive !== false); // ✅ FIX: exclude non-punitive errors (e.g. semantic_empty) from health calc
 
         if (entries.length < 5) {
             return null;
