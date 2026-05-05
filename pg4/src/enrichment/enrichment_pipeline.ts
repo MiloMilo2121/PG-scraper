@@ -45,6 +45,7 @@ export async function runEnrichmentPipeline(input: PipelineInput): Promise<Enric
       start,
       perLead,
       outcome: 'error',
+      run,
     });
   }
 
@@ -68,6 +69,7 @@ export async function runEnrichmentPipeline(input: PipelineInput): Promise<Enric
       start,
       perLead,
       outcome: 'not_found',
+      run,
     });
   }
 
@@ -87,8 +89,13 @@ export async function runEnrichmentPipeline(input: PipelineInput): Promise<Enric
     try {
       const outcome = await stage.run(perLead, lead, normalized);
       stageOutcomes[stage.name] = outcome;
-      if (outcome.cost_eur) perLead.costEur += outcome.cost_eur;
       if (outcome.provider) perLead.providersUsed.add(outcome.provider);
+      // Phase 4.2.1: source-of-truth for per-lead cost is the CostLedger.
+      // Stages may forget to populate StageOutcome.cost_eur; the ledger
+      // already saw every router call (with meta.lead_id), so we sync
+      // from there. This keeps `tierCapForLead()` honest in the next
+      // iteration AND `lead.cost_eur` correct at finalize time.
+      perLead.costEur = run.ledger.costForLead(perLead.leadId);
       if (outcome.status === 'success') break; // discovery succeeded — stop ladder
       lastReasonCode = outcome.reason_code ?? lastReasonCode;
     } catch (err) {
@@ -101,6 +108,9 @@ export async function runEnrichmentPipeline(input: PipelineInput): Promise<Enric
         detail: (err as Error).message,
       };
       lastReasonCode = reason;
+      // Sync cost even on stage error — the failed call may still have
+      // cost the operator something (paid SERP that 5xx'd, etc.).
+      perLead.costEur = run.ledger.costForLead(perLead.leadId);
       logger.warn({ stage: stage.name, err: (err as Error).message }, '[pipeline] stage threw');
     }
   }
@@ -127,9 +137,8 @@ export async function runEnrichmentPipeline(input: PipelineInput): Promise<Enric
     start,
     perLead,
     outcome: found ? 'success' : 'not_found',
+    run,
   });
-
-  void run;
 }
 
 function finalize(
@@ -141,11 +150,19 @@ function finalize(
     start: number;
     perLead: PerLeadContext;
     outcome: 'success' | 'partial' | 'not_found' | 'error';
+    run: Run;
   }
 ): EnrichmentResult {
   lead.status = args.status;
   lead.reason_code = args.reason_code;
   lead.duration_ms = Date.now() - args.start;
+  // Phase 4.2.1: lead.cost_eur is sourced from the canonical CostLedger
+  // (filtered by lead_id), NOT from the in-memory perLead.costEur which
+  // depended on stages remembering to populate StageOutcome.cost_eur.
+  // Stages may attribute their cost only via router.fetch/search/complete
+  // (which always tags the entry with meta.lead_id) — this guarantees
+  // the final number matches what was actually billable.
+  args.perLead.costEur = args.run.ledger.costForLead(args.perLead.leadId);
   lead.cost_eur = args.perLead.costEur;
   lead.providers_used = Array.from(args.perLead.providersUsed);
   lead.stage_outcomes = args.stage_outcomes;

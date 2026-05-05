@@ -7,11 +7,8 @@ import { JsonlWriter } from '../io/jsonl_writer';
 import { parsePagineGialleResults } from '../discovery/sources/pagine_gialle_parser';
 import { parseGoogleMapsResults } from '../discovery/sources/google_maps_parser';
 import { dedupeLeads, Deduplicator } from '../discovery/deduper';
-import { readJsonlAsLeads } from '../io/jsonl_writer';
+import { rehydrateFromPriorRun } from '../runtime/resume';
 import type { Lead } from '../types/lead';
-// Type-only import: the runtime class is still lazy-loaded inside
-// runLiveMode() so fixture-mode startup never imports playwright/etc.
-import type { Checkpoint } from '../runtime/checkpoint';
 
 /**
  * scrape — Phase 4
@@ -75,6 +72,7 @@ async function main() {
     checkpointPath: optString(args, 'checkpoint'),
     restartEvery: parseIntOrUndefined(optString(args, 'restart-every')),
     fresh: !!args.flags['fresh'],
+    allowMissingJsonl: !!args.flags['allow-missing-jsonl'],
   });
 }
 
@@ -166,6 +164,14 @@ interface LiveModeArgs {
    * checkpoint is reloaded so resume produces a complete CSV.
    */
   fresh?: boolean;
+  /**
+   * Phase 4.2.1: an existing checkpoint that says pages are `done`
+   * combined with a missing JSONL is a HARD ERROR by default — the
+   * resulting CSV would silently miss every lead from those pages.
+   * Pass `--allow-missing-jsonl` to acknowledge the data loss and
+   * proceed anyway. Pass `--fresh` to wipe the checkpoint instead.
+   */
+  allowMissingJsonl?: boolean;
 }
 
 async function runLiveMode(a: LiveModeArgs) {
@@ -208,8 +214,16 @@ async function runLiveMode(a: LiveModeArgs) {
   // checkpoint, re-hydrate the deduper + lead set BEFORE iterating any
   // comune. Otherwise checkpointed pages skip without contributing leads,
   // and the resulting CSV would silently miss the work that was already
-  // done. This is Phase 4.1's core fix.
-  const resumed = await rehydrateFromPriorRun(jsonlOut, checkpoint, dedup, allLeads);
+  // done. Phase 4.2.1: this is now a HARD ERROR instead of a warning when
+  // the JSONL is missing — operator must pass `--fresh` or
+  // `--allow-missing-jsonl`.
+  const resumed = await rehydrateFromPriorRun({
+    jsonlPath: jsonlOut,
+    checkpoint,
+    dedup,
+    sink: allLeads,
+    allowMissingJsonl: !!a.allowMissingJsonl,
+  });
 
   let totalCards = 0;
   let dropped = 0;
@@ -269,48 +283,6 @@ async function runLiveMode(a: LiveModeArgs) {
   });
 }
 
-/**
- * Re-hydrate `dedup` and `allLeads` from a prior run's JSONL so that
- * checkpointed-as-done pages can be safely skipped without losing the
- * leads they contributed. Returns the number of leads loaded (0 if no
- * prior JSONL or empty checkpoint).
- *
- * Phase 4.1 fix — without this, a resumed run produces a CSV missing
- * every lead from any page the checkpoint says was already done.
- */
-async function rehydrateFromPriorRun(
-  jsonlPath: string,
-  checkpoint: Checkpoint,
-  dedup: Deduplicator,
-  allLeads: Lead[]
-): Promise<number> {
-  if (checkpoint.countDone() === 0) return 0;
-  if (!fs.existsSync(jsonlPath)) {
-    logger.warn(
-      { jsonl: jsonlPath, checkpoint_done: checkpoint.countDone() },
-      '[scrape] checkpoint shows prior runs but JSONL is missing — checkpoint will skip pages whose leads cannot be recovered. Re-run with --fresh for a clean slate.'
-    );
-    return 0;
-  }
-  const prior = await readJsonlAsLeads(jsonlPath);
-  let loaded = 0;
-  for (const lead of prior) {
-    if (!lead.company_name) continue;
-    const existing = dedup.find(lead);
-    if (existing) {
-      dedup.merge(existing, lead);
-    } else {
-      dedup.add(lead);
-      allLeads.push(lead);
-      loaded += 1;
-    }
-  }
-  logger.info(
-    { jsonl: jsonlPath, prior_records: prior.length, loaded_unique: loaded, checkpoint_done: checkpoint.countDone() },
-    '[scrape] resumed from prior JSONL — checkpointed pages will be skipped, but their leads are already in the working set'
-  );
-  return loaded;
-}
 
 function resolveComuniList(
   a: LiveModeArgs,

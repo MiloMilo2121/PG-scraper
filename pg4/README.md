@@ -83,6 +83,7 @@ pg3 logs showed 16K+ `SERP_EMPTY_RESULT` per batch (mistakenly logged as ERROR),
 - **`SERP_EMPTY_RESULT` is not punitive.** Empty SERP results increment the ledger as `kind: 'empty'` but do NOT count toward circuit-breaker trips. Pg3 used to lock down free providers because of this.
 - **Block / rate-limit / transport hits ARE punitive.** Bing's Cloudflare-Turnstile pages throw `ProviderBlockError`; the router classifies it (`kind: 'blocked'`), counts it toward the breaker, and routes around the provider for a cooldown window. Same for `429` (`rate_limit`) and `5xx`/`ENOTFOUND`/`fetch failed` (`transport`).
 - **Per-lead cost ceiling.** `--cost-ceiling-eur` (default `0.10`) caps the EUR spent on a single lead. Once hit, `tierCapForLead()` forces subsequent stages to `maxTier: 1` (free SERP only) for the remainder of that lead. The pipeline exposes this via `PerLeadContext.budgetExhausted`.
+- **Cost is sourced from the ledger, not from stage counters** (Phase 4.2.1). After every stage and at finalize, the pipeline does `perLead.costEur = run.ledger.costForLead(perLead.leadId)`. Stages don't have to remember to populate `StageOutcome.cost_eur` — every router call (`.search`/`.fetch`/`.complete`) is tagged with `meta.lead_id` and the ledger is the single source of truth. `lead.cost_eur` in the final CSV is what was actually billable.
 - **JSONL ledger.** `--ledger-path` (default `<out>.cost-ledger.jsonl`) appends one structured line per provider call, plus a final `kind: 'summary'` line with totals, per-provider breakdown, success rates, kind breakdown, breaker state. Mid-run cost is observable; post-mortem is `jq`-friendly.
 
 Run summary example (the `--ledger-path` JSONL's last line):
@@ -122,6 +123,7 @@ See `IMPLEMENTATION_NOTES.md` for the full Phase 0 audit and architecture decisi
 | 4 | Live scraper: `BrowserFactory`, `consent_handler`, PG live nav with overflow detection, Maps grid scroll with `cap_likely` flag, file-backed checkpoint, CLI fixture + live coexisting *(auto-split on overflow / cap_likely is Phase 4.x)* | ✅ done |
 | 4.1 | Resume safety: live mode re-hydrates the deduper + lead set from the prior JSONL when the checkpoint marks pages as done. `--fresh` flag wipes prior artifacts. | ✅ done |
 | 4.2 | Cost guardrails: JSONL-persistent CostLedger, ProviderBlockError + classified failure kinds (blocked/rate_limit/transport/timeout/other), per-lead cost gate (`tierCapForLead`), `--cost-ceiling-eur` + `--ledger-path` CLI flags, structured run summary. | ✅ done |
+| 4.2.1 | Safety patches before any province-wide live run: (a) resume HARD-STOPS when checkpoint shows done pages but JSONL is missing — operator must pass `--fresh` or `--allow-missing-jsonl`; (b) `lead.cost_eur` and `perLead.costEur` are now sourced from the canonical `CostLedger.costForLead(leadId)` after each stage, so paid providers can be enabled later without trusting stages to populate `StageOutcome.cost_eur`. | ✅ done |
 
 ---
 
@@ -153,12 +155,13 @@ npm run scrape -- --category "agenzie immobiliari" --province BL --maps --out ou
 | `--restart-every <N>` | 5 | proactive browser restart cadence |
 | `--checkpoint <path>` | `output/.scrape-checkpoint-<cat>.json` | resumable checkpoint location |
 | `--fresh` | off | wipe prior CSV/JSONL/checkpoint at `--out` before running |
+| `--allow-missing-jsonl` | off | acknowledge data loss when checkpoint reports done pages but the JSONL is missing (default: HARD-STOP) |
 | `--headless false` | true | run with a visible browser (debug) |
 
 **Safety notes:**
 - **Real network calls.** Live mode opens a Chromium session. Don't ship to CI without a network-access flag.
 - **Cookie/state persistence.** Browser session lives under `pg4/.browser-state/<id>.json`. Delete the directory to reset consent state.
-- **Checkpoint resumability.** Each `(provider, category, location, page)` outcome is JSON-persisted; re-runs skip done entries. **On resume the CLI rehydrates the deduper and lead set from the prior JSONL**, so the final CSV is complete even if every page was already scraped before. If the JSONL is missing but the checkpoint shows done entries, you'll get a warning; pass `--fresh` to clear all prior artifacts and start clean.
+- **Checkpoint resumability.** Each `(provider, category, location, page)` outcome is JSON-persisted; re-runs skip done entries. **On resume the CLI rehydrates the deduper and lead set from the prior JSONL**, so the final CSV is complete even if every page was already scraped before. If the JSONL is missing but the checkpoint shows done entries, the run **HARD-STOPS** — pass `--fresh` to clear all prior artifacts and start clean, or `--allow-missing-jsonl` to acknowledge the data loss and proceed anyway.
 - **Overflow / cap signals are surfaced, not auto-split.** PG `overflow=true` and Maps `cap_likely=true` are logged + counted in the run summary so the operator can drill down by passing a finer `--comuni` list. Auto-split per geo grid is a Phase 4.x follow-up — this README does NOT promise it today.
 - **Maps is OFF by default in live mode.** PG is more reliable; Maps requires further consent/captcha hardening before being on by default.
 | 5 | Benchmark vs pg3 | ⏳ pending |
