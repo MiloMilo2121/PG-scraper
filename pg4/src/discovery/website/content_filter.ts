@@ -5,6 +5,10 @@
  */
 
 const DIRECTORIES = new Set([
+  // Search engines themselves — we should never accept their result page
+  // URLs as "the official website".
+  'google.com', 'google.it', 'bing.com', 'duckduckgo.com', 'lite.duckduckgo.com',
+  // Italian phone/business directories
   'paginegialle.it', 'paginebianche.it', 'yelp.it', 'yelp.com', 'tripadvisor.it',
   'facebook.com', 'instagram.com', 'linkedin.com', 'twitter.com', 'x.com',
   'wa.me', 'whatsapp.com', 'api.whatsapp.com', 'chat.whatsapp.com',

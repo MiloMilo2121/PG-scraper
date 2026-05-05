@@ -20,6 +20,10 @@ class StubFetch implements HttpProvider {
   }
 }
 
+// Default DNS mock for unit tests: every host is dead. Real DNS is forbidden
+// in unit tests; the smoke suite covers live resolution.
+const deadDns = async (_host: string) => Promise.reject(new Error('ENOTFOUND'));
+
 describe('enrichment pipeline (vertical slice)', () => {
   it('produces a row with status + reason_code on EVERY input — happy path PIVA match', async () => {
     const run = createRun();
@@ -30,7 +34,7 @@ describe('enrichment pipeline (vertical slice)', () => {
     });
     const router = new ProviderRouter([], [stub], [], ledger);
     const lead = { company_name: 'Acme SRL', city: 'Milano', province: 'MI', vat_code: '12345678901', website: 'https://acme.it' };
-    const result = await runEnrichmentPipeline({ run, perLead: createPerLeadContext(run), router, lead });
+    const result = await runEnrichmentPipeline({ run, perLead: createPerLeadContext(run), router, lead, dnsResolver: deadDns });
     expect(result.lead.status).toBe('FOUND_WEBSITE_ONLY');
     expect(result.lead.reason_code).toBe('FOUND_WEBSITE_ONLY');
     expect(result.lead.official_website).toBe('https://acme.it');
@@ -46,7 +50,7 @@ describe('enrichment pipeline (vertical slice)', () => {
     });
     const router = new ProviderRouter([], [stub], [], ledger);
     const lead = { company_name: 'Acme SRL', city: 'Milano', vat_code: '12345678901', website: 'https://wrong.com' };
-    const result = await runEnrichmentPipeline({ run, perLead: createPerLeadContext(run), router, lead });
+    const result = await runEnrichmentPipeline({ run, perLead: createPerLeadContext(run), router, lead, dnsResolver: deadDns });
     expect(result.lead.status).toBe('NOT_FOUND');
     expect(result.lead.reason_code).toBe('INPUT_WEBSITE_NOT_VERIFIED');
     expect(result.lead.official_website).toBeUndefined();
@@ -57,7 +61,7 @@ describe('enrichment pipeline (vertical slice)', () => {
     const ledger = new CostLedger();
     const router = new ProviderRouter([], [], [], ledger);
     const lead = { company_name: 'Solo Nome' };
-    const result = await runEnrichmentPipeline({ run, perLead: createPerLeadContext(run), router, lead });
+    const result = await runEnrichmentPipeline({ run, perLead: createPerLeadContext(run), router, lead, dnsResolver: deadDns });
     expect(result.lead.status).toBe('SKIPPED');
     expect(result.lead.reason_code).toBe('INPUT_QUALITY_TOO_LOW');
   });
@@ -82,7 +86,7 @@ describe('enrichment pipeline (vertical slice)', () => {
     const ledger = new CostLedger();
     const router = new ProviderRouter([], [], [], ledger);
     const lead = { company_name: 'Acme', city: 'Milano', province: 'MI', phone: '021', vat_code: '12345678901', website: 'https://linkedin.com/company/acme' };
-    const result = await runEnrichmentPipeline({ run, perLead: createPerLeadContext(run), router, lead });
+    const result = await runEnrichmentPipeline({ run, perLead: createPerLeadContext(run), router, lead, dnsResolver: deadDns });
     expect(result.lead.status).toBe('NOT_FOUND');
     expect(result.lead.reason_code).toBe('INPUT_WEBSITE_DIRECTORY_OR_SOCIAL');
   });
@@ -92,7 +96,7 @@ describe('enrichment pipeline (vertical slice)', () => {
     const ledger = new CostLedger();
     const router = new ProviderRouter([], [], [], ledger);
     const lead = { company_name: 'Solo Nome' };
-    const result = await runEnrichmentPipeline({ run, perLead: createPerLeadContext(run), router, lead });
+    const result = await runEnrichmentPipeline({ run, perLead: createPerLeadContext(run), router, lead, dnsResolver: deadDns });
     expect(typeof result.lead.duration_ms).toBe('number');
     expect(Array.isArray(result.lead.providers_used)).toBe(true);
   });

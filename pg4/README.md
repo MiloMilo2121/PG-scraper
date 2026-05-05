@@ -83,7 +83,7 @@ See `IMPLEMENTATION_NOTES.md` for the full Phase 0 audit and architecture decisi
 | 0 | Audit + IMPLEMENTATION_NOTES | ✅ done |
 | 1 | Scaffold (types, config, IO, CLI stubs, typecheck green) | ✅ done |
 | 2 | Vertical slice (CSV → normalize → website-input check → enriched CSV) | ✅ done |
-| 3 | Port strong pieces (HyperGuesser, RDAP, SERP, CostRouter) | ⏳ pending |
+| 3 | Discovery ladder (free SERP providers, SerpDeduplicator, HyperGuesser, RDAP) | ✅ done |
 | 3.5 | Scraper parser fixtures | ⏳ pending |
 | 4 | Live scraper (PG + Maps) | ⏳ pending |
 | 5 | Benchmark vs pg3 | ⏳ pending |

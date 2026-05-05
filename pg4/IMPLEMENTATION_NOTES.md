@@ -1,7 +1,7 @@
 # pg4 — Implementation Notes
 
-> **Status:** Phase 0 + 1 + 2 complete. Vertical slice runs end-to-end on the fixture, every input row produces an output row with `status` + `reason_code`. Typecheck green. 49 unit tests passing.
-> **Branch:** `pg4/phase-2-vertical-slice`.
+> **Status:** Phases 0 + 1 + 2 + 3 complete. Multi-stage discovery ladder live: InputWebsite → HyperGuesser (NER + DNS sweep) → SerpStage (4 free providers + SerpDeduplicator) → RdapBoost. Typecheck green. 93 unit tests passing. Zero network in unit tests; smoke gated by `RUN_SMOKE=1`.
+> **Branch:** `pg4/phase-3-discovery` (next push).
 
 ## Session results
 
@@ -9,9 +9,9 @@
 |---|---|
 | 0 — Audit | ✅ This document |
 | 1 — Scaffold (typecheck green) | ✅ `pg4/` compiles, deps installed |
-| 2 — Vertical slice | ✅ `npm run enrich -- --input tests/fixtures/sample_companies.csv --out output/x.csv` produces 10/10 rows, 0 silent drops |
-| 3 — Port strong pieces (HyperGuesser, RDAP, SERP, CostRouter integration) | ⏳ Next session |
-| 3.5 — Scraper parser fixtures | ⏳ |
+| 2 — Vertical slice | ✅ 10/10 rows, 0 silent drops |
+| 3 — Strong-piece port | ✅ HyperGuesser (NER + generator + DNS resolver) + 4 free SERP providers + SerpDeduplicator + RDAP validator wired into pipeline |
+| 3.5 — Scraper parser fixtures | ⏳ Next |
 | 4 — Live scraper (PG + Maps) | ⏳ |
 | 5 — Benchmark vs pg3 | ⏳ |
 
@@ -32,18 +32,53 @@
 
 100% coverage of the canonical reason_code taxonomy at the URL classification boundary. Pipeline correctly routed every input.
 
-### Tests
-- `tests/unit/normalizer.test.ts` — 13 cases (NFC, dash/quote cleaning, province extraction, legal-suffix variants, VAT, email-domain, phone +39 prefix, quality_score)
-- `tests/unit/input_website_candidate.test.ts` — 8 cases (INVALID, MESSAGING_OR_REDIRECT, DIRECTORY_OR_SOCIAL, https/http/www variants)
-- `tests/unit/preverify_gate.test.ts` — 4 cases (PIVA match, semantic match, no signals, empty html)
-- `tests/unit/deduper.test.ts` — 5 cases (phone normalization, name+city, host, merge)
-- `tests/unit/csv_io.test.ts` — 4 cases (read/write CSV + JSONL, ingestError flagging)
-- `tests/unit/provider_router.test.ts` — 4 cases (skip unavailable, ascending tier, maxTier ceiling, fall-through)
-- `tests/unit/pipeline.test.ts` — 6 cases (PIVA happy-path, NOT_VERIFIED, INPUT_QUALITY_TOO_LOW, ERROR_INVALID_INPUT_ROW, DIRECTORY_OR_SOCIAL, duration_ms always set)
-- `tests/unit/reason_codes.test.ts` — 5 cases (timeout, 403, DNS, rate-limit, fallback mapping)
-- `tests/smoke/dns_smoke.test.ts` — 2 cases gated by `RUN_SMOKE=1` (crt.sh, DDG-lite)
+### Tests (Phase 2)
+- `tests/unit/normalizer.test.ts` — 13 cases
+- `tests/unit/input_website_candidate.test.ts` — 8 cases
+- `tests/unit/preverify_gate.test.ts` — 4 cases
+- `tests/unit/deduper.test.ts` — 5 cases
+- `tests/unit/csv_io.test.ts` — 4 cases
+- `tests/unit/provider_router.test.ts` — 4 cases
+- `tests/unit/pipeline.test.ts` — 6 cases
+- `tests/unit/reason_codes.test.ts` — 5 cases
+- `tests/smoke/dns_smoke.test.ts` — 2 cases gated by `RUN_SMOKE=1`
 
-**49 unit tests, 0 network calls, all green in 1s.**
+### Tests added in Phase 3
+- `tests/unit/dns_mx.test.ts` — 6 cases (mocked DNS resolver)
+- `tests/unit/crtsh.test.ts` — 4 cases (parseEntries pure-function tests, no network)
+- `tests/unit/ddg_lite.test.ts` — 6 cases (saved HTML fixture parsing)
+- `tests/unit/bing_html.test.ts` — 5 cases (saved HTML fixture parsing)
+- `tests/unit/serp_deduplicator.test.ts` — 6 cases (registry vs directory routing, multi-provider corroboration, .it boost)
+- `tests/unit/rdap_validator.test.ts` — 5 cases (PIVA in payload golden, vCard fn match, unrelated registrant, null payload)
+- `tests/unit/hyper_guesser.test.ts` — 12 cases (NER, generator permutations, run with mocked DNS)
+- `tests/smoke/serp_providers_smoke.test.ts` — 4 live cases gated by `RUN_SMOKE=1`
+
+**93 unit tests, 0 network calls, all green in ~2s.**
+
+### Phase 3 vertical slice on fixture (10 rows)
+
+After Phase 3 the discovery ladder + tightened PreVerifyGate + parked-page filter produce:
+
+| Row | Status | Reason code |
+|---|---|---|
+| Solo Nome SpA | SKIPPED | INPUT_QUALITY_TOO_LOW |
+| Mario Rossi SRL | FOUND_WEBSITE_ONLY | (HYPER_GUESSER → mariorossi.eu) — known degenerate: name is the Italian "John Doe" and fixture PIVA is fake |
+| Beauty Center Verona | NOT_FOUND | INPUT_WEBSITE_NOT_VERIFIED |
+| Pippo Pluto SNC | NOT_FOUND | REJECTED_DIRECTORY |
+| Bad URL Inc | NOT_FOUND | REJECTED_DIRECTORY |
+| Quality Threshold Test | SKIPPED | INPUT_QUALITY_TOO_LOW |
+| Linkedin Lead | NOT_FOUND | INPUT_WEBSITE_DIRECTORY_OR_SOCIAL |
+| Whatsapp Only | NOT_FOUND | INPUT_WEBSITE_MESSAGING_OR_REDIRECT |
+| Caino (BS) Coiffeur | NOT_FOUND | INPUT_WEBSITE_NOT_VERIFIED |
+| Empty Website Co | NOT_FOUND | REJECTED_DIRECTORY |
+
+Improvements vs Phase 2:
+- Search-engine hosts (`bing.com`, `google.com`) added to DIRECTORIES — no more Bing redirect URLs sneaking through SerpStage
+- PreVerifyGate now requires ≥2 distinct matched tokens (not just ≥50% ratio) — eliminates single-token coincidence matches
+- Parked / under-construction pages skipped before PreVerifyGate — eliminates false positives like `pippopluto.com` or `wo.com`
+- Reason-code policy: keep the FIRST informative reason from the ladder, fall back to generic `DISCOVERY_EXHAUSTED` only when nothing more specific was produced
+
+The single remaining false positive (Mario Rossi SRL → mariorossi.eu) is structural: an Italian "John Doe" with a fake PIVA can't be reliably distinguished from a real owner. With a real PIVA, the digit-match check rejects this case deterministically.
 
 
 

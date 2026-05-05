@@ -47,11 +47,26 @@ export class PreVerifyGate {
     );
     const hasAnchor = domainMatch || locationMatch;
 
-    if (hasAnchor && (bodyRatio >= 0.5 || (titleRatio >= 0.4 && bodyRatio >= 0.3))) {
-      return { status: 'VERIFIED_SEMANTIC' as GateStatus, url, evidence: 'name_semantic', detail: `body=${bodyRatio.toFixed(2)} title=${titleRatio.toFixed(2)}` };
+    // Tightened semantic match: require BOTH ratio AND a minimum count of
+    // distinct matched tokens. Single-token matches are too noisy on parked
+    // / unrelated pages with Italian boilerplate text.
+    const minMatched = Math.min(2, tokens.length);
+    const enoughBody = bodyHits.length >= minMatched && bodyRatio >= 0.5;
+    const enoughTitle = titleHits.length >= minMatched && titleRatio >= 0.4 && bodyRatio >= 0.3;
+    if (hasAnchor && (enoughBody || enoughTitle)) {
+      return {
+        status: 'VERIFIED_SEMANTIC' as GateStatus,
+        url,
+        evidence: 'name_semantic',
+        detail: `body=${bodyRatio.toFixed(2)}(${bodyHits.length}/${tokens.length}) title=${titleRatio.toFixed(2)}(${titleHits.length}/${tokens.length})`,
+      };
     }
 
-    return { status: 'REJECTED', url, detail: `body=${bodyRatio.toFixed(2)} title=${titleRatio.toFixed(2)} anchor=${hasAnchor}` };
+    return {
+      status: 'REJECTED',
+      url,
+      detail: `body=${bodyRatio.toFixed(2)}(${bodyHits.length}/${tokens.length}) title=${titleRatio.toFixed(2)}(${titleHits.length}/${tokens.length}) anchor=${hasAnchor}`,
+    };
   }
 
   private static nameTokens(name: string): string[] {
