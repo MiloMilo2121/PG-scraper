@@ -180,6 +180,16 @@ export async function runLiveMode(a: LiveModeInput): Promise<void> {
   let dropped = 0;
   let comuniWithOverflow = 0;
   let comuniWithCapLikely = 0;
+  // Phase 4.4 log fix: count parsed leads BEFORE the deduper so the
+  // run summary reports `collapsed_by_dedupe` honestly. The previous
+  // version sourced `raw_pre_dedupe` from `allLeads.length` (already
+  // deduped), which made `collapsed_by_dedupe` always show 0 — masked
+  // by the single-comune canary because there was no cross-query
+  // overlap to collapse. The 3-comuni canary on BL exposed it: 209
+  // parsed cards collapsed to 116 unique leads, but the log said
+  // `collapsed_by_dedupe: 0`. Output files were always correct; only
+  // the metric was wrong.
+  let parsedLeadsBeforeDedupe = resumed;
 
   try {
     // Stage 1: PG run for each comune in the curated list.
@@ -194,6 +204,7 @@ export async function runLiveMode(a: LiveModeInput): Promise<void> {
       totalCards += r.total_cards;
       dropped += r.dropped;
       if (r.overflow) comuniWithOverflow += 1;
+      parsedLeadsBeforeDedupe += r.results.length;
       ingestBatch(allLeads, dedup, r.results);
       // Save state after each comune so an interrupted run resumes cleanly.
       await factory.saveSessionState();
@@ -209,6 +220,7 @@ export async function runLiveMode(a: LiveModeInput): Promise<void> {
         totalCards += r.total_cards;
         dropped += r.dropped;
         if (r.cap_likely) comuniWithCapLikely += 1;
+        parsedLeadsBeforeDedupe += r.results.length;
         ingestBatch(allLeads, dedup, r.results);
         await factory.saveSessionState();
       }
@@ -227,7 +239,7 @@ export async function runLiveMode(a: LiveModeInput): Promise<void> {
     maps_cap_likely_count: comuniWithCapLikely,
     total_cards: totalCards,
     dropped_at_parse: dropped,
-    raw_pre_dedupe: allLeads.length,
+    raw_pre_dedupe: parsedLeadsBeforeDedupe,
     checkpoint_done: checkpoint.countDone(),
     resumed_from_prior_jsonl: resumed,
     factory: factory.describe(),
