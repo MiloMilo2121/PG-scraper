@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import type { AnyNode } from 'domhandler';
 import type { Lead } from '../../types/lead';
+import { cleanMojibakeFields } from '../text_cleanup';
 
 type CheerioCard = cheerio.Cheerio<AnyNode>;
 
@@ -114,7 +115,11 @@ function parseCard($card: CheerioCard, opts: PageGialleParseOptions): Lead | und
       lead.business_city = lead.city;
     }
   }
-  return lead;
+  // Phase 4.4: strip U+FFFD replacement runs that PG occasionally produces
+  // when its CMS serves latin-1-encoded bytes (`Piazza Libert\xe0` →
+  // `Piazza Libert��`). Conservative: drop the corrupted run only,
+  // preserve valid accented characters elsewhere.
+  return cleanMojibakeFields(lead, ['company_name', 'city', 'business_city', 'address']);
 }
 
 /**

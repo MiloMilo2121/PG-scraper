@@ -82,11 +82,11 @@ pg3 logs showed 16K+ `SERP_EMPTY_RESULT` per batch (mistakenly logged as ERROR),
 - **Free-first by default.** SerpStage in the enrichment pipeline runs at `maxTier: 1` — only DNS-MX, crt.sh, DDG, Bing-HTML are dialled. Paid providers stay off until the operator explicitly opts in.
 - **`SERP_EMPTY_RESULT` is not punitive.** Empty SERP results increment the ledger as `kind: 'empty'` but do NOT count toward circuit-breaker trips. Pg3 used to lock down free providers because of this.
 - **Block / rate-limit / transport hits ARE punitive.** Bing's Cloudflare-Turnstile pages throw `ProviderBlockError`; the router classifies it (`kind: 'blocked'`), counts it toward the breaker, and routes around the provider for a cooldown window. Same for `429` (`rate_limit`) and `5xx`/`ENOTFOUND`/`fetch failed` (`transport`).
-- **Per-lead cost ceiling.** `--cost-ceiling-eur` (default `0.10`) caps the EUR spent on a single lead. Once hit, `tierCapForLead()` forces subsequent stages to `maxTier: 1` (free SERP only) for the remainder of that lead. The pipeline exposes this via `PerLeadContext.budgetExhausted`.
+- **Per-lead cost ceiling** *(enrich-only flag — `scrape` does not accept it because the scraper only hits free PG/Maps endpoints)*. `npm run enrich -- --cost-ceiling-eur 0.10` caps the EUR spent on a single lead. Once hit, `tierCapForLead()` forces subsequent stages to `maxTier: 1` (free SERP only) for the remainder of that lead. The pipeline exposes this via `PerLeadContext.budgetExhausted`.
 - **Cost is sourced from the ledger, not from stage counters** (Phase 4.2.1). After every stage and at finalize, the pipeline does `perLead.costEur = run.ledger.costForLead(perLead.leadId)`. Stages don't have to remember to populate `StageOutcome.cost_eur` — every router call (`.search`/`.fetch`/`.complete`) is tagged with `meta.lead_id` and the ledger is the single source of truth. `lead.cost_eur` in the final CSV is what was actually billable.
-- **JSONL ledger.** `--ledger-path` (default `<out>.cost-ledger.jsonl`) appends one structured line per provider call, plus a final `kind: 'summary'` line with totals, per-provider breakdown, success rates, kind breakdown, breaker state. Mid-run cost is observable; post-mortem is `jq`-friendly.
+- **JSONL ledger** *(enrich-only flag)*. `npm run enrich -- --ledger-path <path>` (default `<out>.cost-ledger.jsonl`) appends one structured line per provider call, plus a final `kind: 'summary'` line with totals, per-provider breakdown, success rates, kind breakdown, breaker state. Mid-run cost is observable; post-mortem is `jq`-friendly.
 
-Run summary example (the `--ledger-path` JSONL's last line):
+Run summary example (the enrich JSONL ledger's last line):
 ```json
 {
   "run_id": "run-1778006247004-3d94",
@@ -124,6 +124,8 @@ See `IMPLEMENTATION_NOTES.md` for the full Phase 0 audit and architecture decisi
 | 4.1 | Resume safety: live mode re-hydrates the deduper + lead set from the prior JSONL when the checkpoint marks pages as done. `--fresh` flag wipes prior artifacts. | ✅ done |
 | 4.2 | Cost guardrails: JSONL-persistent CostLedger, ProviderBlockError + classified failure kinds (blocked/rate_limit/transport/timeout/other), per-lead cost gate (`tierCapForLead`), `--cost-ceiling-eur` + `--ledger-path` CLI flags, structured run summary. | ✅ done |
 | 4.2.1 | Safety patches before any province-wide live run: (a) resume HARD-STOPS when checkpoint shows done pages but JSONL is missing — operator must pass `--fresh` or `--allow-missing-jsonl`; (b) `lead.cost_eur` and `perLead.costEur` are now sourced from the canonical `CostLedger.costForLead(leadId)` after each stage, so paid providers can be enabled later without trusting stages to populate `StageOutcome.cost_eur`. | ✅ done |
+| 4.3 | PG live canary (Belluno, 1 comune, 2 pages): 47 unique leads, checkpoint resume verified, no breaker trips. Maps off. | ✅ canary passed |
+| 4.4 | Structure cleanup (no behavior change): thin `cli/scrape.ts`, orchestration in `discovery/scrape_pipeline.ts`, enrichment stages split into `enrichment/stages/*.ts`, `runtime/resume.ts` → `discovery/resume_prior_run.ts`, mojibake `discovery/text_cleanup.ts`, `docs/architecture.md`. **256 unit tests, all green.** | ✅ done |
 
 ---
 
@@ -170,7 +172,7 @@ npm run scrape -- --category "agenzie immobiliari" --province BL --maps --out ou
 ```bash
 cd pg4 && npm install
 npm run typecheck          # green
-npm test                   # 124/124 passing, zero network
+npm test                   # 256/256 passing, zero network
 npm run enrich -- --input tests/fixtures/sample_companies.csv --out output/enriched.csv
 # → 10/10 rows produced; every row has status + reason_code
 
@@ -180,3 +182,32 @@ npm run scrape -- \
   --out output/raw.csv
 # → 9 cards → 8 records (1 dropped at parse: empty name); deterministic CSV columns
 ```
+
+**Live PG (Phase 4.3 canary, single comune):**
+```bash
+npm run scrape -- \
+  --category "agenzie immobiliari" \
+  --comuni "Belluno" \
+  --max-pages 2 \
+  --fresh \
+  --out output/p43_smoke.csv
+# Reference run (verified): 47 unique leads, checkpoint resumes correctly,
+# Maps off, no breaker trips, browser stable. Re-running without --fresh
+# rehydrates the lead set from the prior JSONL.
+```
+
+**Next safe ramp (3 comuni BL):**
+```bash
+npm run scrape -- \
+  --category "agenzie immobiliari" \
+  --comuni "Belluno,Feltre,Sedico" \
+  --max-pages 3 \
+  --fresh \
+  --out output/p43_3comuni.csv
+# Expect ~90-150 unique leads, 6 checkpoint entries (3 comuni × 2 pages),
+# 0 errors, no overflow on small comuni.
+```
+
+> Live mode is opt-in. Maps stays OFF unless you pass `--maps`. Paid
+> providers stay OFF until explicitly enabled via env feature flags AND
+> their API keys.

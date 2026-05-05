@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import type { AnyNode } from 'domhandler';
 import type { Lead } from '../../types/lead';
 import { classifyCategoryMatch } from './category_match';
+import { cleanMojibakeFields } from '../text_cleanup';
 
 type CheerioCard = cheerio.Cheerio<AnyNode>;
 
@@ -188,7 +189,10 @@ function parseCard($card: CheerioCard, opts: { category?: string; cityHint?: str
   if (opts.cityHint) lead.query_location = opts.cityHint;
   if (city && opts.cityHint && city !== opts.cityHint) lead.business_city = city;
   if (opts.category) lead.category_match = classifyCategoryMatch(opts.category, typeTag);
-  return lead;
+  // Phase 4.4: same conservative mojibake strip as PG. Maps' DOM is
+  // usually clean UTF-8 but occasional listing pages mirror PG's bad
+  // bytes via review imports.
+  return cleanMojibakeFields(lead, ['company_name', 'city', 'business_city', 'address']);
 }
 
 function collapse(s: string | undefined | null): string {

@@ -5,7 +5,7 @@ import path from 'path';
 import { Checkpoint } from '../../src/runtime/checkpoint';
 import { Deduplicator } from '../../src/discovery/deduper';
 import { JsonlWriter } from '../../src/io/jsonl_writer';
-import { rehydrateFromPriorRun, MissingPriorJsonlError } from '../../src/runtime/resume';
+import { rehydrateFromPriorRun, MissingPriorJsonlError } from '../../src/discovery/resume_prior_run';
 import type { Lead } from '../../src/types/lead';
 
 const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'pg4-resume-stop-'));

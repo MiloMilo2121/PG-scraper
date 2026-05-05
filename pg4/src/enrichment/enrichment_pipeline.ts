@@ -1,21 +1,32 @@
 import type { Lead } from '../types/lead';
-import type { NormalizedLead } from '../types/discovery';
 import type { EnrichmentResult, PerLeadContext, Stage } from '../types/enrichment';
 import type { StageOutcome, ReasonCode } from '../types/output';
-import { LeadStatus, ReasonCode as RC, DiscoveryMethod } from '../types/output';
+import { LeadStatus, ReasonCode as RC } from '../types/output';
 import { normalizeLead } from '../discovery/input_normalizer';
-import { InputWebsiteCandidate } from '../discovery/website/input_website_candidate';
-import { PreVerifyGate } from '../discovery/website/preverify_gate';
-import { SerpDeduplicator } from '../discovery/website/serp_deduplicator';
-import { HyperGuesser } from '../discovery/website/hyper_guesser';
-import { RdapValidator } from '../discovery/website/rdap_validator';
-import { isParked, isUnderConstruction } from '../discovery/website/content_filter';
-import { DEFAULTS } from '../config/defaults';
 import type { ProviderRouter } from '../providers/provider_router';
 import type { Run } from '../runtime/run_context';
-import { tierCapForLead } from '../runtime/run_context';
 import { logger } from '../runtime/logger';
 import { classifyError } from '../runtime/errors';
+import { InputWebsiteStage } from './stages/input_website_stage';
+import { HyperGuesserStage } from './stages/hyper_guesser_stage';
+import { SerpStage } from './stages/serp_stage';
+import { RdapBoostStage } from './stages/rdap_stage';
+
+/**
+ * Enrichment pipeline.
+ *
+ * Owns:
+ *   - input ingest gating (`ingestError`, `INPUT_QUALITY_TOO_LOW`)
+ *   - stage ordering (Phase 4.4: kept identical to Phase 4.2)
+ *   - per-stage cost sync from the canonical `CostLedger.costForLead()`
+ *   - reason-code policy: keep the FIRST informative reason; only fall
+ *     back to `DISCOVERY_EXHAUSTED` when nothing more specific surfaced
+ *   - finalize: project the lead into the output shape with cost / duration
+ *
+ * Stage IMPLEMENTATIONS live in `stages/*.ts`. Adding a new stage means
+ * a new file under `stages/` and one extra entry in the `stages` array
+ * below — nothing else has to change here.
+ */
 
 export interface PipelineInput {
   run: Run;
@@ -173,213 +184,4 @@ function finalize(
     duration_ms: lead.duration_ms,
     cost_eur: lead.cost_eur,
   };
-}
-
-/** Verify the input `website` field via direct_fetch + PreVerifyGate. */
-class InputWebsiteStage implements Stage {
-  readonly name = 'input_website';
-  constructor(private router: ProviderRouter) {}
-
-  async run(ctx: PerLeadContext, lead: Lead, normalized: NormalizedLead): Promise<StageOutcome> {
-    const start = Date.now();
-    const website = normalized.website;
-    if (!website) {
-      return { stage: this.name, status: 'skipped', duration_ms: 0, reason_code: RC.NOT_FOUND_NO_CANDIDATES, detail: 'no_input_website' };
-    }
-    const assessed = InputWebsiteCandidate.assess(website);
-    if (assessed.classification !== 'VALID') {
-      return {
-        stage: this.name,
-        status: 'not_found',
-        duration_ms: Date.now() - start,
-        reason_code: (assessed.reason_code as ReasonCode) ?? RC.INPUT_WEBSITE_INVALID,
-        detail: `classification=${assessed.classification}`,
-      };
-    }
-    const verdict = await verifyCandidates(this.router, assessed.candidates.slice(0, 3), normalized, lead, {
-      timeoutMs: DEFAULTS.pipeline.requestTimeoutMs,
-      meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
-    });
-    if (verdict.matched) {
-      lead.website_discovery_method = verdict.method === 'piva' ? DiscoveryMethod.INPUT_PIVA_MATCH : DiscoveryMethod.INPUT_SEMANTIC;
-      lead.website_confidence = verdict.confidence;
-      return { stage: this.name, status: 'success', duration_ms: Date.now() - start, provider: verdict.provider, detail: verdict.detail };
-    }
-    return {
-      stage: this.name,
-      status: 'not_found',
-      duration_ms: Date.now() - start,
-      reason_code: verdict.timedOut ? RC.INPUT_WEBSITE_TIMEOUT : RC.INPUT_WEBSITE_NOT_VERIFIED,
-      detail: verdict.detail,
-    };
-  }
-}
-
-/** Generate brand+city domain permutations, DNS-resolve, then verify alive ones. */
-class HyperGuesserStage implements Stage {
-  readonly name = 'hyper_guesser';
-  constructor(private router: ProviderRouter, private dnsResolver?: (host: string) => Promise<string[]>) {}
-
-  async run(ctx: PerLeadContext, lead: Lead, normalized: NormalizedLead): Promise<StageOutcome> {
-    const start = Date.now();
-    const guesses = await HyperGuesser.run(normalized, { maxCandidates: 60, resolve4: this.dnsResolver });
-    if (guesses.length === 0) {
-      return { stage: this.name, status: 'not_found', duration_ms: Date.now() - start, reason_code: RC.NOT_FOUND_NO_CANDIDATES, detail: 'no_alive_domains' };
-    }
-    const candidateUrls = guesses.slice(0, 6).map((g) => `https://${g.domain}`);
-    const verdict = await verifyCandidates(this.router, candidateUrls, normalized, lead, {
-      timeoutMs: DEFAULTS.pipeline.requestTimeoutMs,
-      meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
-    });
-    if (verdict.matched) {
-      lead.website_discovery_method = DiscoveryMethod.HYPER_GUESSER;
-      lead.website_confidence = verdict.confidence;
-      return { stage: this.name, status: 'success', duration_ms: Date.now() - start, provider: verdict.provider, detail: `alive=${guesses.length} ${verdict.detail}` };
-    }
-    return {
-      stage: this.name,
-      status: 'not_found',
-      duration_ms: Date.now() - start,
-      reason_code: RC.NOT_FOUND_NO_CANDIDATES,
-      detail: `alive=${guesses.length} top=${guesses.slice(0, 3).map((g) => g.domain).join(',')}`,
-    };
-  }
-}
-
-/** Query free SERP providers, dedupe candidates, verify top hits. */
-class SerpStage implements Stage {
-  readonly name = 'serp';
-  private dedup = new SerpDeduplicator();
-  constructor(private router: ProviderRouter) {}
-
-  async run(ctx: PerLeadContext, lead: Lead, normalized: NormalizedLead): Promise<StageOutcome> {
-    const start = Date.now();
-    const query = this.buildQuery(normalized);
-    // Per-lead budget gate: when the ceiling is hit we cap to free SERP
-    // (tier ≤ 1). Free SERP is the default cap anyway today, but the
-    // helper makes the policy uniform if/when the operator opens paid
-    // tiers via env or CLI flag.
-    const maxTier = Math.min(1, tierCapForLead(ctx, 1));
-    const result = await this.router.search(query, {
-      maxTier,
-      meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
-    });
-    if (!result.results || result.results.length === 0) {
-      return { stage: this.name, status: 'not_found', duration_ms: Date.now() - start, reason_code: RC.DISCOVERY_EXHAUSTED, detail: 'no_serp_results' };
-    }
-    const ranked = this.dedup.dedupe([result.results], { limit: 8 });
-    if (ranked.length === 0) {
-      return { stage: this.name, status: 'not_found', duration_ms: Date.now() - start, reason_code: RC.REJECTED_DIRECTORY, detail: 'all_directory' };
-    }
-    const candidateUrls = ranked.slice(0, 5).map((c) => c.best_url);
-    const verdict = await verifyCandidates(this.router, candidateUrls, normalized, lead, {
-      timeoutMs: DEFAULTS.pipeline.requestTimeoutMs,
-      meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
-    });
-    if (verdict.matched) {
-      lead.website_discovery_method = DiscoveryMethod.SERP_COMPANY;
-      lead.website_confidence = verdict.confidence;
-      return { stage: this.name, status: 'success', duration_ms: Date.now() - start, provider: verdict.provider, detail: `serp=${result.provider} top=${ranked[0].host}` };
-    }
-    return { stage: this.name, status: 'not_found', duration_ms: Date.now() - start, reason_code: RC.DISCOVERY_EXHAUSTED, detail: `serp=${result.provider} candidates=${ranked.length}` };
-  }
-
-  private buildQuery(n: NormalizedLead): string {
-    const parts = [n.company_name];
-    if (n.city) parts.push(n.city);
-    if (n.vat_code) parts.push(`P.IVA ${n.vat_code}`);
-    parts.push('sito ufficiale');
-    return parts.join(' ');
-  }
-}
-
-/**
- * RDAP rescue: if no website found yet, take the strongest HyperGuesser DNS
- * survivor (or the input website if it had a directory classification) and
- * check the WHOIS payload for P.IVA / company-name match.
- */
-class RdapBoostStage implements Stage {
-  readonly name = 'rdap';
-
-  async run(_ctx: PerLeadContext, lead: Lead, normalized: NormalizedLead): Promise<StageOutcome> {
-    const start = Date.now();
-    const target = normalized.website || lead.official_website;
-    if (!target) {
-      return { stage: this.name, status: 'skipped', duration_ms: 0, detail: 'no_target_domain' };
-    }
-    const ev = await RdapValidator.checkDomainOwnership(target, normalized);
-    if (ev.confidence >= 0.8) {
-      lead.official_website = lead.official_website ?? target;
-      lead.website_discovery_method = DiscoveryMethod.RDAP_BINGO;
-      lead.website_confidence = DEFAULTS.scoring.rdapBingoConfidence;
-      return { stage: this.name, status: 'success', duration_ms: Date.now() - start, evidence_count: 1, detail: ev.detail };
-    }
-    if (ev.confidence >= 0.4) {
-      lead.official_website = lead.official_website ?? target;
-      lead.website_discovery_method = DiscoveryMethod.RDAP_NAME_MATCH;
-      lead.website_confidence = ev.confidence;
-      return { stage: this.name, status: 'success', duration_ms: Date.now() - start, evidence_count: 1, detail: ev.detail };
-    }
-    return { stage: this.name, status: 'not_found', duration_ms: Date.now() - start, reason_code: RC.DISCOVERY_EXHAUSTED, detail: ev.detail || 'no_rdap_match' };
-  }
-}
-
-/**
- * Shared helper: try N candidate URLs via direct_fetch; on each successful
- * fetch, run PreVerifyGate. Returns the first match or summarizes the misses.
- */
-async function verifyCandidates(
-  router: ProviderRouter,
-  candidates: string[],
-  normalized: NormalizedLead,
-  lead: Lead,
-  opts: { timeoutMs?: number; meta?: Record<string, string | number | boolean> }
-): Promise<{
-  matched: boolean;
-  method?: 'piva' | 'semantic';
-  confidence?: number;
-  provider?: string;
-  detail?: string;
-  timedOut?: boolean;
-}> {
-  let lastDetail = '';
-  let timedOut = false;
-  for (const candidate of candidates) {
-    const res = await router.fetch(candidate, { timeoutMs: opts.timeoutMs, meta: opts.meta });
-    if (!res.html || res.status < 200 || res.status >= 400) {
-      lastDetail = `${candidate} status=${res.status}${res.error ? ` err=${res.error}` : ''}`;
-      if (res.error?.toLowerCase().includes('timeout')) timedOut = true;
-      continue;
-    }
-    // Skip parked / under-construction pages — they superficially semantic-match
-    // because they often mirror the brand keywords back at us.
-    const htmlLower = res.html.toLowerCase();
-    if (isParked(htmlLower) || isUnderConstruction(htmlLower)) {
-      lastDetail = `${candidate} parked_or_construction`;
-      continue;
-    }
-    const gate = PreVerifyGate.check(candidate, res.html, normalized);
-    if (gate.status === 'VERIFIED') {
-      lead.official_website = candidate;
-      return {
-        matched: true,
-        method: 'piva',
-        confidence: DEFAULTS.scoring.pivaMatchConfidence,
-        provider: res.provider,
-        detail: 'piva_match',
-      };
-    }
-    if (gate.status === 'VERIFIED_SEMANTIC') {
-      lead.official_website = candidate;
-      return {
-        matched: true,
-        method: 'semantic',
-        confidence: DEFAULTS.scoring.semanticMatchConfidence,
-        provider: res.provider,
-        detail: gate.detail,
-      };
-    }
-    lastDetail = `${candidate} gate=${gate.status} ${gate.detail ?? ''}`;
-  }
-  return { matched: false, detail: lastDetail || 'no_candidate_verified', timedOut };
 }

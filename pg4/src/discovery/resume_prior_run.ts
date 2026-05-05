@@ -1,7 +1,7 @@
 import fs from 'fs';
-import { logger } from './logger';
-import { Checkpoint } from './checkpoint';
-import { Deduplicator } from '../discovery/deduper';
+import { logger } from '../runtime/logger';
+import { Checkpoint } from '../runtime/checkpoint';
+import { Deduplicator } from './deduper';
 import { readJsonlAsLeads } from '../io/jsonl_writer';
 import type { Lead } from '../types/lead';
 
