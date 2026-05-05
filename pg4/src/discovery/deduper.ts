@@ -91,17 +91,34 @@ export class Deduplicator {
     return digits.length >= 8 ? digits : undefined;
   }
 
+  /**
+   * name+city key. Requires a real city/locality to avoid over-merging
+   * generic names ("Pizzeria", "Studio") that share an empty city slot.
+   *
+   * Locality lookup order: `city` → `business_city` → `query_location`.
+   * If none of these are populated, no key is produced — the deduper
+   * falls back to its other indexes (phone, name+address tokens, urls,
+   * host) and the records stay distinct.
+   */
   private nameCityKey(item: Lead): string | undefined {
     if (!item.company_name) return undefined;
     const n = normalizeForKey(item.company_name);
-    const c = normalizeForKey(item.city ?? '');
-    return n.length >= 3 ? `${n}|${c}` : undefined;
+    if (n.length < 3) return undefined;
+    const localitySource = item.city ?? item.business_city ?? item.query_location ?? '';
+    const c = normalizeForKey(localitySource);
+    if (c.length < 2) return undefined;
+    return `${n}|${c}`;
   }
 
   /**
    * Fallback key for cards without a city tag. Concatenates the normalized
-   * company name with the first 3 tokens of the address (numbers stripped),
-   * which is enough to disambiguate two agencies on the same street.
+   * company name with the first 2 non-numeric address tokens — typically
+   * `"Via"` + the street name. Two records that share name + street but
+   * differ in civic number / ZIP / appended comune still collapse.
+   *
+   * (Slicing 3 tokens included a third token like the comune for one
+   * source and a civic number for another, producing mismatched keys.
+   * Two tokens is the lowest-noise signal.)
    */
   private nameAddrKey(item: Lead): string | undefined {
     if (!item.company_name || !item.address) return undefined;
@@ -110,7 +127,7 @@ export class Deduplicator {
     const addrTokens = normalizeForKey(item.address)
       .split(' ')
       .filter((t) => t.length >= 3 && !/^\d+$/.test(t))
-      .slice(0, 3)
+      .slice(0, 2)
       .join(' ');
     return addrTokens ? `${n}|addr:${addrTokens}` : undefined;
   }

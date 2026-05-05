@@ -72,4 +72,38 @@ describe('Deduplicator', () => {
     ]);
     expect(out).toHaveLength(2);
   });
+
+  it('does NOT collapse two leads with the same generic name and no city', () => {
+    // Regression: pg4 nameCityKey used to be `${name}|` when city was empty,
+    // which caused unrelated leads with the same generic name to merge.
+    const out = dedupeLeads([
+      { company_name: 'Pizzeria' },
+      { company_name: 'Pizzeria' },
+    ]);
+    expect(out).toHaveLength(2);
+  });
+
+  it('does NOT collapse same name with different business_city/query_location', () => {
+    const out = dedupeLeads([
+      { company_name: 'Studio Tecnico', business_city: 'Belluno' },
+      { company_name: 'Studio Tecnico', business_city: 'Milano' },
+    ]);
+    expect(out).toHaveLength(2);
+  });
+
+  it('falls back to query_location when city is missing', () => {
+    const out = dedupeLeads([
+      { company_name: 'Acme', city: 'Belluno' },
+      { company_name: 'Acme', query_location: 'Belluno' },
+    ]);
+    expect(out).toHaveLength(1);
+  });
+
+  it('falls back to business_city when city is missing', () => {
+    const out = dedupeLeads([
+      { company_name: 'Acme', city: 'Belluno' },
+      { company_name: 'Acme', business_city: 'Belluno' },
+    ]);
+    expect(out).toHaveLength(1);
+  });
 });

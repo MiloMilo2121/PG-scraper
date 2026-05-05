@@ -87,7 +87,45 @@ See `IMPLEMENTATION_NOTES.md` for the full Phase 0 audit and architecture decisi
 | 3.5 | Scraper parser fixtures (PG + Maps pure parsers, raw deduper, dry-run) | ✅ done |
 | 3.6 | Real-fixture parser gate (live HTML for PG + Maps) | ✅ done |
 | 3.7 | Legacy failure mining → guardrails (`docs/legacy_failure_taxonomy.md`) | ✅ done |
-| 4 | Live scraper (PG + Maps) | ⏳ pending |
+| 4 | Live scraper: `BrowserFactory`, `consent_handler`, PG live nav with overflow split, Maps grid scroll with `cap_likely`, file-backed checkpoint, CLI fixture + live coexisting | ✅ done |
+
+---
+
+## Live scrape — Phase 4
+
+**Two CLI modes coexist behind `npm run scrape`:**
+
+```bash
+# FIXTURE mode (offline, deterministic — used in CI and dev loops)
+npm run scrape -- \
+  --fixture pg=tests/fixtures/scraper/pg_belluno_normal.html,maps=tests/fixtures/scraper/maps_feltre_feed.html \
+  --category "agenzie immobiliari" \
+  --out output/raw.csv
+
+# LIVE mode (Playwright headless Chromium)
+npm run scrape -- --category "agenzie immobiliari" --province BL --out output/raw.csv
+npm run scrape -- --category "agenzie immobiliari" --comuni "Belluno,Feltre,Sedico" --out output/raw.csv
+npm run scrape -- --category "agenzie immobiliari" --province BL --maps --out output/raw.csv  # opt-in to Maps
+```
+
+**Live-mode flags:**
+| Flag | Default | Purpose |
+|---|---|---|
+| `--province <CC>` | — | curated comuni list per province (`BL`, `MI`, `TO`, …) |
+| `--comuni "C1,C2,..."` | — | explicit override list of comuni |
+| `--maps` | off | also run Maps feed scrape per comune |
+| `--max-pages <N>` | 30 | per-comune PG page cap |
+| `--inter-delay-ms <N>` | 3000 | pause between PG pages (anti-WAF) |
+| `--restart-every <N>` | 5 | proactive browser restart cadence |
+| `--checkpoint <path>` | `output/.scrape-checkpoint-<cat>.json` | resumable checkpoint location |
+| `--headless false` | true | run with a visible browser (debug) |
+
+**Safety notes:**
+- **Real network calls.** Live mode opens a Chromium session. Don't ship to CI without a network-access flag.
+- **Cookie/state persistence.** Browser session lives under `pg4/.browser-state/<id>.json`. Delete the directory to reset consent state.
+- **Checkpoint resumability.** Each `(provider, category, location, page)` outcome is JSON-persisted; re-runs skip done entries.
+- **Overflow / cap signals are surfaced, not hidden.** PG `overflow=true` and Maps `cap_likely=true` are logged + counted in the run summary; the orchestrator currently lists overflow comuni for manual drill-down (auto-split per geo grid is a Phase 4.x follow-up).
+- **Maps is OFF by default in live mode.** PG is more reliable; Maps requires further consent/captcha hardening before being on by default.
 | 5 | Benchmark vs pg3 | ⏳ pending |
 
 **Sanity check (vertical slice + scrape dry-run):**

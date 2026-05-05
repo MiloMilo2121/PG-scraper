@@ -14,7 +14,7 @@
 | 3.5 — Scraper parser fixtures (synthetic) | ✅ PG + Maps pure parsers + multi-key raw deduper + scrape dry-run |
 | 3.6 — Real-fixture parser gate | ✅ Live HTML captured for PG Belluno (25 cards), PG Milano (overflow=true), Maps Feltre (10 cards). Parsers passed real DOM with 2 hardenings: PG blocklist extended for `wa.me`/`whatsapp.com`/`m.me`; Maps span classifier strips `·` bullets, dedupes spans, requires Italian street prefix (no bare `\d{5}` fallback). |
 | 3.7 — Legacy failure mining | ✅ Audited pg3 CSVs (4795 rows) + logs. 11 failure modes documented in `docs/legacy_failure_taxonomy.md`. Code guardrails: dirty-host blocklist extended (franchise + portals), `Lead.{query_location, business_city, sources[], category_match, cap_likely}`, circuit breaker, Maps cap detector, category-match classifier, legacy CSV schema mapper. **181 unit tests, all green.** |
-| 4 — Live scraper (PG + Maps) | ⏳ Next |
+| 4 — Live scraper (PG + Maps) | ✅ `BrowserFactory` (Playwright single-page IT session, persistent state, proactive restart), `consent_handler` (per-domain counters, no log spam), pure URL builders (`pg_url.ts`, `maps_url.ts`), `italy_geo` (province → curated comuni), `Checkpoint` (file-backed JSON resumable), PG live navigator (overflow detection, inter-page delay, browser restart), Maps live navigator (feed scroll + stall detection + `cap_likely` flag), CLI fixture + live coexisting. **213 unit tests, all green.** |
 | 5 — Benchmark vs pg3 | ⏳ |
 
 ### Vertical slice fixture run (10 rows)
@@ -360,3 +360,37 @@ Each code is a `const` in `pg4/src/types/output.ts` so the compiler catches typo
 | 2026-05-05 | No `LinkedInSniper`/`PecHunter`/`BilancioHunter` classes | Collapse into stage functions; class proliferation in pg3 was anti-pattern |
 | 2026-05-05 | HyperGuesser ported as-is, simplified only post-benchmark | Empirical value of each strategy unknown; do not flatten pre-emptively |
 | 2026-05-05 | Two browser modules kept (factory + pool) | Distinct roles: long-lived scraping session vs concurrent enrichment checks |
+
+---
+
+## Phase 4 — Live scraper
+
+### What landed
+- `src/browser/factory.ts` — single-page Playwright session with Italian UA / locale `it-IT` / timezone `Europe/Rome`. Persistent storage state under `pg4/.browser-state/<id>.json`. Proactive restart every N navigations (default 5). Lazy-loads Playwright (or Patchright when `PATCHRIGHT_ENABLED=true`) so fixture mode and unit tests never spin up Chromium.
+- `src/browser/consent_handler.ts` — per-domain (`pg`, `maps`, `generic`) consent button trial-and-click. **In-process counters per (domain, outcome)** — replaces pg3's per-attempt log spam. `logConsentSummary()` emits a single structured line at run-end.
+- `src/discovery/sources/pg_url.ts` — pure `pgSlug()` and `buildPgSearchUrl(category, location, page)`. Strips diacritics, collapses repeats, handles `Cortina d'Ampezzo` → `cortina-d-ampezzo`.
+- `src/discovery/sources/maps_url.ts` — pure `buildMapsSearchUrl()`.
+- `src/discovery/sources/italy_geo.ts` — full `PROVINCE_CODES` set (110+ sigle) + curated `PROVINCE_COMUNI` per the Veneto/Lombardia/Lazio/Piemonte campaign baseline. `getComuniForProvince()` + `parseComuniList()` exposed for the CLI.
+- `src/runtime/checkpoint.ts` — file-backed JSON checkpoint, atomic write via `tmp + rename`. Resumable across CLI invocations. `Checkpoint.buildKey()` produces `provider:category:location:pN` keys.
+- `src/discovery/sources/pg_live.ts` — orchestrates a single (category, location) PG scrape: navigates, waits selector, extracts the search-results container, hands HTML to the pure parser, persists per-page checkpoint entries, stops on two consecutive empty pages or hitting `maxPages`.
+- `src/discovery/sources/maps_live.ts` — feed scroll loop with stall detection (3 consecutive same-count attempts → stop) + end-marker detection. Wraps the inner-HTML in a `<div role="feed">` shell and hands to the pure parser.
+- `src/cli/scrape.ts` — fixture mode (Phase 3.5) and live mode (Phase 4) coexist. Live mode lazy-loads Playwright. Required flags: `--category` + (`--province` | `--comuni`). Optional: `--maps` (off by default), `--max-pages`, `--inter-delay-ms`, `--restart-every`, `--headless false`, `--checkpoint`.
+
+### Deduper guardrail
+The pre-Phase-4 `nameCityKey` produced `${name}|` for any record without a `city`, which over-merged unrelated leads with generic names ("Pizzeria", "Studio"). Fixed: locality lookup is now `city → business_city → query_location`, and a key is only emitted when locality is non-empty (≥2 chars). The `nameAddrKey` fallback was tightened from 3 tokens to 2 to compensate (one source's address may have a comune in the third slot while another has a civic number, producing mismatched keys). Tests block this regression in `tests/unit/deduper.test.ts`.
+
+### Tests added in Phase 4
+- `tests/unit/pg_url.test.ts` (10 cases)
+- `tests/unit/maps_url.test.ts` (3 cases)
+- `tests/unit/italy_geo.test.ts` (5 cases)
+- `tests/unit/checkpoint.test.ts` (7 cases)
+- 5 new anti-overmerge cases in `tests/unit/deduper.test.ts`
+- `tests/smoke/pg_live_smoke.test.ts` — gated by `RUN_SMOKE=1`
+
+**Total: 213 unit tests, 0 network. Smoke: PG live single-page (RUN_SMOKE=1).**
+
+### Known phase-4 follow-ups
+- **Auto-split on PG overflow.** Phase 4 surfaces the count of overflowing comuni; the recursive geo-grid auto-split is a clean next step (the parser, dedupe, and checkpoint already support it).
+- **Auto-split on Maps `cap_likely`.** Same.
+- **Maps is opt-in via `--maps`.** PG runs first by default; Maps' Cloudflare/consent surface needs further hardening before being on by default.
+- **Concurrency.** BrowserFactory is single-page; comuni run serially. Worker-pool parallelism only after a benchmark proves the bottleneck is wallclock vs WAF.
