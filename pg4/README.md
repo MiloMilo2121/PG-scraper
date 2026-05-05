@@ -87,7 +87,8 @@ See `IMPLEMENTATION_NOTES.md` for the full Phase 0 audit and architecture decisi
 | 3.5 | Scraper parser fixtures (PG + Maps pure parsers, raw deduper, dry-run) | ✅ done |
 | 3.6 | Real-fixture parser gate (live HTML for PG + Maps) | ✅ done |
 | 3.7 | Legacy failure mining → guardrails (`docs/legacy_failure_taxonomy.md`) | ✅ done |
-| 4 | Live scraper: `BrowserFactory`, `consent_handler`, PG live nav with overflow split, Maps grid scroll with `cap_likely`, file-backed checkpoint, CLI fixture + live coexisting | ✅ done |
+| 4 | Live scraper: `BrowserFactory`, `consent_handler`, PG live nav with overflow detection, Maps grid scroll with `cap_likely` flag, file-backed checkpoint, CLI fixture + live coexisting *(auto-split on overflow / cap_likely is Phase 4.x)* | ✅ done |
+| 4.1 | Resume safety: live mode re-hydrates the deduper + lead set from the prior JSONL when the checkpoint marks pages as done. `--fresh` flag wipes prior artifacts. | ✅ done |
 
 ---
 
@@ -118,13 +119,14 @@ npm run scrape -- --category "agenzie immobiliari" --province BL --maps --out ou
 | `--inter-delay-ms <N>` | 3000 | pause between PG pages (anti-WAF) |
 | `--restart-every <N>` | 5 | proactive browser restart cadence |
 | `--checkpoint <path>` | `output/.scrape-checkpoint-<cat>.json` | resumable checkpoint location |
+| `--fresh` | off | wipe prior CSV/JSONL/checkpoint at `--out` before running |
 | `--headless false` | true | run with a visible browser (debug) |
 
 **Safety notes:**
 - **Real network calls.** Live mode opens a Chromium session. Don't ship to CI without a network-access flag.
 - **Cookie/state persistence.** Browser session lives under `pg4/.browser-state/<id>.json`. Delete the directory to reset consent state.
-- **Checkpoint resumability.** Each `(provider, category, location, page)` outcome is JSON-persisted; re-runs skip done entries.
-- **Overflow / cap signals are surfaced, not hidden.** PG `overflow=true` and Maps `cap_likely=true` are logged + counted in the run summary; the orchestrator currently lists overflow comuni for manual drill-down (auto-split per geo grid is a Phase 4.x follow-up).
+- **Checkpoint resumability.** Each `(provider, category, location, page)` outcome is JSON-persisted; re-runs skip done entries. **On resume the CLI rehydrates the deduper and lead set from the prior JSONL**, so the final CSV is complete even if every page was already scraped before. If the JSONL is missing but the checkpoint shows done entries, you'll get a warning; pass `--fresh` to clear all prior artifacts and start clean.
+- **Overflow / cap signals are surfaced, not auto-split.** PG `overflow=true` and Maps `cap_likely=true` are logged + counted in the run summary so the operator can drill down by passing a finer `--comuni` list. Auto-split per geo grid is a Phase 4.x follow-up — this README does NOT promise it today.
 - **Maps is OFF by default in live mode.** PG is more reliable; Maps requires further consent/captcha hardening before being on by default.
 | 5 | Benchmark vs pg3 | ⏳ pending |
 

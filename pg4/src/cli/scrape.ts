@@ -7,7 +7,11 @@ import { JsonlWriter } from '../io/jsonl_writer';
 import { parsePagineGialleResults } from '../discovery/sources/pagine_gialle_parser';
 import { parseGoogleMapsResults } from '../discovery/sources/google_maps_parser';
 import { dedupeLeads, Deduplicator } from '../discovery/deduper';
+import { readJsonlAsLeads } from '../io/jsonl_writer';
 import type { Lead } from '../types/lead';
+// Type-only import: the runtime class is still lazy-loaded inside
+// runLiveMode() so fixture-mode startup never imports playwright/etc.
+import type { Checkpoint } from '../runtime/checkpoint';
 
 /**
  * scrape — Phase 4
@@ -70,6 +74,7 @@ async function main() {
     headless: args.flags['headless'] !== 'false',
     checkpointPath: optString(args, 'checkpoint'),
     restartEvery: parseIntOrUndefined(optString(args, 'restart-every')),
+    fresh: !!args.flags['fresh'],
   });
 }
 
@@ -155,6 +160,12 @@ interface LiveModeArgs {
   headless?: boolean;
   checkpointPath?: string;
   restartEvery?: number;
+  /**
+   * When true, delete the previous CSV/JSONL/checkpoint at `out` and
+   * start a fresh run. Without it, an existing JSONL alongside the
+   * checkpoint is reloaded so resume produces a complete CSV.
+   */
+  fresh?: boolean;
 }
 
 async function runLiveMode(a: LiveModeArgs) {
@@ -172,7 +183,18 @@ async function runLiveMode(a: LiveModeArgs) {
     throw new Error('Live mode needs --province (curated list) or --comuni "C1,C2,...".');
   }
 
-  const checkpoint = new Checkpoint(a.checkpointPath ?? path.join(path.dirname(a.out), `.scrape-checkpoint-${slug(a.category)}.json`));
+  const checkpointPath = a.checkpointPath ?? path.join(path.dirname(a.out), `.scrape-checkpoint-${slug(a.category)}.json`);
+  const jsonlOut = a.out.replace(/\.csv$/i, '') + '.jsonl';
+
+  // --fresh: wipe the prior run's artifacts so the next run is clean.
+  if (a.fresh) {
+    for (const f of [a.out, jsonlOut, checkpointPath]) {
+      try { fs.unlinkSync(f); } catch { /* ignore missing */ }
+    }
+    logger.info({ out: a.out, jsonl: jsonlOut, checkpoint: checkpointPath }, '[scrape] --fresh: wiped prior run artifacts');
+  }
+
+  const checkpoint = new Checkpoint(checkpointPath);
   const factory = new BrowserFactory({
     id: `scrape-${slug(a.category)}`,
     headless: a.headless,
@@ -181,6 +203,14 @@ async function runLiveMode(a: LiveModeArgs) {
 
   const dedup = new Deduplicator();
   const allLeads: Lead[] = [];
+
+  // RESUME: if a JSONL from a prior run is present alongside a non-empty
+  // checkpoint, re-hydrate the deduper + lead set BEFORE iterating any
+  // comune. Otherwise checkpointed pages skip without contributing leads,
+  // and the resulting CSV would silently miss the work that was already
+  // done. This is Phase 4.1's core fix.
+  const resumed = await rehydrateFromPriorRun(jsonlOut, checkpoint, dedup, allLeads);
+
   let totalCards = 0;
   let dropped = 0;
   let comuniWithOverflow = 0;
@@ -234,8 +264,52 @@ async function runLiveMode(a: LiveModeArgs) {
     dropped_at_parse: dropped,
     raw_pre_dedupe: allLeads.length,
     checkpoint_done: checkpoint.countDone(),
+    resumed_from_prior_jsonl: resumed,
     factory: factory.describe(),
   });
+}
+
+/**
+ * Re-hydrate `dedup` and `allLeads` from a prior run's JSONL so that
+ * checkpointed-as-done pages can be safely skipped without losing the
+ * leads they contributed. Returns the number of leads loaded (0 if no
+ * prior JSONL or empty checkpoint).
+ *
+ * Phase 4.1 fix — without this, a resumed run produces a CSV missing
+ * every lead from any page the checkpoint says was already done.
+ */
+async function rehydrateFromPriorRun(
+  jsonlPath: string,
+  checkpoint: Checkpoint,
+  dedup: Deduplicator,
+  allLeads: Lead[]
+): Promise<number> {
+  if (checkpoint.countDone() === 0) return 0;
+  if (!fs.existsSync(jsonlPath)) {
+    logger.warn(
+      { jsonl: jsonlPath, checkpoint_done: checkpoint.countDone() },
+      '[scrape] checkpoint shows prior runs but JSONL is missing — checkpoint will skip pages whose leads cannot be recovered. Re-run with --fresh for a clean slate.'
+    );
+    return 0;
+  }
+  const prior = await readJsonlAsLeads(jsonlPath);
+  let loaded = 0;
+  for (const lead of prior) {
+    if (!lead.company_name) continue;
+    const existing = dedup.find(lead);
+    if (existing) {
+      dedup.merge(existing, lead);
+    } else {
+      dedup.add(lead);
+      allLeads.push(lead);
+      loaded += 1;
+    }
+  }
+  logger.info(
+    { jsonl: jsonlPath, prior_records: prior.length, loaded_unique: loaded, checkpoint_done: checkpoint.countDone() },
+    '[scrape] resumed from prior JSONL — checkpointed pages will be skipped, but their leads are already in the working set'
+  );
+  return loaded;
 }
 
 function resolveComuniList(

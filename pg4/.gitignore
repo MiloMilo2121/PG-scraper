@@ -5,4 +5,5 @@ dist/
 output/
 tests/fixtures/baseline_pg3.jsonl
 tmp/
+.browser-state/
 .DS_Store
