@@ -84,15 +84,21 @@ See `IMPLEMENTATION_NOTES.md` for the full Phase 0 audit and architecture decisi
 | 1 | Scaffold (types, config, IO, CLI stubs, typecheck green) | ✅ done |
 | 2 | Vertical slice (CSV → normalize → website-input check → enriched CSV) | ✅ done |
 | 3 | Discovery ladder (free SERP providers, SerpDeduplicator, HyperGuesser, RDAP) | ✅ done |
-| 3.5 | Scraper parser fixtures | ⏳ pending |
+| 3.5 | Scraper parser fixtures (PG + Maps pure parsers, raw deduper, dry-run) | ✅ done |
 | 4 | Live scraper (PG + Maps) | ⏳ pending |
 | 5 | Benchmark vs pg3 | ⏳ pending |
 
-**Sanity check (vertical slice):**
+**Sanity check (vertical slice + scrape dry-run):**
 ```bash
 cd pg4 && npm install
 npm run typecheck          # green
-npm test                   # 49/49 passing
-npm run enrich -- --input tests/fixtures/sample_companies.csv --out output/x.csv
-# → 10/10 rows produced; every row has status + reason_code; zero silent drops.
+npm test                   # 124/124 passing, zero network
+npm run enrich -- --input tests/fixtures/sample_companies.csv --out output/enriched.csv
+# → 10/10 rows produced; every row has status + reason_code
+
+npm run scrape -- \
+  --fixture pg=tests/fixtures/scraper/pg_belluno_normal.html,maps=tests/fixtures/scraper/maps_feltre_feed.html \
+  --category "agenzie immobiliari" \
+  --out output/raw.csv
+# → 9 cards → 8 records (1 dropped at parse: empty name); deterministic CSV columns
 ```

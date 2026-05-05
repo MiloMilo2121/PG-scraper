@@ -10,9 +10,9 @@
 | 0 — Audit | ✅ This document |
 | 1 — Scaffold (typecheck green) | ✅ `pg4/` compiles, deps installed |
 | 2 — Vertical slice | ✅ 10/10 rows, 0 silent drops |
-| 3 — Strong-piece port | ✅ HyperGuesser (NER + generator + DNS resolver) + 4 free SERP providers + SerpDeduplicator + RDAP validator wired into pipeline |
-| 3.5 — Scraper parser fixtures | ⏳ Next |
-| 4 — Live scraper (PG + Maps) | ⏳ |
+| 3 — Strong-piece port | ✅ HyperGuesser + 4 free SERP providers + SerpDeduplicator + RDAP validator wired into pipeline |
+| 3.5 — Scraper parser fixtures | ✅ PG + Maps pure parsers + multi-key raw deduper + scrape dry-run on fixture |
+| 4 — Live scraper (PG + Maps) | ⏳ Next |
 | 5 — Benchmark vs pg3 | ⏳ |
 
 ### Vertical slice fixture run (10 rows)
@@ -79,6 +79,49 @@ Improvements vs Phase 2:
 - Reason-code policy: keep the FIRST informative reason from the ladder, fall back to generic `DISCOVERY_EXHAUSTED` only when nothing more specific was produced
 
 The single remaining false positive (Mario Rossi SRL → mariorossi.eu) is structural: an Italian "John Doe" with a fake PIVA can't be reliably distinguished from a real owner. With a real PIVA, the digit-match check rejects this case deterministically.
+
+---
+
+## Phase 3.5 — Scraper parsers (fixture-driven, no network)
+
+Goal: build PG + Maps parsers and the raw-lead deduper against saved HTML before any live navigation. When Phase 4 wires the live scraper, the only risks remaining will be browser stability, WAF/captcha, and consent — never parsing logic.
+
+**Fixtures (synthetic, modeled on the canonical pg3 selectors):**
+- `tests/fixtures/scraper/pg_belluno_normal.html` — 5 cards (1 dropped: empty name) covering: full record, multi-phone (must keep first), PG/IO/plug.it internal-link rejection, NBSP + extra whitespace in name, address in a different comune.
+- `tests/fixtures/scraper/pg_milano_overflow.html` — renders the ">200 risultati" banner; the parser must surface `overflow=true` so the orchestrator (Phase 4) can drill down by comune.
+- `tests/fixtures/scraper/maps_feltre_feed.html` — 4 cards covering: full record, phone-less card, "Loc." address prefix, website via `aria-label="…sito web…"` variant.
+- `tests/fixtures/scraper/maps_incomplete.html` — 4 cards covering: empty-name drop, name from `a[aria-label]` only, name-only card with no other fields.
+- `tests/fixtures/scraper/maps_belluno_overlap.html` — overlaps with the Belluno PG fixture so the dedupe exit is exercised end-to-end.
+
+**Parsers (`src/discovery/sources/`):**
+- `pagine_gialle_parser.ts` — `parsePagineGialleResults(html, opts) → { results, total_cards, dropped, overflow }`. Selectors: `.search-itm`, `.search-itm__rag`, `.search-itm__adr`, `.search-itm__phone-item`, `a.remove_blank_for_app`, external `a[href^="http"]` with PG/IO/plug.it skip.
+- `google_maps_parser.ts` — `parseGoogleMapsResults(html, opts) → { results, total_cards, dropped }`. Selectors: `div[role="feed"]`, `div.Nv2PK`, `.qBF1Pd` / `div.fontHeadlineSmall` / `a[aria-label]` for name, `.W4Efsd span` classified as address vs phone via regex, `a[data-value="Sito web"]` / `a[aria-label*="sito web"]` / `a[aria-label*="Website"]`.
+
+**Raw deduper (`src/discovery/deduper.ts`):**
+- Multi-key index: phone (digits, country-prefix-stripped) · name+city · name+address-tokens (fallback when city is missing) · pg_url · maps_url · website host (registrable, `www.` stripped).
+- Conservative merge: existing fields always win; incoming fills only the gaps. Caller orders sources by authority (PG before Maps for Italian SMBs).
+- Side-effect: post-merge re-indexes the surviving record so a second incoming record can match it via newly merged keys.
+
+**Scrape CLI dry-run (`src/cli/scrape.ts`):**
+```
+npm run scrape -- \
+  --fixture pg=tests/fixtures/scraper/pg_belluno_normal.html,maps=tests/fixtures/scraper/maps_feltre_feed.html \
+  --category "agenzie immobiliari" \
+  --out output/raw.csv
+```
+- Emits the deterministic raw CSV columns + a JSONL with the same records.
+- Logs at completion: `total_cards`, `dropped_at_parse`, `raw_pre_dedupe`, `raw_post_dedupe`, `collapsed_by_dedupe`, `overflow`. No silent drops.
+
+**Tests added:**
+- `tests/unit/pg_parser.test.ts` — 12 cases (Belluno normal: 8, Milano overflow: 2, empty/malformed: 2)
+- `tests/unit/maps_parser.test.ts` — 13 cases (Feltre full: 9, incomplete: 3, empty: 2)
+- `tests/unit/deduper.test.ts` — extended with 3 new cases (name+address fallback, source-authority merge, maps_url indexing)
+
+**Dry-run results:**
+- `pg_belluno_normal + maps_feltre_feed`: 9 cards parsed → 8 records → 0 dedup collapses (no overlap) — scrape produces a stable, well-formed `raw.csv`.
+- `pg_belluno_normal + maps_belluno_overlap`: 7 cards parsed → 6 records → 1 dedup collapse (Studio Dolomiti merged from Maps into the PG record, preserving `source: "PG"` because PG is added first and existing wins).
+
+**Total tests now: 124 unit, 0 network. Smoke gated by `RUN_SMOKE=1`.**
 
 
 

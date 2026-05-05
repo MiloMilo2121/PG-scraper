@@ -44,4 +44,32 @@ describe('Deduplicator', () => {
     expect(a.website).toBe('https://a.it');
     expect(a.phone).toBe('+39021');
   });
+
+  it('dedupes by name+address when city is missing on one source', () => {
+    const out = dedupeLeads([
+      { company_name: 'Studio Dolomiti SRL', address: 'Via Mezzaterra 21, 32100 Belluno (BL)' },
+      { company_name: 'studio dolomiti srl', address: 'Via Mezzaterra 21' },
+    ]);
+    expect(out).toHaveLength(1);
+  });
+
+  it('first source wins on conflict (PG before Maps)', () => {
+    const out = dedupeLeads([
+      { company_name: 'Re/Max', city: 'Sedico', source: 'PG', phone: '0437 856100' },
+      { company_name: 'Re/Max', city: 'Sedico', source: 'MAPS', phone: '+39 0437 856100', website: 'https://www.remax.it' },
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].source).toBe('PG');                  // existing wins
+    expect(out[0].phone).toBe('0437 856100');         // existing wins
+    expect(out[0].website).toBe('https://www.remax.it'); // missing → filled in
+  });
+
+  it('dedupes by maps_url across sources', () => {
+    const out = dedupeLeads([
+      { company_name: 'X', city: 'A' },
+      { company_name: 'Y', city: 'B', maps_url: 'https://www.google.com/maps/place/foo' },
+      { company_name: 'Z', city: 'C', maps_url: 'https://www.google.com/maps/place/foo' },
+    ]);
+    expect(out).toHaveLength(2);
+  });
 });
