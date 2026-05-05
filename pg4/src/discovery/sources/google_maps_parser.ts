@@ -1,8 +1,15 @@
 import * as cheerio from 'cheerio';
 import type { AnyNode } from 'domhandler';
 import type { Lead } from '../../types/lead';
+import { classifyCategoryMatch } from './category_match';
 
 type CheerioCard = cheerio.Cheerio<AnyNode>;
+
+/**
+ * Threshold above which we assume the Maps feed query has hit its
+ * ~120-result cap and the result set is incomplete. Phase 3.7 docs §7.
+ */
+const MAPS_CAP_LIKELY_THRESHOLD = 110;
 
 /**
  * Pure parser for Google Maps result-feed HTML.
@@ -25,6 +32,11 @@ export interface MapsParseResult {
   results: Lead[];
   total_cards: number;
   dropped: number;
+  /**
+   * True when the feed length looks capped (~120). Orchestrator should
+   * narrow the query (smaller geo grid / sub-keyword) and re-run.
+   */
+  cap_likely: boolean;
 }
 
 /**
@@ -60,10 +72,10 @@ export function parseGoogleMapsResults(
   html: string,
   opts: { category?: string; cityHint?: string } = {}
 ): MapsParseResult {
-  if (!html || html.length < 100) return { results: [], total_cards: 0, dropped: 0 };
+  if (!html || html.length < 100) return { results: [], total_cards: 0, dropped: 0, cap_likely: false };
   const $ = cheerio.load(html);
   const feed = $('div[role="feed"]').first();
-  if (!feed.length) return { results: [], total_cards: 0, dropped: 0 };
+  if (!feed.length) return { results: [], total_cards: 0, dropped: 0, cap_likely: false };
 
   const cards = feed.find('div.Nv2PK').toArray();
   const out: Lead[] = [];
@@ -73,7 +85,12 @@ export function parseGoogleMapsResults(
     const lead = parseCard($card, opts);
     if (lead) out.push(lead);
   }
-  return { results: out, total_cards: cards.length, dropped: cards.length - out.length };
+  return {
+    results: out,
+    total_cards: cards.length,
+    dropped: cards.length - out.length,
+    cap_likely: cards.length >= MAPS_CAP_LIKELY_THRESHOLD,
+  };
 }
 
 function parseCard($card: CheerioCard, opts: { category?: string; cityHint?: string }): Lead | undefined {
@@ -97,6 +114,7 @@ function parseCard($card: CheerioCard, opts: { category?: string; cityHint?: str
   // by text and strip the leading bullet before classification.
   let address: string | undefined;
   let phone: string | undefined;
+  let typeTag: string | undefined; // first non-noise span — usually the category tag
   const seenSpanText = new Set<string>();
   $card.find('.W4Efsd span').each((_i, el) => {
     const raw = collapse($card.find(el).text());
@@ -110,6 +128,19 @@ function parseCard($card: CheerioCard, opts: { category?: string; cityHint?: str
     }
     if (!phone && PHONE_RE.test(cleaned)) {
       phone = cleaned;
+      return;
+    }
+    // First short non-address, non-phone, non-status text → likely type tag
+    // (e.g. "Agenzia immobiliare", "Centro estetico"). We avoid status text
+    // by rejecting strings that contain digits or the typical status verbs.
+    if (
+      !typeTag &&
+      cleaned.length >= 4 &&
+      cleaned.length <= 60 &&
+      !/\d/.test(cleaned) &&
+      !/^(Aperto|Chiuso|Aperto·|Chiude|Apre|Chiude tra)/i.test(cleaned)
+    ) {
+      typeTag = cleaned;
     }
   });
 
@@ -142,7 +173,7 @@ function parseCard($card: CheerioCard, opts: { category?: string; cityHint?: str
     }
   }
 
-  const lead: Lead = { company_name: name, source: 'MAPS' };
+  const lead: Lead = { company_name: name, source: 'MAPS', sources: ['MAPS'] };
   if (opts.category) lead.category = opts.category;
   if (address) lead.address = address;
   if (zip) lead.zip_code = zip;
@@ -154,6 +185,9 @@ function parseCard($card: CheerioCard, opts: { category?: string; cityHint?: str
     lead.maps_url = mapsUrl;
     lead.source_url = mapsUrl;
   }
+  if (opts.cityHint) lead.query_location = opts.cityHint;
+  if (city && opts.cityHint && city !== opts.cityHint) lead.business_city = city;
+  if (opts.category) lead.category_match = classifyCategoryMatch(opts.category, typeTag);
   return lead;
 }
 

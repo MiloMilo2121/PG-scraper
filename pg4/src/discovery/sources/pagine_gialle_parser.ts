@@ -28,6 +28,16 @@ export interface PageGialleParseResult {
   overflow: boolean; // true when PG renders the ">200 results" banner
 }
 
+export interface PageGialleParseOptions {
+  category?: string;
+  /**
+   * The comune/location string used in the PG search URL. Stored on each
+   * lead as `query_location` so cross-comune dedupe by `pg_url` can
+   * collapse the same agency seen via different queries.
+   */
+  queryLocation?: string;
+}
+
 /**
  * Hosts that PG renders as `<a href="http...">` inside cards but are NOT
  * the company's official website:
@@ -41,7 +51,10 @@ const INTERNAL_HOST_BLOCKLIST =
   /paginegialle\.it|italiaonline\.it|plug\.it|wa\.me|whatsapp\.com|m\.me|messenger\.com/i;
 const OVERFLOW_REGEX = /pi[uù]\s+di\s+200\s+risultat|oltre\s+200\s+risultat|more\s+than\s+200\s+result/i;
 
-export function parsePagineGialleResults(html: string, opts: { category?: string } = {}): PageGialleParseResult {
+export function parsePagineGialleResults(
+  html: string,
+  opts: PageGialleParseOptions = {}
+): PageGialleParseResult {
   if (!html || html.length < 100) {
     return { results: [], total_cards: 0, dropped: 0, overflow: false };
   }
@@ -54,14 +67,15 @@ export function parsePagineGialleResults(html: string, opts: { category?: string
 
   for (const cardEl of cards) {
     const $card = $(cardEl);
-    const lead = parseCard($card, opts.category);
+    const lead = parseCard($card, opts);
     if (lead) out.push(lead);
   }
 
   return { results: out, total_cards: total, dropped: total - out.length, overflow };
 }
 
-function parseCard($card: CheerioCard, category?: string): Lead | undefined {
+function parseCard($card: CheerioCard, opts: PageGialleParseOptions): Lead | undefined {
+  const category = opts.category;
   const rawName = $card.find('.search-itm__rag').first().text();
   const name = collapseSpaces(rawName);
   if (!name) return undefined;
@@ -81,6 +95,7 @@ function parseCard($card: CheerioCard, category?: string): Lead | undefined {
   const lead: Lead = {
     company_name: name,
     source: 'PG',
+    sources: ['PG'],
   };
   if (category) lead.category = category;
   if (addr) lead.address = addr;
@@ -92,6 +107,12 @@ function parseCard($card: CheerioCard, category?: string): Lead | undefined {
   if (pgUrl) {
     lead.pg_url = pgUrl;
     lead.source_url = pgUrl;
+  }
+  if (opts.queryLocation) {
+    lead.query_location = opts.queryLocation;
+    if (lead.city && lead.city.toLowerCase() !== opts.queryLocation.toLowerCase()) {
+      lead.business_city = lead.city;
+    }
   }
   return lead;
 }

@@ -13,6 +13,7 @@
 | 3 — Strong-piece port | ✅ HyperGuesser + 4 free SERP providers + SerpDeduplicator + RDAP validator wired into pipeline |
 | 3.5 — Scraper parser fixtures (synthetic) | ✅ PG + Maps pure parsers + multi-key raw deduper + scrape dry-run |
 | 3.6 — Real-fixture parser gate | ✅ Live HTML captured for PG Belluno (25 cards), PG Milano (overflow=true), Maps Feltre (10 cards). Parsers passed real DOM with 2 hardenings: PG blocklist extended for `wa.me`/`whatsapp.com`/`m.me`; Maps span classifier strips `·` bullets, dedupes spans, requires Italian street prefix (no bare `\d{5}` fallback). |
+| 3.7 — Legacy failure mining | ✅ Audited pg3 CSVs (4795 rows) + logs. 11 failure modes documented in `docs/legacy_failure_taxonomy.md`. Code guardrails: dirty-host blocklist extended (franchise + portals), `Lead.{query_location, business_city, sources[], category_match, cap_likely}`, circuit breaker, Maps cap detector, category-match classifier, legacy CSV schema mapper. **181 unit tests, all green.** |
 | 4 — Live scraper (PG + Maps) | ⏳ Next |
 | 5 — Benchmark vs pg3 | ⏳ |
 

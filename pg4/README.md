@@ -86,6 +86,7 @@ See `IMPLEMENTATION_NOTES.md` for the full Phase 0 audit and architecture decisi
 | 3 | Discovery ladder (free SERP providers, SerpDeduplicator, HyperGuesser, RDAP) | ✅ done |
 | 3.5 | Scraper parser fixtures (PG + Maps pure parsers, raw deduper, dry-run) | ✅ done |
 | 3.6 | Real-fixture parser gate (live HTML for PG + Maps) | ✅ done |
+| 3.7 | Legacy failure mining → guardrails (`docs/legacy_failure_taxonomy.md`) | ✅ done |
 | 4 | Live scraper (PG + Maps) | ⏳ pending |
 | 5 | Benchmark vs pg3 | ⏳ pending |
 

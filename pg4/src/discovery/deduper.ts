@@ -54,12 +54,22 @@ export class Deduplicator {
 
   /**
    * Conservative merge: only fill in fields that `existing` is missing.
-   * Existing values are NEVER overwritten — caller chooses authority by
-   * order of `add()` calls.
+   * Existing values are NEVER overwritten on scalar fields — caller
+   * chooses authority by order of `add()` calls.
+   *
+   * EXCEPTION: `sources[]` is treated as a UNION (Phase 3.7) — pg3 used
+   * a delimited string and lost provenance. pg4 keeps every contributing
+   * source visible.
    */
   merge(existing: Lead, incoming: Lead): void {
     for (const [k, v] of Object.entries(incoming)) {
       if (v === undefined || v === null || v === '') continue;
+      if (k === 'sources' && Array.isArray(v)) {
+        const cur = Array.isArray(existing.sources) ? existing.sources : existing.source ? [existing.source] : [];
+        const set = new Set([...cur, ...(v as string[])]);
+        existing.sources = Array.from(set);
+        continue;
+      }
       if (existing[k] === undefined || existing[k] === null || existing[k] === '') {
         (existing as Record<string, unknown>)[k] = v;
       }

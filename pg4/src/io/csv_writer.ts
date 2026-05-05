@@ -38,8 +38,19 @@ export class CsvWriter {
 
   async write(lead: Lead): Promise<void> {
     const row: Record<string, unknown> = {};
+    // CSV serialization rules:
+    //   - `sources[]` (Lead union of contributing sources) is rendered as
+    //     `PG+MAPS` so the column is human-readable. The JSONL keeps the
+    //     structured array. This bridges Phase 3.7 §9 — provenance stays
+    //     lossless across the two output formats.
+    //   - everything else is rendered as the JS value, with object/array
+    //     fallback to JSON.stringify by csv-stringify.
     for (const col of this.columns) {
-      const v = (lead as Record<string, unknown>)[col];
+      let v = (lead as Record<string, unknown>)[col];
+      if (col === 'source') {
+        const arr = Array.isArray((lead as Lead).sources) ? (lead as Lead).sources! : v ? [String(v)] : [];
+        v = arr.length > 0 ? arr.join('+') : v;
+      }
       row[col] = v === undefined || v === null ? '' : v;
     }
     if (!this.stringifier.write(row)) {

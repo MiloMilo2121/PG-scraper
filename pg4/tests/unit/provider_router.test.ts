@@ -64,4 +64,31 @@ describe('ProviderRouter', () => {
     expect(r.provider).toBe('ok_http');
     expect(r.html).toContain('ok');
   });
+
+  it('trips a SERP provider via circuit breaker after repeated throws', async () => {
+    class ThrowingSerp implements SerpProvider {
+      id = 'flaky_serp';
+      family = 'serp' as const;
+      tier = 0;
+      costPerCallEur = 0;
+      callCount = 0;
+      available() { return true; }
+      async search() {
+        this.callCount += 1;
+        throw new Error('upstream 5xx');
+      }
+    }
+    const flaky = new ThrowingSerp();
+    const ledger = new CostLedger();
+    const router = new ProviderRouter([flaky], [], [], ledger);
+    router.configureBreaker('flaky_serp', { failureThreshold: 3, windowMs: 60_000, cooldownMs: 60_000 });
+
+    // 3 calls trip the breaker.
+    for (let i = 0; i < 3; i++) await router.search('q');
+    const before = flaky.callCount;
+    // After the breaker is open, the provider is filtered out — no more calls.
+    await router.search('q');
+    await router.search('q');
+    expect(flaky.callCount).toBe(before);
+  });
 });

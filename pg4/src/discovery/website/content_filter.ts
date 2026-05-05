@@ -4,29 +4,64 @@
  * functions instead of a class.
  */
 
+/**
+ * Hosts that must NEVER be stored as `official_website`.
+ *
+ * Phase 3.7 audit of pg3 outputs (`MASTER_WITH_WEBSITE.csv`, 1700 rows)
+ * found ~25% of records with `website` set to one of these. They polluted
+ * downstream enrichment, decision-maker discovery, and final outreach
+ * lists. See `docs/legacy_failure_taxonomy.md` §2.
+ */
 const DIRECTORIES = new Set([
-  // Search engines themselves — we should never accept their result page
-  // URLs as "the official website".
+  // Search engines — never the answer to "what's the company's website?"
   'google.com', 'google.it', 'bing.com', 'duckduckgo.com', 'lite.duckduckgo.com',
-  // Italian phone/business directories
+
+  // Italian phone / business directories
   'paginegialle.it', 'paginebianche.it', 'yelp.it', 'yelp.com', 'tripadvisor.it',
-  'facebook.com', 'instagram.com', 'linkedin.com', 'twitter.com', 'x.com',
+
+  // Social / messaging — including PG-generated "click to chat" surfaces
+  'facebook.com', 'instagram.com', 'linkedin.com', 'linkedin.it', 'twitter.com', 'x.com',
   'wa.me', 'whatsapp.com', 'api.whatsapp.com', 'chat.whatsapp.com',
-  't.me', 'telegram.me', 'linktr.ee', 'maps.app.goo.gl', 'g.page',
+  't.me', 'telegram.me', 'linktr.ee', 'maps.app.goo.gl', 'g.page', 'm.me', 'messenger.com',
+
+  // Italian aggregators / directory portals
   'virgilio.it', 'aziende.virgilio.it', 'kompass.com', 'europages.com',
   'misterimprese.it', 'prontopro.it', 'prontoimprese.it', 'habitissimo.it',
+
+  // Job boards
   'infojobs.it', 'indeed.com', 'glassdoor.it', 'trovalavoro.it',
-  'bakeca.it', 'subito.it', 'wikipedia.org', 'amazon.it', 'ebay.it', 'groupon.it',
+  'bakeca.it', 'subito.it',
+
+  // Other portals + reference sites
+  'wikipedia.org', 'amazon.it', 'ebay.it', 'groupon.it',
+
+  // Italian business/registry portals
   'guidatitolari.it', 'registroimprese.it', 'ufficiocamerale.it',
   'informazione-aziende.it', 'trovanumeri.com', 'reteimprese.it', 'area-clienti.com',
-  'pagineimprese.it', 'linkedin.it', 'signalhire.com', 'rocketreach.co',
-  'zoominfo.com', 'apollo.io', 'lusha.com', 'arounddeal.com', 'datanyze.com',
+  'pagineimprese.it',
+
+  // Sales-intel / contact enrichment vendors
+  'signalhire.com', 'rocketreach.co', 'zoominfo.com', 'apollo.io',
+  'lusha.com', 'arounddeal.com', 'datanyze.com',
+
+  // Italian B2B intel
   'companywall.it', 'visura.pro', 'registroaziende.it', 'wogha.com',
   'fatturatoitalia.it', 'saikoo.ai', 'reportaziende.it',
-  'trovacasa.it', 'cheannunci.it', 'money.it', 'guidamonaci.it', 'abbrevia.it',
-  'immobiliare.it', 'idealista.it', 'casa.it', 'tuttocitta.it', 'dnb.com',
-  'cloudfront.net', 'soloaffitti.it', 'tecnocasa.it', 'immobiliare.info',
-  'annuncicase.it', 'cercasicasa.it', 'attico.it', 'wikicasa.it', 'caasa.it',
+
+  // Real-estate listing portals (NEVER the agency's own website)
+  'immobiliare.it', 'idealista.it', 'casa.it', 'tuttocitta.it',
+  'soloaffitti.it', 'immobiliare.info', 'annuncicase.it', 'cercasicasa.it',
+  'attico.it', 'wikicasa.it', 'caasa.it', 'trovacasa.it', 'cheannunci.it',
+
+  // Real-estate FRANCHISE master portals (Phase 3.7 audit: 432/1700 records
+  // were mistakenly tagged as the agency's website, when in fact they were
+  // the franchise's flagship site, e.g. `tecnocasa.it/agenzie/foo`).
+  'tecnocasa.it', 'gabetti.it', 'remax.it', 'professionecasa.it',
+  'retecasa.it', 'intercasanet.it', 'myhomegroup.it', 'gruppocasa.com',
+  'centrocasa.it', 'primacasa.it', 'stabilia.it', 'agenziagruppocasa.it',
+
+  // News / classified / generic
+  'money.it', 'guidamonaci.it', 'abbrevia.it', 'dnb.com', 'cloudfront.net',
 ]);
 
 /** Italian directories from which we CAN extract structured data (different from pure social). */
