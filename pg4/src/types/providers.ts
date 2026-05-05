@@ -64,3 +64,37 @@ export interface LLMProvider extends Provider {
 }
 
 export type AnyProvider = SerpProvider | HttpProvider | LLMProvider;
+
+/**
+ * Tagged error for "the provider's response was a Cloudflare/captcha
+ * block page", as opposed to "the provider returned a legitimate empty
+ * result set". The router uses this to drive the circuit breaker
+ * aggressively (block hits cost more than empty misses).
+ */
+export class ProviderBlockError extends Error {
+  readonly providerId: string;
+  constructor(providerId: string, message = 'provider returned a block page') {
+    super(message);
+    this.name = 'ProviderBlockError';
+    this.providerId = providerId;
+  }
+}
+
+/** Classified failure kind used by router → ledger + breaker. */
+export type FailureKind = 'blocked' | 'rate_limit' | 'transport' | 'timeout' | 'other';
+
+export function classifyHttpFailure(opts: { status?: number; error?: string }): FailureKind {
+  const msg = (opts.error ?? '').toLowerCase();
+  if (opts.status === 429 || /rate.?limit|429/.test(msg)) return 'rate_limit';
+  if (msg.includes('timeout') || msg.includes('etimedout')) return 'timeout';
+  if (
+    opts.status === 0 ||
+    opts.status === 502 ||
+    opts.status === 503 ||
+    opts.status === 504 ||
+    /econnreset|econnrefused|enotfound|socket|fetch failed/.test(msg)
+  ) {
+    return 'transport';
+  }
+  return 'other';
+}

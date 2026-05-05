@@ -29,6 +29,8 @@ interface CircuitInternal {
   consecutiveFailures: number;
   firstFailureTs: number;
   openedAt: number;
+  /** Last failure kind reported by the caller — informational only. */
+  lastFailureKind?: string;
 }
 
 const DEFAULT_CONFIG: CircuitConfig = {
@@ -78,7 +80,16 @@ export class CircuitBreaker {
     s.openedAt = 0;
   }
 
-  recordFailure(key: string): void {
+  /**
+   * Record a punitive failure. `kind` is informational and surfaces in
+   * `snapshot()`; it does NOT change the trip math, which gives every
+   * call site a single, simple contract: "if you call `recordFailure`,
+   * the breaker treats it as a real failure". Empty SERP results MUST
+   * NOT call this — pg3's logs proved free SERP returns empty more
+   * often than not, and the breaker would lock down DDG/crt.sh
+   * permanently.
+   */
+  recordFailure(key: string, kind?: string): void {
     const cfg = this.cfgFor(key);
     const t = this.now();
     let s = this.states.get(key);
@@ -86,6 +97,7 @@ export class CircuitBreaker {
       s = { state: 'closed', consecutiveFailures: 0, firstFailureTs: 0, openedAt: 0 };
       this.states.set(key, s);
     }
+    s.lastFailureKind = kind;
     if (s.state === 'half_open') {
       // A failure in the trial run reopens the circuit.
       s.state = 'open';
@@ -107,11 +119,12 @@ export class CircuitBreaker {
   }
 
   /** Diagnostic: snapshot of all keys for boot/runtime logging. */
-  snapshot(): Array<{ key: string; state: CircuitState; consecutiveFailures: number }> {
+  snapshot(): Array<{ key: string; state: CircuitState; consecutiveFailures: number; lastFailureKind?: string }> {
     return Array.from(this.states.entries()).map(([k, v]) => ({
       key: k,
       state: v.state,
       consecutiveFailures: v.consecutiveFailures,
+      lastFailureKind: v.lastFailureKind,
     }));
   }
 

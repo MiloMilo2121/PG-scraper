@@ -1,6 +1,7 @@
 import { request } from 'undici';
 import * as cheerio from 'cheerio';
 import type { SerpProvider, SerpResult } from '../../types/providers';
+import { ProviderBlockError } from '../../types/providers';
 import { DEFAULTS } from '../../config/defaults';
 
 /**
@@ -44,12 +45,15 @@ export class DdgLiteProvider implements SerpProvider {
     } catch {
       return [];
     }
+    if (DdgLiteProvider.looksBlocked(html)) {
+      throw new ProviderBlockError(this.id, 'DDG-lite served a block page');
+    }
     return this.parse(html, opts.limit ?? 25);
   }
 
   /** Pure parser, exposed for unit tests. */
   parse(html: string, limit: number): SerpResult[] {
-    if (!html || this.looksBlocked(html)) return [];
+    if (!html || DdgLiteProvider.looksBlocked(html)) return [];
     const $ = cheerio.load(html);
     const out: SerpResult[] = [];
     // DDG-lite renders results as a sequence of <a class="result-link"> + sibling snippet.
@@ -86,7 +90,8 @@ export class DdgLiteProvider implements SerpProvider {
     return out;
   }
 
-  private looksBlocked(html: string): boolean {
+  /** Public so the live `search()` can decide whether to throw a block error. */
+  static looksBlocked(html: string): boolean {
     const lower = html.toLowerCase();
     return (
       lower.includes('bots use duckduckgo too') ||

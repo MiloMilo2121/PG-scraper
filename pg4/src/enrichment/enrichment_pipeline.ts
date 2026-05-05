@@ -13,6 +13,7 @@ import { isParked, isUnderConstruction } from '../discovery/website/content_filt
 import { DEFAULTS } from '../config/defaults';
 import type { ProviderRouter } from '../providers/provider_router';
 import type { Run } from '../runtime/run_context';
+import { tierCapForLead } from '../runtime/run_context';
 import { logger } from '../runtime/logger';
 import { classifyError } from '../runtime/errors';
 
@@ -162,7 +163,7 @@ class InputWebsiteStage implements Stage {
   readonly name = 'input_website';
   constructor(private router: ProviderRouter) {}
 
-  async run(_ctx: PerLeadContext, lead: Lead, normalized: NormalizedLead): Promise<StageOutcome> {
+  async run(ctx: PerLeadContext, lead: Lead, normalized: NormalizedLead): Promise<StageOutcome> {
     const start = Date.now();
     const website = normalized.website;
     if (!website) {
@@ -180,6 +181,7 @@ class InputWebsiteStage implements Stage {
     }
     const verdict = await verifyCandidates(this.router, assessed.candidates.slice(0, 3), normalized, lead, {
       timeoutMs: DEFAULTS.pipeline.requestTimeoutMs,
+      meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
     });
     if (verdict.matched) {
       lead.website_discovery_method = verdict.method === 'piva' ? DiscoveryMethod.INPUT_PIVA_MATCH : DiscoveryMethod.INPUT_SEMANTIC;
@@ -201,7 +203,7 @@ class HyperGuesserStage implements Stage {
   readonly name = 'hyper_guesser';
   constructor(private router: ProviderRouter, private dnsResolver?: (host: string) => Promise<string[]>) {}
 
-  async run(_ctx: PerLeadContext, lead: Lead, normalized: NormalizedLead): Promise<StageOutcome> {
+  async run(ctx: PerLeadContext, lead: Lead, normalized: NormalizedLead): Promise<StageOutcome> {
     const start = Date.now();
     const guesses = await HyperGuesser.run(normalized, { maxCandidates: 60, resolve4: this.dnsResolver });
     if (guesses.length === 0) {
@@ -210,6 +212,7 @@ class HyperGuesserStage implements Stage {
     const candidateUrls = guesses.slice(0, 6).map((g) => `https://${g.domain}`);
     const verdict = await verifyCandidates(this.router, candidateUrls, normalized, lead, {
       timeoutMs: DEFAULTS.pipeline.requestTimeoutMs,
+      meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
     });
     if (verdict.matched) {
       lead.website_discovery_method = DiscoveryMethod.HYPER_GUESSER;
@@ -232,10 +235,18 @@ class SerpStage implements Stage {
   private dedup = new SerpDeduplicator();
   constructor(private router: ProviderRouter) {}
 
-  async run(_ctx: PerLeadContext, lead: Lead, normalized: NormalizedLead): Promise<StageOutcome> {
+  async run(ctx: PerLeadContext, lead: Lead, normalized: NormalizedLead): Promise<StageOutcome> {
     const start = Date.now();
     const query = this.buildQuery(normalized);
-    const result = await this.router.search(query, { maxTier: 1, signal: undefined });
+    // Per-lead budget gate: when the ceiling is hit we cap to free SERP
+    // (tier ≤ 1). Free SERP is the default cap anyway today, but the
+    // helper makes the policy uniform if/when the operator opens paid
+    // tiers via env or CLI flag.
+    const maxTier = Math.min(1, tierCapForLead(ctx, 1));
+    const result = await this.router.search(query, {
+      maxTier,
+      meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
+    });
     if (!result.results || result.results.length === 0) {
       return { stage: this.name, status: 'not_found', duration_ms: Date.now() - start, reason_code: RC.DISCOVERY_EXHAUSTED, detail: 'no_serp_results' };
     }
@@ -246,6 +257,7 @@ class SerpStage implements Stage {
     const candidateUrls = ranked.slice(0, 5).map((c) => c.best_url);
     const verdict = await verifyCandidates(this.router, candidateUrls, normalized, lead, {
       timeoutMs: DEFAULTS.pipeline.requestTimeoutMs,
+      meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
     });
     if (verdict.matched) {
       lead.website_discovery_method = DiscoveryMethod.SERP_COMPANY;
@@ -304,7 +316,7 @@ async function verifyCandidates(
   candidates: string[],
   normalized: NormalizedLead,
   lead: Lead,
-  opts: { timeoutMs?: number }
+  opts: { timeoutMs?: number; meta?: Record<string, string | number | boolean> }
 ): Promise<{
   matched: boolean;
   method?: 'piva' | 'semantic';
@@ -316,7 +328,7 @@ async function verifyCandidates(
   let lastDetail = '';
   let timedOut = false;
   for (const candidate of candidates) {
-    const res = await router.fetch(candidate, { timeoutMs: opts.timeoutMs });
+    const res = await router.fetch(candidate, { timeoutMs: opts.timeoutMs, meta: opts.meta });
     if (!res.html || res.status < 200 || res.status >= 400) {
       lastDetail = `${candidate} status=${res.status}${res.error ? ` err=${res.error}` : ''}`;
       if (res.error?.toLowerCase().includes('timeout')) timedOut = true;

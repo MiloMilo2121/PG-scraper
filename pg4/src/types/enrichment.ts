@@ -21,6 +21,15 @@ export interface PerLeadContext {
   providersUsed: Set<string>;
   layersAttempted: string[];
   abort: AbortSignal;
+  /**
+   * Per-lead cost ceiling in EUR. Threaded from `RunContext.costCeilingEur`
+   * for fast access inside stages. When `costEur >= costCeilingEur`,
+   * stages must downgrade to free-tier providers (`maxTier: 0`) for the
+   * remainder of this lead's processing.
+   */
+  costCeilingEur: number;
+  /** Set to true the first time the budget is exhausted for this lead. */
+  budgetExhausted?: boolean;
 }
 
 /**

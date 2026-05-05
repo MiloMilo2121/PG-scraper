@@ -1,6 +1,7 @@
 import { request } from 'undici';
 import * as cheerio from 'cheerio';
 import type { SerpProvider, SerpResult } from '../../types/providers';
+import { ProviderBlockError } from '../../types/providers';
 import { DEFAULTS } from '../../config/defaults';
 
 /**
@@ -45,12 +46,18 @@ export class BingHtmlProvider implements SerpProvider {
     } catch {
       return [];
     }
+    // Phase 4.2: a block page is NOT an empty result. The router needs
+    // to know so it trips the circuit breaker aggressively (Bing
+    // captcha loops were a top-3 noise source in pg3 logs).
+    if (BingHtmlProvider.looksBlocked(html)) {
+      throw new ProviderBlockError(this.id, 'Bing served a captcha / block page');
+    }
     return this.parse(html, opts.limit ?? 25);
   }
 
   /** Pure parser, exposed for unit tests. */
   parse(html: string, limit: number): SerpResult[] {
-    if (!html || this.looksBlocked(html)) return [];
+    if (!html || BingHtmlProvider.looksBlocked(html)) return [];
     const $ = cheerio.load(html);
     const out: SerpResult[] = [];
     $('li.b_algo').each((idx, el) => {
@@ -77,7 +84,8 @@ export class BingHtmlProvider implements SerpProvider {
     return out;
   }
 
-  private looksBlocked(html: string): boolean {
+  /** Public so the live `search()` can decide whether to throw a block error. */
+  static looksBlocked(html: string): boolean {
     const lower = html.toLowerCase();
     return (
       lower.includes('verify you are a human') ||

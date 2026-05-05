@@ -74,6 +74,38 @@ tests/
 4. **Cost control** — every provider declares cost; per-lead ceiling triggers degraded mode
 5. **One logger, one Lead type, deterministic CSV columns**
 
+## Cost discipline (Phase 4.2)
+
+pg3 logs showed 16K+ `SERP_EMPTY_RESULT` per batch (mistakenly logged as ERROR), 89 crt.sh 5xx storms, and `CLOUDFLARE_TURNSTILE on bing.com` loops. pg4 codifies the discipline that prevents these from costing you anything:
+
+- **Paid providers OFF by default.** Every paid SERP / HTTP / LLM provider is gated by an env feature flag AND requires its API key. Missing → silently dropped from the registry. Boot logs print the exact capability surface.
+- **Free-first by default.** SerpStage in the enrichment pipeline runs at `maxTier: 1` — only DNS-MX, crt.sh, DDG, Bing-HTML are dialled. Paid providers stay off until the operator explicitly opts in.
+- **`SERP_EMPTY_RESULT` is not punitive.** Empty SERP results increment the ledger as `kind: 'empty'` but do NOT count toward circuit-breaker trips. Pg3 used to lock down free providers because of this.
+- **Block / rate-limit / transport hits ARE punitive.** Bing's Cloudflare-Turnstile pages throw `ProviderBlockError`; the router classifies it (`kind: 'blocked'`), counts it toward the breaker, and routes around the provider for a cooldown window. Same for `429` (`rate_limit`) and `5xx`/`ENOTFOUND`/`fetch failed` (`transport`).
+- **Per-lead cost ceiling.** `--cost-ceiling-eur` (default `0.10`) caps the EUR spent on a single lead. Once hit, `tierCapForLead()` forces subsequent stages to `maxTier: 1` (free SERP only) for the remainder of that lead. The pipeline exposes this via `PerLeadContext.budgetExhausted`.
+- **JSONL ledger.** `--ledger-path` (default `<out>.cost-ledger.jsonl`) appends one structured line per provider call, plus a final `kind: 'summary'` line with totals, per-provider breakdown, success rates, kind breakdown, breaker state. Mid-run cost is observable; post-mortem is `jq`-friendly.
+
+Run summary example (the `--ledger-path` JSONL's last line):
+```json
+{
+  "run_id": "run-1778006247004-3d94",
+  "total_calls": 72,
+  "total_cost_eur": 0,
+  "success_rate": 0.43,
+  "leads_processed": 10,
+  "leads_with_website": 1,
+  "cost_per_lead_eur": 0,
+  "cost_ceiling_eur": 0.10,
+  "by_provider": {
+    "direct_fetch": { "calls": 44, "cost_eur": 0, "success_rate": 0.54, "by_kind": {"success":24,"transport":12,"timeout":7,"other":1} },
+    "dns_mx":      { "calls": 7,  "cost_eur": 0, "success_rate": 0,    "by_kind": {"empty":7} },
+    "crtsh":       { "calls": 7,  "cost_eur": 0, "success_rate": 0,    "by_kind": {"empty":7} }
+  },
+  "breaker": [],
+  "kind": "summary"
+}
+```
+
 See `IMPLEMENTATION_NOTES.md` for the full Phase 0 audit and architecture decisions.
 
 ## Status
@@ -89,6 +121,7 @@ See `IMPLEMENTATION_NOTES.md` for the full Phase 0 audit and architecture decisi
 | 3.7 | Legacy failure mining → guardrails (`docs/legacy_failure_taxonomy.md`) | ✅ done |
 | 4 | Live scraper: `BrowserFactory`, `consent_handler`, PG live nav with overflow detection, Maps grid scroll with `cap_likely` flag, file-backed checkpoint, CLI fixture + live coexisting *(auto-split on overflow / cap_likely is Phase 4.x)* | ✅ done |
 | 4.1 | Resume safety: live mode re-hydrates the deduper + lead set from the prior JSONL when the checkpoint marks pages as done. `--fresh` flag wipes prior artifacts. | ✅ done |
+| 4.2 | Cost guardrails: JSONL-persistent CostLedger, ProviderBlockError + classified failure kinds (blocked/rate_limit/transport/timeout/other), per-lead cost gate (`tierCapForLead`), `--cost-ceiling-eur` + `--ledger-path` CLI flags, structured run summary. | ✅ done |
 
 ---
 

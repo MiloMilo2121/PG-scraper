@@ -7,6 +7,13 @@ import { getConfig } from '../config/env';
 import type { ResolvedConfig } from '../config/env';
 import type { PerLeadContext, RunContext } from '../types/enrichment';
 
+export interface RunOptions {
+  /** Persist CostLedger entries as JSONL at this path (one record per call). */
+  ledgerJsonlPath?: string;
+  /** Override the per-lead cost ceiling from config/env. */
+  costCeilingEur?: number;
+}
+
 /**
  * Container for the shared infrastructure used across a whole run
  * (one CLI invocation processes one CSV).
@@ -20,9 +27,10 @@ export interface Run {
   rate: RateLimiter;
 }
 
-export function createRun(): Run {
+export function createRun(opts: RunOptions = {}): Run {
   const cfg = getConfig();
-  const ledger = new CostLedger();
+  const runId = `run-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+  const ledger = new CostLedger({ jsonlPath: opts.ledgerJsonlPath, runId });
   const cache = new MemoryCache({ maxEntries: 10_000 });
   const backpressure = new Backpressure({
     initialConcurrency: cfg.pipeline.concurrency,
@@ -30,9 +38,9 @@ export function createRun(): Run {
   });
   const rate = new RateLimiter();
   const ctx: RunContext = {
-    runId: `run-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`,
+    runId,
     startedAt: Date.now(),
-    costCeilingEur: cfg.pipeline.costCeilingEurPerLead,
+    costCeilingEur: opts.costCeilingEur ?? cfg.pipeline.costCeilingEurPerLead,
     abort: new AbortController().signal,
   };
   return { ctx, cfg, ledger, cache, backpressure, rate };
@@ -47,5 +55,20 @@ export function createPerLeadContext(run: Run): PerLeadContext {
     providersUsed: new Set(),
     layersAttempted: [],
     abort: run.ctx.abort,
+    costCeilingEur: run.ctx.costCeilingEur,
   };
+}
+
+/**
+ * Budget gate helper used by enrichment stages. Returns the maximum tier
+ * the stage is allowed to use given the lead's remaining budget. Tiers
+ * 0–1 are always allowed (free deterministic + free-or-cheap SERP);
+ * higher tiers are blocked once the ceiling is hit.
+ */
+export function tierCapForLead(perLead: PerLeadContext, defaultMax = 4): number {
+  if (perLead.costEur >= perLead.costCeilingEur) {
+    perLead.budgetExhausted = true;
+    return 1;
+  }
+  return defaultMax;
 }

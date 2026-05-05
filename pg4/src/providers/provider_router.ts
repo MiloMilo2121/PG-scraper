@@ -1,4 +1,5 @@
 import type { AnyProvider, HttpProvider, LLMProvider, SerpProvider } from '../types/providers';
+import { ProviderBlockError, classifyHttpFailure } from '../types/providers';
 import type { CostLedger } from '../runtime/cost_ledger';
 import { CircuitBreaker } from '../runtime/circuit_breaker';
 import { logger } from '../runtime/logger';
@@ -9,6 +10,12 @@ export interface RouteOptions {
   /** Cap how many providers to try in this call. */
   maxProviders?: number;
   signal?: AbortSignal;
+  /**
+   * Caller-supplied context attached to every CostLedger entry produced
+   * by this call. Typical keys: `lead_id`, `run_id`, `stage`. Useful
+   * for per-lead cost reconstruction in post-mortem JSONL analysis.
+   */
+  meta?: Record<string, string | number | boolean>;
 }
 
 /**
@@ -42,15 +49,23 @@ export class ProviderRouter {
     for (const p of candidates) {
       try {
         const results = await p.search(query, { signal: opts.signal });
-        // Empty result is NOT a failure for the breaker — it's a normal miss.
-        // Only thrown errors trip the breaker.
-        this.ledger.record(p.id, p.family, p.costPerCallEur, results.length > 0);
+        // Empty result is NOT a failure — pg3 audit found 16K+ SERP_EMPTY
+        // entries logged as ERROR per batch. Free SERP returns empty
+        // frequently for small Italian businesses; we treat empty as a
+        // clean miss for both the breaker AND the ledger's success
+        // accounting (kind='empty').
+        const ok = results.length > 0;
+        this.ledger.record(p.id, p.family, p.costPerCallEur, ok, {
+          kind: ok ? 'success' : 'empty',
+          meta: opts.meta,
+        });
         this.breaker.recordSuccess(p.id);
-        if (results.length > 0) return { provider: p.id, results };
+        if (ok) return { provider: p.id, results };
       } catch (err) {
-        this.ledger.record(p.id, p.family, p.costPerCallEur, false);
-        this.breaker.recordFailure(p.id);
-        logger.warn({ provider: p.id, err: (err as Error).message }, '[Router] serp provider failed');
+        const kind: import('../types/providers').FailureKind = err instanceof ProviderBlockError ? 'blocked' : classifyThrown(err);
+        this.ledger.record(p.id, p.family, p.costPerCallEur, false, { kind, meta: opts.meta });
+        this.breaker.recordFailure(p.id, kind);
+        logger.warn({ provider: p.id, kind, err: (err as Error).message }, '[Router] serp provider failed');
       }
     }
     return { provider: 'none', results: [] };
@@ -63,20 +78,25 @@ export class ProviderRouter {
       try {
         const res = await p.fetch(url, { timeoutMs: opts.timeoutMs, signal: opts.signal });
         const ok = res.status >= 200 && res.status < 400 && !!res.html;
-        this.ledger.record(p.id, p.family, res.cost_eur || p.costPerCallEur, ok);
         if (ok) {
+          this.ledger.record(p.id, p.family, res.cost_eur || p.costPerCallEur, true, { kind: 'success', meta: opts.meta });
           this.breaker.recordSuccess(p.id);
           return { ...res, provider: p.id };
         }
-        // 4xx/5xx that smell like network-level breakage are breaker events.
-        // 404 / 403 on a single URL aren't — they're per-target outcomes.
-        if (res.status === 0 || res.status === 502 || res.status === 503 || res.status === 504 || res.status === 429) {
-          this.breaker.recordFailure(p.id);
-        }
+        // 404 / 403 on a SINGLE URL is a per-target outcome, not a
+        // provider-wide failure. Only network-level breakage trips the
+        // breaker.
+        const transportLike = res.status === 0 || res.status === 502 || res.status === 503 || res.status === 504 || res.status === 429;
+        const kind: import('../types/providers').FailureKind = transportLike
+          ? classifyHttpFailure({ status: res.status, error: res.error })
+          : 'other';
+        this.ledger.record(p.id, p.family, res.cost_eur || p.costPerCallEur, false, { kind, meta: opts.meta });
+        if (transportLike) this.breaker.recordFailure(p.id, kind);
         lastError = res.error;
       } catch (err) {
-        this.ledger.record(p.id, p.family, p.costPerCallEur, false);
-        this.breaker.recordFailure(p.id);
+        const kind = classifyThrown(err);
+        this.ledger.record(p.id, p.family, p.costPerCallEur, false, { kind, meta: opts.meta });
+        this.breaker.recordFailure(p.id, kind);
         lastError = (err as Error).message;
       }
     }
@@ -88,13 +108,14 @@ export class ProviderRouter {
     for (const p of candidates) {
       try {
         const res = await p.complete(req, { signal: opts.signal });
-        this.ledger.record(p.id, p.family, res.cost_eur || p.costPerCallEur, true);
+        this.ledger.record(p.id, p.family, res.cost_eur || p.costPerCallEur, true, { kind: 'success', meta: opts.meta });
         this.breaker.recordSuccess(p.id);
         return res;
       } catch (err) {
-        this.ledger.record(p.id, p.family, p.costPerCallEur, false);
-        this.breaker.recordFailure(p.id);
-        logger.warn({ provider: p.id, err: (err as Error).message }, '[Router] llm provider failed');
+        const kind = classifyThrown(err);
+        this.ledger.record(p.id, p.family, p.costPerCallEur, false, { kind, meta: opts.meta });
+        this.breaker.recordFailure(p.id, kind);
+        logger.warn({ provider: p.id, kind, err: (err as Error).message }, '[Router] llm provider failed');
       }
     }
     return null;
@@ -128,4 +149,23 @@ export class ProviderRouter {
       .sort((a, b) => a.tier - b.tier)
       .slice(0, opts.maxProviders ?? Number.MAX_SAFE_INTEGER);
   }
+}
+
+/** Map a thrown value to the canonical FailureKind used by the breaker + ledger. */
+function classifyThrown(err: unknown): import('../types/providers').FailureKind {
+  if (err instanceof ProviderBlockError) return 'blocked';
+  const msg = `${(err as Error)?.message ?? err}`.toLowerCase();
+  if (msg.includes('timeout') || msg.includes('etimedout')) return 'timeout';
+  if (msg.includes('429') || msg.includes('rate')) return 'rate_limit';
+  if (
+    msg.includes('econnreset') ||
+    msg.includes('econnrefused') ||
+    msg.includes('enotfound') ||
+    msg.includes('socket') ||
+    msg.includes('fetch failed') ||
+    msg.includes('network')
+  ) {
+    return 'transport';
+  }
+  return 'other';
 }

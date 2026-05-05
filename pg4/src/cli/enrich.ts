@@ -1,5 +1,5 @@
 import path from 'path';
-import { parseArgs, reqString } from './_args';
+import { parseArgs, reqString, optString } from './_args';
 import { logger } from '../runtime/logger';
 import { readCsvAsLeads } from '../io/csv_reader';
 import { OutputManager } from '../io/output_manager';
@@ -19,7 +19,10 @@ async function main() {
   const csvOut = reqString(args, 'out', 'path to enriched CSV');
   const jsonlOut = csvOut.replace(/\.csv$/i, '') + '.jsonl';
 
-  const run = createRun();
+  const ledgerPath = optString(args, 'ledger-path') ?? csvOut.replace(/\.csv$/i, '') + '.cost-ledger.jsonl';
+  const ceilingArg = optString(args, 'cost-ceiling-eur');
+  const costCeiling = ceilingArg ? Number(ceilingArg) : undefined;
+  const run = createRun({ ledgerJsonlPath: ledgerPath, costCeilingEur: costCeiling });
   const router = buildProviderCatalog(run.ledger);
 
   const output = new OutputManager(csvOut, jsonlOut, 'enriched');
@@ -62,7 +65,14 @@ async function main() {
 
   await Promise.all(inFlight);
   await output.close();
-  run.ledger.logSummary();
+  run.ledger.flushSummary({
+    leads_processed: total,
+    leads_with_website: withWebsite,
+    leads_errored: errors,
+    cost_per_lead_eur: total > 0 ? run.ledger.getTotal() / total : 0,
+    cost_ceiling_eur: run.ctx.costCeilingEur,
+    breaker: router.describeBreaker(),
+  });
 
   logger.info(
     {
@@ -71,6 +81,7 @@ async function main() {
       errors,
       output_csv: path.resolve(csvOut),
       output_jsonl: path.resolve(jsonlOut),
+      ledger_jsonl: path.resolve(ledgerPath),
       duration_ms: Date.now() - run.ctx.startedAt,
     },
     '[enrich] done'
