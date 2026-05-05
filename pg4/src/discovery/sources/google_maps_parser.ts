@@ -27,9 +27,34 @@ export interface MapsParseResult {
   dropped: number;
 }
 
-const ADDRESS_PREFIX_RE = /^(Via|Viale|Piazza|Corso|Largo|Vicolo|Strada(?:\s+Provinciale)?|Loc\.|C\.so|P\.za|V\.le)\b/i;
-const ADDRESS_FALLBACK_RE = /\d{5}/;        // any 5-digit ZIP token
-const PHONE_RE = /^(?:\+39\s?)?(?:0\d{1,4}|3\d{2})\s?\d[\d\s\-./]{4,15}$/;
+/**
+ * Maps card spans frequently begin with a `·` bullet (Maps uses bullets as
+ * visual field separators). We strip them before classification.
+ */
+const BULLET_PREFIX_RE = /^[·•▪]\s*/;
+
+/**
+ * Address prefix whitelist. Real-Maps spans often co-mingle phone numbers
+ * with status text; we DO NOT accept the bare 5-digit-token fallback that
+ * the synthetic-fixture parser tolerated, because Italian phones can match
+ * `\d{5}` too (`0439 80699` would otherwise be classified as a ZIP).
+ */
+/**
+ * Italian street prefixes. Word-boundary (`\b`) matches the transition
+ * between an alphanumeric character and a non-alphanumeric. Tokens that
+ * already end in `.` (like `Loc.`, `V.le`, `C.so`, `P.za`) cannot use `\b`
+ * because `. ` is a non-word→non-word transition; we follow them with
+ * `(?=\s|$)` instead.
+ */
+const ADDRESS_PREFIX_RE =
+  /^(Via|Viale|Piazza|Corso|Largo|Vicolo|Strada(?:\s+Provinciale|\s+Statale)?|Località|Borgo|Contrada|Frazione|Piazzale)\b|^(V\.le|Loc\.|C\.so|P\.za|Pza)(?=\s|,|$)/i;
+
+/**
+ * Phone regex: Italian landline (0xx-prefix) or mobile (3xx-prefix) with
+ * canonical Italian spacing. Rejects bare numerics that are too short or
+ * lack the typical Italian shape.
+ */
+const PHONE_RE = /^(?:\+39\s?)?(?:0\d{1,4}|3\d{2})[\s\-./]?\d[\d\s\-./]{4,12}$/;
 
 export function parseGoogleMapsResults(
   html: string,
@@ -68,17 +93,23 @@ function parseCard($card: CheerioCard, opts: { category?: string; cityHint?: str
   });
 
   // Info spans — classify each as address / phone / noise
+  // Real Maps DOM has many duplicates and `·` bullet prefixes; we dedupe
+  // by text and strip the leading bullet before classification.
   let address: string | undefined;
   let phone: string | undefined;
+  const seenSpanText = new Set<string>();
   $card.find('.W4Efsd span').each((_i, el) => {
-    const txt = collapse($card.find(el).text());
-    if (!txt) return;
-    if (!address && (ADDRESS_PREFIX_RE.test(txt) || /^\d+,\s/.test(txt) || ADDRESS_FALLBACK_RE.test(txt))) {
-      address = txt;
+    const raw = collapse($card.find(el).text());
+    if (!raw) return;
+    const cleaned = raw.replace(BULLET_PREFIX_RE, '').trim();
+    if (!cleaned || cleaned === '·' || seenSpanText.has(cleaned)) return;
+    seenSpanText.add(cleaned);
+    if (!address && ADDRESS_PREFIX_RE.test(cleaned)) {
+      address = cleaned;
       return;
     }
-    if (!phone && PHONE_RE.test(txt)) {
-      phone = txt;
+    if (!phone && PHONE_RE.test(cleaned)) {
+      phone = cleaned;
     }
   });
 

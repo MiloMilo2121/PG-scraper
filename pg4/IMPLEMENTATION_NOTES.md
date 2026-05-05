@@ -11,7 +11,8 @@
 | 1 — Scaffold (typecheck green) | ✅ `pg4/` compiles, deps installed |
 | 2 — Vertical slice | ✅ 10/10 rows, 0 silent drops |
 | 3 — Strong-piece port | ✅ HyperGuesser + 4 free SERP providers + SerpDeduplicator + RDAP validator wired into pipeline |
-| 3.5 — Scraper parser fixtures | ✅ PG + Maps pure parsers + multi-key raw deduper + scrape dry-run on fixture |
+| 3.5 — Scraper parser fixtures (synthetic) | ✅ PG + Maps pure parsers + multi-key raw deduper + scrape dry-run |
+| 3.6 — Real-fixture parser gate | ✅ Live HTML captured for PG Belluno (25 cards), PG Milano (overflow=true), Maps Feltre (10 cards). Parsers passed real DOM with 2 hardenings: PG blocklist extended for `wa.me`/`whatsapp.com`/`m.me`; Maps span classifier strips `·` bullets, dedupes spans, requires Italian street prefix (no bare `\d{5}` fallback). |
 | 4 — Live scraper (PG + Maps) | ⏳ Next |
 | 5 — Benchmark vs pg3 | ⏳ |
 
@@ -122,6 +123,44 @@ npm run scrape -- \
 - `pg_belluno_normal + maps_belluno_overlap`: 7 cards parsed → 6 records → 1 dedup collapse (Studio Dolomiti merged from Maps into the PG record, preserving `source: "PG"` because PG is added first and existing wins).
 
 **Total tests now: 124 unit, 0 network. Smoke gated by `RUN_SMOKE=1`.**
+
+---
+
+## Phase 3.6 — Real-fixture gate (parser regression on live HTML)
+
+Goal: prove the synthetic parsers also work on real PG/Maps DOM before any live scraping. The live scraper (Phase 4) should never have to debug parsing logic — only browser stability, WAF/captcha, and consent.
+
+**Capture script:** `scripts/capture_fixtures.ts`
+- Headless Chromium via Playwright with realistic Italian UA + locale.
+- Best-effort cookie consent click (OneTrust for PG, "Accetta tutto" for Google).
+- Saves ONLY the inner HTML of `.search-results` (PG) or `div[role="feed"]` (Maps), wrapped in a minimal HTML shell. No scripts, no profile sidebars, no ads.
+- Targets:
+  - `pg_belluno` — small comune, normal page
+  - `pg_milano` — dense city to validate the overflow banner detection
+  - `maps_feltre` — small Maps feed
+- Run: `npx tsx scripts/capture_fixtures.ts all` (or one of `pg_belluno`/`pg_milano`/`maps_feltre`).
+
+**Real fixtures captured & committed:**
+- `tests/fixtures/scraper/real/pg_belluno.html` — 25 cards
+- `tests/fixtures/scraper/real/pg_milano.html` — 25 cards + ">200 risultati" banner
+- `tests/fixtures/scraper/real/maps_feltre.html` — 10 cards
+
+**Parser hardenings driven by real DOM:**
+1. PG: extended `INTERNAL_HOST_BLOCKLIST` to skip `wa.me`, `whatsapp.com`, `m.me`, `messenger.com` — PG renders these as PG-generated "click to chat" buttons inside cards (URL contains `?text=Da+PagineGialle…`). Without the fix the parser would set the WhatsApp URL as the company website.
+2. Maps: span classifier rewrite. The real `.W4Efsd` block contains:
+   - Many duplicate spans (Maps uses ARIA-redundant copies for accessibility).
+   - `·` bullet-prefixed spans (Maps' visual separator).
+   - Status text mixed with phone in the same blocks.
+   The new classifier dedupes by text, strips leading bullets, requires an Italian street prefix (`Via`/`Viale`/`Piazza`/`Corso`/`Largo`/`Vicolo`/`Strada`/`Loc.`/`Località`/`Borgo`/`Contrada`/`Frazione`/`Piazzale`/`V.le`/`C.so`/`P.za`/`Pza`) for address, and a tightened phone regex (`(?:\+39\s?)?(?:0\d{1,4}|3\d{2})…`) for phone. The previous bare `\d{5}` fallback was removed because Italian phone numbers also match it (e.g., `0439 80699` was getting classified as a ZIP code).
+
+**Tests added:** `tests/unit/parsers_real_fixtures.test.ts` — 20 cases that gate against DOM drift:
+- PG Belluno: card count, drop count = 0, overflow=false, ≥80% pg_url coverage, ≥60% province=BL, ≥20% phone (PG hides most behind click-to-reveal), zero `wa.me`/`whatsapp` website leaks, zero PG-internal website leaks.
+- PG Milano: overflow=true detected, province=MI on most cards.
+- Maps Feltre: every card has `maps_url`, ≥50% phone coverage, ≥1 website, no phone-as-ZIP confusion, every parsed address starts with a valid Italian street prefix, `cityHint` applied where address has no parsable city.
+
+If the real DOM evolves, re-run the capture script and adjust regex/selectors only — synthetic edge-case tests stay authoritative.
+
+**Total tests: 144 unit + 1 placeholder, 0 network in unit suite. Smoke gated by `RUN_SMOKE=1`.**
 
 
 

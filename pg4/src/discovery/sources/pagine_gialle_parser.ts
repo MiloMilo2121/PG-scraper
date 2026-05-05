@@ -28,7 +28,17 @@ export interface PageGialleParseResult {
   overflow: boolean; // true when PG renders the ">200 results" banner
 }
 
-const INTERNAL_HOST_BLOCKLIST = /paginegialle\.it|italiaonline\.it|plug\.it/i;
+/**
+ * Hosts that PG renders as `<a href="http...">` inside cards but are NOT
+ * the company's official website:
+ *   - PG / Italiaonline / plug.it: PG-internal navigation links
+ *   - wa.me / whatsapp.com / m.me: PG-generated "Click to chat" buttons
+ *     (the URL contains `?text=Da+PagineGialle...`)
+ *   - tel: / mailto: / sms: are non-http and skipped naturally by the
+ *     `a[href^="http"]` selector
+ */
+const INTERNAL_HOST_BLOCKLIST =
+  /paginegialle\.it|italiaonline\.it|plug\.it|wa\.me|whatsapp\.com|m\.me|messenger\.com/i;
 const OVERFLOW_REGEX = /pi[uù]\s+di\s+200\s+risultat|oltre\s+200\s+risultat|more\s+than\s+200\s+result/i;
 
 export function parsePagineGialleResults(html: string, opts: { category?: string } = {}): PageGialleParseResult {
