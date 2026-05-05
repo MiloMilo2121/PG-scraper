@@ -1,0 +1,83 @@
+import path from 'path';
+import { parseArgs, reqString } from './_args';
+import { logger } from '../runtime/logger';
+import { readCsvAsLeads } from '../io/csv_reader';
+import { OutputManager } from '../io/output_manager';
+import { createRun, createPerLeadContext } from '../runtime/run_context';
+import { buildProviderCatalog } from '../providers/provider_catalog';
+import { runEnrichmentPipeline } from '../enrichment/enrichment_pipeline';
+
+/**
+ * `npm run enrich -- --input output/raw.csv --out output/enriched.csv`
+ *
+ * Phase 2 vertical slice: read CSV → normalize → dedupe → check input website
+ * via direct_fetch → write CSV+JSONL with status + reason_code on every row.
+ */
+async function main() {
+  const args = parseArgs();
+  const input = reqString(args, 'input', 'path to raw CSV');
+  const csvOut = reqString(args, 'out', 'path to enriched CSV');
+  const jsonlOut = csvOut.replace(/\.csv$/i, '') + '.jsonl';
+
+  const run = createRun();
+  const router = buildProviderCatalog(run.ledger);
+
+  const output = new OutputManager(csvOut, jsonlOut, 'enriched');
+  logger.info({ runId: run.ctx.runId, input, csvOut }, '[enrich] starting');
+
+  let total = 0;
+  let withWebsite = 0;
+  let errors = 0;
+  const inFlight: Promise<void>[] = [];
+  const concurrency = run.cfg.pipeline.concurrency;
+
+  for await (const item of readCsvAsLeads(input)) {
+    total += 1;
+    const task = (async () => {
+      const perLead = createPerLeadContext(run);
+      try {
+        const result = await runEnrichmentPipeline({
+          run,
+          perLead,
+          router,
+          lead: item.lead,
+          ingestError: item.ingestError,
+        });
+        if (result.lead.official_website) withWebsite += 1;
+        await output.write(result.lead, { stage_outcomes: result.stage_outcomes });
+      } catch (err) {
+        errors += 1;
+        logger.error({ line: item.lineNumber, err: (err as Error).message }, '[enrich] row failed');
+        await output.write({ ...item.lead, status: 'ERROR', reason_code: 'ERROR_INTERNAL', errors: [{ stage: 'pipeline', message: (err as Error).message }] });
+      }
+    })().finally(() => {
+      const idx = inFlight.indexOf(task);
+      if (idx >= 0) inFlight.splice(idx, 1);
+    });
+    inFlight.push(task);
+    if (inFlight.length >= concurrency) {
+      await Promise.race(inFlight);
+    }
+  }
+
+  await Promise.all(inFlight);
+  await output.close();
+  run.ledger.logSummary();
+
+  logger.info(
+    {
+      total,
+      with_website: withWebsite,
+      errors,
+      output_csv: path.resolve(csvOut),
+      output_jsonl: path.resolve(jsonlOut),
+      duration_ms: Date.now() - run.ctx.startedAt,
+    },
+    '[enrich] done'
+  );
+}
+
+main().catch((err) => {
+  logger.error({ err: err.message, stack: err.stack }, '[enrich] fatal');
+  process.exit(1);
+});

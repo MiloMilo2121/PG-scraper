@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.log
+output/
+tests/fixtures/baseline_pg3.jsonl
+tmp/
+.DS_Store
