@@ -14,6 +14,12 @@ describe('cleanMojibake', () => {
     );
   });
 
+  it('strips inverted-question-mark mojibake seen in live PG output', () => {
+    expect(cleanMojibake('Piazza Libert¿¿, 15 - 32021 Agordo (BL)')).toBe(
+      'Piazza Libert, 15 - 32021 Agordo (BL)'
+    );
+  });
+
   it('handles a single replacement char too', () => {
     expect(cleanMojibake('Caf� del Centro')).toBe('Caf del Centro');
   });
