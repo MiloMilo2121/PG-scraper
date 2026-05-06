@@ -192,6 +192,26 @@ describe('PreVerifyGate — Phase D audit REJECT cases (must NOT match)', () => 
     expect(r.status).toBe('REJECTED');
   });
 
+  it('Pb Properties → pbproperties.com (acronym + generic English noun, US homonym)', () => {
+    // Phase D.1 regression: audit Phase C identified Pb Properties as
+    // FP_GENERIC_HOMONYM (the actual pbproperties.com is "Premier
+    // Business Properties, Inc.", a US firm). The previous Phase D
+    // gate let this through Layer B because "pb" qualified as a short
+    // acronym and "properties" got stripped as a descriptor, so the
+    // pattern "acronym + generic English real-estate noun" matched
+    // the domain. Layer B now requires a strong ≥4-char distinctive
+    // brand token; short acronyms are valid only via Layer A's
+    // length-anchored full-name match.
+    const lead = normalizeLead({
+      company_name: 'Pb Properties S.r.l.',
+      city: 'Belluno',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('Pb Properties', realEstateBody);
+    const r = PreVerifyGate.check('https://pbproperties.com', html, lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
   it('Studio Belluno → belluno.eu (only token IS the lead city — generic portal)', () => {
     const lead = normalizeLead({
       company_name: 'Studio Belluno SRL',

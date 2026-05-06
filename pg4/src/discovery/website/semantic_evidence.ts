@@ -56,6 +56,12 @@ const COMMON_BARE_STEMS = new Set<string>([
   'appia',       // audit #24: "Immobiliare Appia" → immobiliareappia.it (Roma)
   'torri',       // audit #02: "Le Torri" → agenzialetorri.com (Modena)
   'mia',         // audit #08: "La Mia Casa" → agenzialamiacasa.it (Cuneo)
+  // Italian micro-region / mountain-area generics. These match BL leads
+  // whose brand is just the region name, but the resulting domain is
+  // almost always a tourism / vacation-rental portal, not the firm.
+  // Phase D.1 manual check: comelico.com is "Famiglia De Martin
+  // Topranin" vacation rentals (not Comelico Immobiliare).
+  'comelico',
   // generic single-token Italian brand-noise:
   'futuro', 'ambiente', 'qualita', 'prestigio', 'centro', 'punto',
 ]);
@@ -296,7 +302,23 @@ export function evaluateSemanticEvidence(
   );
 
   const distinctiveNonGeneric = distinctiveTokens.filter((t) => !COMMON_BARE_STEMS.has(t));
-  const hasNonGenericBrand = distinctiveNonGeneric.length >= 1 || shortBrandAcronyms.length >= 1;
+  // hasStrongBrandToken: a real ≥4-char brand token, not a common stem,
+  // not a sector descriptor. This is the strict signal Layer B requires.
+  const hasStrongBrandToken = distinctiveNonGeneric.length >= 1;
+  // hasNonGenericBrand: weaker signal — strong brand OR a 2-3 char
+  // acronym (SG-style). Used by Layer A only, where the LENGTH of
+  // compactFull (≥ 14) provides the specificity that a short acronym
+  // alone could not.
+  //
+  // Phase D.1 audit-cleanup: Pb Properties → pbproperties.com used to
+  // pass Layer B because "pb" qualified as a short acronym and
+  // "properties" got stripped as a descriptor, leaving a domain match
+  // on a generic ("acronym + English real-estate noun") pattern. Layer
+  // B now requires hasStrongBrandToken so this homonym pattern with no
+  // real brand identity gets rejected. Cortina Properties stays valid
+  // because "cortina" is a strong ≥4-char distinctive token (city +
+  // brand anchor).
+  const hasNonGenericBrand = hasStrongBrandToken || shortBrandAcronyms.length >= 1;
 
   // Domain-stem floor: 6 chars. Without this, 2-3 char acronym domains
   // (am.com, ca.com, az.com) coincidentally substring-match into long
@@ -314,7 +336,7 @@ export function evaluateSemanticEvidence(
   const layerBStrippedBrand =
     compactStripped.length >= 6 &&
     !hasCommonBareStem &&
-    hasNonGenericBrand &&
+    hasStrongBrandToken &&
     domainStemLongEnough &&
     (domainStem.includes(compactStripped) || compactStripped.includes(domainStem));
 
