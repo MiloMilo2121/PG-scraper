@@ -69,6 +69,12 @@ const COMMON_BARE_STEMS = new Set<string>([
   // "europa". Adding the bare stem to the denylist is the cheapest
   // surgical fix; broader rule-rework left as followup.
   'europa',
+  // Phase D.4 TV audit (p64): "Studio Master Immobiliare" → master.it.
+  // master.it is "Master S.r.l. Divisione Elettrica", an electrical
+  // materials manufacturer in Este (PD). Manually verified via
+  // WebFetch; unambiguous FP. "master" is also a generic English
+  // brand-noise stem.
+  'master',
   // generic single-token Italian brand-noise:
   'futuro', 'ambiente', 'qualita', 'prestigio', 'centro', 'punto',
 ]);

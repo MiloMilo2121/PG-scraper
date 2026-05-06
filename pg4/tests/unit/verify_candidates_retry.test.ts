@@ -256,6 +256,31 @@ describe('verifyCandidates — Phase D.3 scheduled multi-retry', () => {
     expect(seen[3].bypassBreakerRecord).toBe(true);
   });
 
+  it('per-candidate plan: weak plan (retryDelaysMs=[]) gets one attempt, strong plan gets the budget', async () => {
+    // D.4: HyperGuesserStage gives `weak` candidates `retryDelaysMs: []`
+    // so a flapping homonym does not eat the per-stage budget. Strong
+    // candidates inherit the global default schedule.
+    const { verifyPlannedCandidates } = await import('../../src/enrichment/stages/verify_candidates');
+    const plan = [
+      { url: 'https://weak-homonym.com', retryDelaysMs: [] as number[], retryBudgetMs: 0 }, // weak: no retry
+      { url: 'https://pianon.eu' }, // strong: default schedule, lead-matching domain
+    ];
+    const router = fakeRouter([
+      // weak attempt — fail, no retry
+      { status: 0, error: 'ECONNREFUSED' },
+      // strong attempt 1 — fail, retry
+      { status: 0, error: 'ECONNREFUSED' },
+      // strong retry — success
+      { status: 200, html: goodHtml },
+    ]);
+    const verdict = await verifyPlannedCandidates(router, plan, normalized, { ...lead }, {
+      ...baseOpts,
+      retryDelaysMs: [0, 0],
+    });
+    expect(verdict.matched).toBe(true);
+    expect(router.fetchCalls()).toBe(3); // weak: 1, strong: 2 (1 + 1 retry)
+  });
+
   it('jitter is applied to each scheduled delay', async () => {
     const slept: number[] = [];
     const router = fakeRouter([

@@ -75,6 +75,27 @@ export interface VerifyVerdict {
   rejectDetail?: string;
 }
 
+/**
+ * Phase D.4 — per-candidate verification plan. Used by callers (today
+ * `HyperGuesserStage`) that have already ranked their candidates and
+ * want to spend the retry budget proportional to candidate strength.
+ *
+ * The strong / weak split prevents the failure mode TV p64 surfaced:
+ * a flapping weak candidate burns the per-stage budget before the
+ * legit one gets tried. The ranker assigns a tier; this struct
+ * encodes the retry policy each tier earns.
+ */
+export interface CandidateVerificationPlan {
+  url: string;
+  /** Optional override of the per-attempt retry schedule (ms). */
+  retryDelaysMs?: readonly number[];
+  /** Optional override of the per-candidate retry budget (ms). */
+  retryBudgetMs?: number;
+  /** Diagnostic — the rank score and reasons that drove this plan. */
+  rankScore?: number;
+  rankReasons?: readonly string[];
+}
+
 export async function verifyCandidates(
   router: ProviderRouter,
   candidates: string[],
@@ -82,17 +103,42 @@ export async function verifyCandidates(
   lead: Lead,
   opts: VerifyCandidatesOpts
 ): Promise<VerifyVerdict> {
+  // Back-compat: string[] callers get the global retry policy from opts
+  // / DEFAULTS for every candidate.
+  const plans: CandidateVerificationPlan[] = candidates.map((url) => ({ url }));
+  return verifyPlannedCandidates(router, plans, normalized, lead, opts);
+}
+
+/**
+ * Phase D.4 — per-candidate retry policy variant. Each plan can override
+ * the global `retryDelaysMs` / `retryBudgetMs`. Used by HyperGuesserStage
+ * to give the top-ranked candidate the full retry budget while capping
+ * weak candidates to a single attempt.
+ *
+ * Iteration order is the order of `plans` — the caller is expected to
+ * sort by rank descending. Returns on first match.
+ */
+export async function verifyPlannedCandidates(
+  router: ProviderRouter,
+  plans: ReadonlyArray<CandidateVerificationPlan>,
+  normalized: NormalizedLead,
+  lead: Lead,
+  opts: VerifyCandidatesOpts
+): Promise<VerifyVerdict> {
   const rdapProbe = opts.rdapProbe ?? ((d, l, o) => RdapValidator.checkDomainOwnership(d, l, o));
   const corroborate = opts.corroborateWithRdap !== false;
-  const retryDelaysMs = opts.retryDelaysMs ?? DEFAULTS.pipeline.verifyRetryDelaysMs;
-  const retryBudgetMs = opts.retryBudgetMs ?? DEFAULTS.pipeline.verifyRetryBudgetMs;
+  const defaultRetryDelays = opts.retryDelaysMs ?? DEFAULTS.pipeline.verifyRetryDelaysMs;
+  const defaultRetryBudget = opts.retryBudgetMs ?? DEFAULTS.pipeline.verifyRetryBudgetMs;
   const jitter = opts.jitter ?? ((d: number) => d * (0.8 + Math.random() * 0.4));
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   let lastDetail = '';
   let lastRejectDetail = '';
   let timedOut = false;
-  for (const candidate of candidates) {
+  for (const plan of plans) {
+    const candidate = plan.url;
+    const retryDelaysMs = plan.retryDelaysMs ?? defaultRetryDelays;
+    const retryBudgetMs = plan.retryBudgetMs ?? defaultRetryBudget;
     let res = await router.fetch(candidate, { timeoutMs: opts.timeoutMs, meta: opts.meta });
     // Phase D.2/D.3: scheduled retry on transport-class failures only.
     // Single retry (D.2) recovers single-blip ECONNREFUSED-then-200

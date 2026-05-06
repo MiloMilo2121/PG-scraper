@@ -212,6 +212,23 @@ describe('PreVerifyGate — Phase D audit REJECT cases (must NOT match)', () => 
     expect(r.status).toBe('REJECTED');
   });
 
+  it('Studio Master Immobiliare → master.it (electrical manufacturer in Este — generic English noun)', () => {
+    // Phase D.4 TV audit (p64): "Studio Master Immobiliare" was
+    // matched to master.it. master.it is "Master S.r.l. Divisione
+    // Elettrica", an electrical materials manufacturer in Este (PD)
+    // — confirmed via WebFetch. "master" is also a generic English
+    // brand-noise stem. Added to COMMON_BARE_STEMS.
+    const lead = normalizeLead({
+      company_name: 'Studio Master Immobiliare',
+      city: 'Paese',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('Master', realEstateBody);
+    const r = PreVerifyGate.check('https://master.it', html, lead);
+    expect(r.status).toBe('REJECTED');
+    expect(r.detail).toMatch(/common_stem/);
+  });
+
   it('Immobiliare Europa → europa.eu (EU institutional portal — generic supranational stem)', () => {
     // Phase D.2 TV audit (p61): "Immobiliare Europa" was matched to
     // europa.eu (the European Union's official institutional portal).
