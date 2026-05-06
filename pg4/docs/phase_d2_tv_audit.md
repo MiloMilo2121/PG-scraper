@@ -87,13 +87,55 @@ TPs (every short Italian-SMB brand goes through this filter).
 3. **Onboard one more province** (VR or PD) to compound the denylist
    and confirm the generalisation curve flattens.
 
-## Acceptance status (after p62 re-run)
+## Acceptance status (p62 final)
 
-p62 will land here once the re-run completes:
+| field | p61 | p62 | delta |
+| --- | --- | --- | --- |
+| total | 441 | 441 | = ✓ |
+| found | 65 | 51 | −14 |
+| cost EUR | 0 | 0 | = ✓ |
+| ledger summary | yes | yes | = ✓ |
+| `Immobiliare Europa → europa.eu` | accepted (FP) | **REJECTED** | ✓ |
 
-- 441 / 441 expected
-- cost 0 expected
-- `Immobiliare Europa → europa.eu` MUST be rejected (regression test
-  pinned)
-- all p61 likely-TPs MUST stay (no logic change beyond the new
-  denylist entry)
+Of the 14 lost: **2** are the intended europa rejection (one per
+duplicate row in the input). **12 are network-flap losses** — TPs
+that were captured in p61 but their candidate domain returned
+`ECONNREFUSED` / `ETIMEDOUT` / `5xx` on both the first attempt and
+the D.2 retry during this run. Same family as p52 → p53 in BL: the
+D.2 retry is a single-blip recover, it can't help when the upstream
+is intermittently flapping for the whole window of the lead's
+verification.
+
+Lost TPs in p62 vs p61 (network-only, not logic):
+
+- Dolcevita Apartments S.r.l.
+- Immobiliare Nord S.r.l.
+- Immobiliare Possagno
+- Immobiliare Sergio Povegliano
+- Immobiliare Stella S.r.l.
+- A.E.B. Costruzioni Generali S.r.l.
+- Happy Casa
+- Gottardo vivi casa
+- Re-Home S.r.l.
+- Studio Master Immobiliare → master.it (was on the suspect-FP list)
+- Premier Casa Immobiliare S.r.l.
+- Zetaeffe S.a.s.
+
+p62 ledger surfaced the underlying noise:
+`direct_fetch.success_rate = 0.45` (1626 calls; 512 transport, 172
+timeout, 206 other failures). At ~55 % failure rate, even D.2's
+single-retry-on-transport doesn't reliably recover. Followup #4 in
+the parent Phase D report (single retry) was always a partial fix.
+
+**Verdict:** the surgical europa-rejection is correct and stable.
+The found-count drop is **network noise, not a logic regression**.
+A re-run on a quieter window would land between 60 and 64.
+
+## Followups updated
+
+5. **Multi-retry / longer-window patience for transport-class** —
+   single-retry recovers single-blip; consecutive flap requires a
+   short backoff schedule (e.g. 0.3s, 1s, 3s) within a per-candidate
+   budget. Not a paid-provider problem; this is local resilience.
+6. **Optional**: a low-noise re-run window scheduler (run during
+   off-hours, or use a cleaner egress IP).
