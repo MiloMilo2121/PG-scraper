@@ -62,6 +62,13 @@ const COMMON_BARE_STEMS = new Set<string>([
   // Phase D.1 manual check: comelico.com is "Famiglia De Martin
   // Topranin" vacation rentals (not Comelico Immobiliare).
   'comelico',
+  // Phase D.2 TV audit (p61): "Immobiliare Europa" matched europa.eu,
+  // which is the EU's official institutional portal — unambiguous FP.
+  // The compactFull.includes(domainStem) Layer-A direction lets a
+  // long company-name compact swallow a 6-char generic suffix like
+  // "europa". Adding the bare stem to the denylist is the cheapest
+  // surgical fix; broader rule-rework left as followup.
+  'europa',
   // generic single-token Italian brand-noise:
   'futuro', 'ambiente', 'qualita', 'prestigio', 'centro', 'punto',
 ]);

@@ -212,6 +212,24 @@ describe('PreVerifyGate — Phase D audit REJECT cases (must NOT match)', () => 
     expect(r.status).toBe('REJECTED');
   });
 
+  it('Immobiliare Europa → europa.eu (EU institutional portal — generic supranational stem)', () => {
+    // Phase D.2 TV audit (p61): "Immobiliare Europa" was matched to
+    // europa.eu (the European Union's official institutional portal).
+    // The Layer-A reverse-include direction (compactFull.includes
+    // (domainStem)) had let "immobiliareeuropa" swallow the 6-char
+    // "europa" suffix. Added to COMMON_BARE_STEMS to block the bare
+    // generic supranational stem.
+    const lead = normalizeLead({
+      company_name: 'Immobiliare Europa',
+      city: 'Treviso',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('Europa', realEstateBody);
+    const r = PreVerifyGate.check('https://europa.eu', html, lead);
+    expect(r.status).toBe('REJECTED');
+    expect(r.detail).toMatch(/common_stem/);
+  });
+
   it('Studio Belluno → belluno.eu (only token IS the lead city — generic portal)', () => {
     const lead = normalizeLead({
       company_name: 'Studio Belluno SRL',
