@@ -73,6 +73,44 @@ describe('CostLedger — JSONL persistence', () => {
     expect(lines.length).toBe(2); // one record + one summary
   });
 
+  it('Phase D.5.1 — truncates the ledger file on construction by default', async () => {
+    // Re-running enrich against the same output path used to leave
+    // stacked summaries + duplicated per-call entries. Default
+    // behaviour now matches CSV / JSONL — overwrite, not append.
+    const file = tmpFile('truncate.jsonl');
+    const l1 = new CostLedger({ jsonlPath: file, runId: 'run-1' });
+    l1.record('direct_fetch', 'http', 0, true);
+    l1.flushSummary();
+    const linesAfterFirst = await readJsonlObjects(file);
+    expect(linesAfterFirst.length).toBe(2);
+
+    // Second run on same file — must wipe and start fresh.
+    const l2 = new CostLedger({ jsonlPath: file, runId: 'run-2' });
+    l2.record('direct_fetch', 'http', 0, true);
+    l2.record('direct_fetch', 'http', 0, true);
+    l2.flushSummary();
+    const linesAfterSecond = await readJsonlObjects<Record<string, unknown>>(file);
+    expect(linesAfterSecond.length).toBe(3); // 2 records + 1 summary, NOT 5
+    const summary = linesAfterSecond[2] as { kind: string; run_id: string; total_calls: number };
+    expect(summary.kind).toBe('summary');
+    expect(summary.run_id).toBe('run-2');
+    expect(summary.total_calls).toBe(2); // not 3 from first run
+  });
+
+  it('Phase D.5.1 — appendToExistingFile=true preserves legacy append behaviour', async () => {
+    const file = tmpFile('append.jsonl');
+    const l1 = new CostLedger({ jsonlPath: file, runId: 'run-1' });
+    l1.record('direct_fetch', 'http', 0, true);
+    l1.flushSummary();
+    const lensFirst = (await readJsonlObjects(file)).length;
+
+    const l2 = new CostLedger({ jsonlPath: file, runId: 'run-2', appendToExistingFile: true });
+    l2.record('direct_fetch', 'http', 0, true);
+    l2.flushSummary();
+    const linesAfter = await readJsonlObjects(file);
+    expect(linesAfter.length).toBe(lensFirst + 2); // first run preserved + 2 new
+  });
+
   it('survives without a jsonlPath (in-memory only mode)', () => {
     const l = new CostLedger();
     l.record('a', 'serp', 0.001, true);

@@ -23,6 +23,20 @@ export interface CostLedgerOptions {
   jsonlPath?: string;
   /** Stable run identifier — written on every line + the final summary. */
   runId?: string;
+  /**
+   * Phase D.5.1 — when `jsonlPath` is set and this is `false` (default),
+   * the file is **truncated** at construction so the resulting JSONL
+   * contains only THIS run's entries + summary. CSV / JSONL outputs
+   * already truncate; the ledger now matches. Pass `true` to retain
+   * the legacy append behaviour.
+   *
+   * Background: rerunning `enrich` against the same output path used
+   * to leave stacked summary lines + duplicated per-call entries in
+   * the ledger. The CSV / JSONL got overwritten cleanly but the
+   * ledger inflated — direct_fetch counts read from the ledger were
+   * the sum of every prior run. Verified during the p66 audit.
+   */
+  appendToExistingFile?: boolean;
 }
 
 /**
@@ -45,6 +59,15 @@ export class CostLedger {
     this.runId = opts.runId ?? `run-${Date.now()}`;
     if (this.jsonlPath) {
       fs.mkdirSync(path.dirname(this.jsonlPath), { recursive: true });
+      if (!opts.appendToExistingFile) {
+        // Truncate the file so this run's ledger does not get appended
+        // to a previous run's entries. Matches CSV / JSONL behaviour.
+        try {
+          fs.writeFileSync(this.jsonlPath, '', 'utf8');
+        } catch (err) {
+          logger.warn({ err: (err as Error).message, jsonlPath: this.jsonlPath }, '[CostLedger] failed to truncate');
+        }
+      }
     }
   }
 
