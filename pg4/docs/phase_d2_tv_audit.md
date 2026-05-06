@@ -137,5 +137,77 @@ A re-run on a quieter window would land between 60 and 64.
    single-retry recovers single-blip; consecutive flap requires a
    short backoff schedule (e.g. 0.3s, 1s, 3s) within a per-candidate
    budget. Not a paid-provider problem; this is local resilience.
+   → **Implemented in Phase D.3 with conservative tuning** (see below).
 6. **Optional**: a low-noise re-run window scheduler (run during
    off-hours, or use a cleaner egress IP).
+
+## Phase D.3 — multi-retry with conservative defaults
+
+### What was tried
+
+`verifyCandidates` got a configurable retry schedule with jitter and a
+per-candidate budget cap. Triggers expanded from `transport`/`timeout`
+(D.2) to also include upstream `502` / `503` / `504`. `bypassBreaker
+Record` is set on every retry attempt so a single flapped target does
+not double-count toward the breaker (ledgered, not breaker-counted).
+
+The router's "no provider succeeded" fall-through return was masking
+real 4xx responses with `status: 0` + the upstream error message,
+which `classifyHttpFailure` then mapped to `transport` regardless of
+the actual error. `verifyCandidates` now requires the error message
+itself to look like a transport pattern (`econnrefused|etimedout|
+enotfound|socket|fetch failed|timeout`) before retrying — fixes a
+pre-existing bug where 4xx fall-throughs ate the retry budget.
+
+### Tuning — what we learned
+
+First default schedule `[300, 1000, 3000]` (3 retries, 4.3 s of waits)
+**regressed** found from 51 (p62) → 38 (p63) on TV. Cause: a single
+flapping candidate could spend up to ~36 s (4.3 s waiting + 4 fetch
+attempts at the 8 s `requestTimeoutMs`), but `perStageTimeoutMs` is
+only 12 s. The stage timed out before reaching the legit candidate.
+
+Tightened to `[300, 1500]` (2 retries, 1.8 s waits, budget 2.5 s) —
+worst-case per-candidate ~26 s but typical ~4-6 s. p64: 53 found.
+
+### p64 final numbers
+
+| run | schedule | found | notes |
+| --- | --- | --- | --- |
+| p61 | D.2 single | 65 | "lucky" network day, included europa FP |
+| p62 | D.2 + europa | 51 | europa rejected, network-baseline |
+| p63 | D.3 `[300,1000,3000]` | 38 | starved by per-stage timeout |
+| p64 | D.3 `[300,1500]` | 53 | +2 net vs p62 (gained 11 / lost 9) |
+
+p64 net delta vs p62 is small: D.3 helps when the network is on the
+boundary of single-retry territory but not when the same candidate
+flaps repeatedly within the per-stage budget. Variance run-to-run on
+this network/IP is ±~10 leads (51 → 65) — D.3 sits in the middle.
+
+### Acceptance vs the user's D.3 spec
+
+| criterion | target | result |
+| --- | --- | --- |
+| 441 / 441 | yes | ✓ |
+| cost 0 | yes | ✓ |
+| europa remains rejected | yes | ✓ |
+| found ≥ 58 | yes | ✗ (53) |
+| no known FP family reintroduced | yes | ⚠ `master.it` returns (was on the suspect-FP list, not on the confirmed-FP list) |
+| typecheck + tests green | yes | ✓ (307 pass) |
+
+The found-count miss is honest: D.3 cannot fully cover repeated
+flap within the existing 12 s per-stage budget. Two real fixes
+beyond D.3 scope:
+
+7. **Increase `perStageTimeoutMs`** from 12 s to e.g. 30 s so
+   multi-retry has room. Costs 2-3× wall-clock per noisy lead;
+   acceptable for free runs.
+8. **Smarter candidate ordering** — verify the top-1 HyperGuesser
+   candidate first with the full retry budget; fall back to others
+   only on legit semantic reject. Today verify iterates candidates
+   roughly DNS-resolve-order, eating the budget on the wrong domain.
+
+D.3 ships with `[300, 1500]` because that's the tightest profile
+that does not regress on a typical noisy network. Followup #7 is the
+next move if the user wants to push found higher without paid
+providers.

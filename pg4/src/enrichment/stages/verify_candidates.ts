@@ -38,20 +38,27 @@ export interface VerifyCandidatesOpts {
    */
   corroborateWithRdap?: boolean;
   /**
-   * Phase D.2: number of additional attempts for transport-class
-   * fetch failures (ECONNREFUSED / ETIMEDOUT / 0 / 5xx-class transport).
-   * Default 1 — i.e. up to 2 attempts total per candidate. Retries are
-   * NEVER attempted for 4xx, semantic rejects, parked pages, or rate
-   * limits. Tests can pass 0 to disable retries entirely.
+   * Phase D.3: per-attempt delay schedule (ms) for transport-class
+   * fetch failures (ECONNREFUSED / ETIMEDOUT / 502 / 503 / 504).
+   * Length = max number of retries after the first fetch. Default
+   * `[300, 1000, 3000]` → up to 4 attempts total. Tests pass `[]` to
+   * disable retries entirely. Delays get ±20% jitter at runtime.
    */
-  transportRetries?: number;
+  retryDelaysMs?: readonly number[];
   /**
-   * Phase D.2: pluggable jitter generator for the retry delay (ms).
-   * Tests pass `() => 0` to skip the wait. Defaults to 300-700 ms.
+   * Phase D.3: per-candidate retry budget (ms). When the cumulative
+   * retry delay would exceed this, no further attempt is made for
+   * THIS candidate. Default 12000 ms.
    */
-  retryDelayMs?: () => number;
+  retryBudgetMs?: number;
   /**
-   * Phase D.2: pluggable sleep function so tests can fast-forward.
+   * Phase D.3: pluggable jitter — receives the planned delay, returns
+   * the delay actually used. Tests pass `(d) => d` for determinism or
+   * `() => 0` to skip the wait. Defaults to ±20% uniform jitter.
+   */
+  jitter?: (delayMs: number) => number;
+  /**
+   * Phase D.2/3: pluggable sleep function so tests can fast-forward.
    * Defaults to `setTimeout`-based real sleep at runtime.
    */
   sleep?: (ms: number) => Promise<void>;
@@ -77,8 +84,9 @@ export async function verifyCandidates(
 ): Promise<VerifyVerdict> {
   const rdapProbe = opts.rdapProbe ?? ((d, l, o) => RdapValidator.checkDomainOwnership(d, l, o));
   const corroborate = opts.corroborateWithRdap !== false;
-  const transportRetries = opts.transportRetries ?? 1;
-  const retryDelayMs = opts.retryDelayMs ?? (() => 300 + Math.floor(Math.random() * 400));
+  const retryDelaysMs = opts.retryDelaysMs ?? DEFAULTS.pipeline.verifyRetryDelaysMs;
+  const retryBudgetMs = opts.retryBudgetMs ?? DEFAULTS.pipeline.verifyRetryBudgetMs;
+  const jitter = opts.jitter ?? ((d: number) => d * (0.8 + Math.random() * 0.4));
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   let lastDetail = '';
@@ -86,26 +94,45 @@ export async function verifyCandidates(
   let timedOut = false;
   for (const candidate of candidates) {
     let res = await router.fetch(candidate, { timeoutMs: opts.timeoutMs, meta: opts.meta });
-    // Phase D.2: single retry on transport-class failures only.
-    // Network flap (ECONNREFUSED on `pianon.eu` was the canonical case)
-    // costs us real TPs without any logic problem; one retry with
-    // 300-700 ms jitter typically recovers them. Never retry on 4xx,
-    // semantic rejects, parked pages, or rate-limit signals.
+    // Phase D.2/D.3: scheduled retry on transport-class failures only.
+    // Single retry (D.2) recovers single-blip ECONNREFUSED-then-200
+    // (pianon.eu in BL). Multi-retry with backoff (D.3) recovers
+    // consecutive flap (TV `direct_fetch.success_rate=0.45` ledger
+    // showed many leads lost a real TP to repeated flap). Never retry
+    // on 4xx (per-target outcome), 429 (would re-trigger the limit),
+    // semantic reject, or parked pages.
     let retriesUsed = 0;
+    let elapsedRetryMs = 0;
     while (
-      retriesUsed < transportRetries &&
+      retriesUsed < retryDelaysMs.length &&
       (!res.html || res.status < 200 || res.status >= 400)
     ) {
       const kind = classifyHttpFailure({ status: res.status, error: res.error });
-      if (kind !== 'transport' && kind !== 'timeout') break;
+      const upstream5xx = res.status === 502 || res.status === 503 || res.status === 504;
+      // The router's "no provider succeeded" fall-through returns
+      // `{ status: 0, error: <last-provider-error> }` regardless of
+      // whether the upstream actually had a transport-class failure
+      // or a 4xx response. classifyHttpFailure(status=0, *) is always
+      // 'transport' because status=0 maps to transport unconditionally.
+      // Without this guard, a `404 not found` ends up retried 3×.
+      const errMsg = (res.error ?? '').toLowerCase();
+      const looksLikeTransport =
+        upstream5xx ||
+        kind === 'timeout' ||
+        /econnreset|econnrefused|enotfound|socket|fetch failed|timeout|etimedout/.test(errMsg);
+      const isRetryable = looksLikeTransport;
+      if (!isRetryable) break;
+      const planned = retryDelaysMs[retriesUsed];
+      const delay = Math.max(0, jitter(planned));
+      if (elapsedRetryMs + delay > retryBudgetMs) break;
       retriesUsed++;
-      await sleep(retryDelayMs());
+      elapsedRetryMs += delay;
+      await sleep(delay);
       // Phase D.2: retry attempts must NOT double-count toward the
-      // breaker threshold. The first attempt already incremented the
-      // breaker; retrying the same flapped target should not push the
-      // breaker over the trip line just because the network blip
-      // repeats. Without this, p53 BL re-runs lost ~14 TPs to breaker
-      // amplification (dropped from 19 found to 5 — 8 found).
+      // breaker threshold. First attempt already incremented the
+      // breaker; retrying the same flapped target should not push it
+      // over the trip line. Ledger still records every attempt for
+      // cost / observability accounting.
       res = await router.fetch(candidate, {
         timeoutMs: opts.timeoutMs,
         meta: opts.meta,
