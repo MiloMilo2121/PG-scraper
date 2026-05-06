@@ -212,6 +212,117 @@ describe('PreVerifyGate — Phase D audit REJECT cases (must NOT match)', () => 
     expect(r.status).toBe('REJECTED');
   });
 
+  it('Phase D.5 — Broker S.r.l. → broker.eu (Belgian broker, not Italian SMB)', () => {
+    const lead = normalizeLead({
+      company_name: 'Broker S.r.l.',
+      city: 'Montebelluna',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('Broker', realEstateBody);
+    const r = PreVerifyGate.check('https://broker.eu', html, lead);
+    expect(r.status).toBe('REJECTED');
+    expect(r.detail).toMatch(/common_stem/);
+  });
+
+  it('Phase D.5 — Contea S.r.l. → contea.com (Spaceship marketplace listing)', () => {
+    const lead = normalizeLead({
+      company_name: 'Contea S.r.l.',
+      city: 'Montebelluna',
+      category: 'agenzie immobiliari',
+    });
+    // Even with a "live" body, the COMMON_BARE_STEMS rule must reject.
+    const html = htmlPage('Contea', realEstateBody);
+    const r = PreVerifyGate.check('https://contea.com', html, lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase D.5 — contea.com Spaceship marketplace title triggers tiny_or_parked', () => {
+    // Even without the COMMON_BARE_STEMS rule, the marketplace title
+    // pattern "<domain> for sale | Spaceship.com" must be detected
+    // as parked.
+    const lead = normalizeLead({
+      company_name: 'Some Other Company',
+      city: 'Treviso',
+      category: 'agenzie immobiliari',
+    });
+    const parked =
+      '<html><head><title>contea.com for sale | Spaceship.com</title></head><body>' +
+      'x'.repeat(900) +
+      'spaceship.com domain marketplace transaction support secure payments' +
+      '</body></html>';
+    const r = PreVerifyGate.check('https://contea.com', parked, lead);
+    expect(r.status).toBe('REJECTED');
+    expect(r.detail).toMatch(/tiny_or_parked/);
+  });
+
+  it('Phase D.5 — Immobiliare Possagno → possagno.it (town stem, intermittent placeholder)', () => {
+    const lead = normalizeLead({
+      company_name: 'Immobiliare Possagno',
+      city: 'Treviso',
+      category: 'agenzie immobiliari',
+    });
+    // Even if the page momentarily returns substantive HTML, the
+    // single-token brand "possagno" matches the town name and the
+    // domain is `possagno.<tld>` — almost always a comune portal or
+    // placeholder. Same family as `comelico`.
+    const html = htmlPage('Possagno', realEstateBody);
+    const r = PreVerifyGate.check('https://possagno.it', html, lead);
+    expect(r.status).toBe('REJECTED');
+    expect(r.detail).toMatch(/common_stem/);
+  });
+
+  it('Phase D.5 — possagno.it "coming soon" placeholder rejected', () => {
+    const lead = normalizeLead({
+      company_name: 'Some Real Estate',
+      city: 'Treviso',
+      category: 'agenzie immobiliari',
+    });
+    const placeholder =
+      '<html><head><title>possagno.it - coming soon</title></head><body>' +
+      'This domain is coming soon. ' +
+      'x'.repeat(900) + '</body></html>';
+    const r = PreVerifyGate.check('https://possagno.it', placeholder, lead);
+    expect(r.status).toBe('REJECTED');
+    expect(r.detail).toMatch(/tiny_or_parked/);
+  });
+
+  it('Phase D.5 — Immobiliare Galileo → galileo.it (e-learning portal)', () => {
+    const lead = normalizeLead({
+      company_name: 'Immobiliare Galileo S.r.l.',
+      city: 'Montebelluna',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('Galileo', realEstateBody);
+    const r = PreVerifyGate.check('https://galileo.it', html, lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase D.5 — Sinergia S.r.l. → sinergia.it (consulting in Pesaro, not real estate)', () => {
+    const lead = normalizeLead({
+      company_name: 'Sinergia S.r.l.',
+      city: 'Castelfranco Veneto',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('Sinergia', realEstateBody);
+    const r = PreVerifyGate.check('https://sinergia.it', html, lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase D.5 — Solar System S.r.l. → solarsystem.it (solar panels in Sicily)', () => {
+    // Multi-token brand: NER tokens=["solar","system"]. The
+    // 1-distinctive-token denylist check would miss this; the new
+    // compactStripped denylist check catches "solarsystem".
+    const lead = normalizeLead({
+      company_name: 'Solar System S.r.l.',
+      city: 'Castelfranco Veneto',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('Solar System', realEstateBody);
+    const r = PreVerifyGate.check('https://solarsystem.it', html, lead);
+    expect(r.status).toBe('REJECTED');
+    expect(r.detail).toMatch(/common_stem/);
+  });
+
   it('Studio Master Immobiliare → master.it (electrical manufacturer in Este — generic English noun)', () => {
     // Phase D.4 TV audit (p64): "Studio Master Immobiliare" was
     // matched to master.it. master.it is "Master S.r.l. Divisione

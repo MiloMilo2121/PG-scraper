@@ -128,6 +128,15 @@ export function rankCandidate(domain: string, lead: NormalizedLead): CandidateSc
     reasons.push(`common_bare_stem_${distinctiveTokens[0]}`);
   }
 
+  // Phase D.5 — also flag the COMPACT stripped brand (multi-token
+  // join) when it's denylisted: e.g. "Solar System" →
+  // compactStripped="solarsystem" matches solarsystem.it. The
+  // 1-distinctive-token check above misses this multi-word case.
+  if (compactStripped.length > 0 && isCommonBareStem(compactStripped) && stem.includes(compactStripped)) {
+    score -= 200;
+    reasons.push(`common_bare_compact_${compactStripped}`);
+  }
+
   // Bare city: stem is just the lead's city (or its first word).
   if (leadCityCompact.length >= 4 && leadCityCompact.includes(stem)) {
     score -= 80;

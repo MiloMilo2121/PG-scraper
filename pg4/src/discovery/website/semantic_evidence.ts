@@ -75,6 +75,23 @@ const COMMON_BARE_STEMS = new Set<string>([
   // WebFetch; unambiguous FP. "master" is also a generic English
   // brand-noise stem.
   'master',
+  // Phase D.5 TV audit (p65): manually verified false-positive
+  // single-token brand stems matching well-known third-party domains.
+  // Each verified individually via WebFetch — see
+  // pg4/docs/phase_d5_tv_suspect_audit.md for the per-case evidence.
+  'broker',     // p65: "Broker S.r.l." (Montebelluna) → broker.eu = Belgian real-estate broker (Oostende)
+  'contea',     // p65: "Contea S.r.l." (Montebelluna) → contea.com = Spaceship.com domain marketplace listing
+  'galileo',    // p65: "Immobiliare Galileo S.r.l." → galileo.it = Italian e-learning platform
+  'sinergia',   // p65: "Sinergia S.r.l." (Castelfranco) → sinergia.it = "Sinergia Consulenze" management consulting (Pesaro)
+  'solarsystem', // p65: "Solar System S.r.l." → solarsystem.it = "Rappazzo Sistemi" solar panels (Sicily)
+  // p66: "Immobiliare Possagno" (Treviso) → possagno.it = "coming soon"
+  // placeholder. The lead's brand IS the town name (Possagno is a real
+  // comune in TV); pg4's bare-city rule only blocks when leadCityCompact
+  // matches the distinctive token, but here the lead's city is Treviso,
+  // not Possagno. Town-name single-token brand domains are almost always
+  // either the comune's own portal or a placeholder. Same family as
+  // `comelico`. Manual WebFetch verified placeholder state.
+  'possagno',
   // generic single-token Italian brand-noise:
   'futuro', 'ambiente', 'qualita', 'prestigio', 'centro', 'punto',
 ]);
@@ -198,11 +215,19 @@ export function hasSectorEvidence(html: string, category?: string): {
  * Tiny-or-parked detection. Triggers if:
  *   - HTML body is shorter than 800 useful bytes (Phase D §9), OR
  *   - title contains parking markers ("for sale", "domain parked",
- *     "this premium domain"), OR
+ *     "this premium domain", "coming soon", domain-marketplace
+ *     listings), OR
  *   - body contains explicit parking/auction strings.
  *
  * Does NOT trigger on the substring "for sale" elsewhere in body — Italian
  * real-estate pages legitimately advertise "case in vendita / for sale".
+ *
+ * Phase D.5 audit: extended for two TV-found classes:
+ *   - `contea.com` had `<title>contea.com for sale | Spaceship.com</title>`
+ *     and full marketplace HTML > 800 bytes. The original markers
+ *     missed `spaceship.com` and the `<domain> for sale | <market>`
+ *     pattern.
+ *   - `possagno.it` returned a "coming soon" placeholder at full size.
  */
 export function isTinyOrParked(html: string): boolean {
   if (!html) return true;
@@ -215,6 +240,10 @@ export function isTinyOrParked(html: string): boolean {
   const titleParkingMarkers = [
     'domain for sale', 'this premium', '- for sale', '— for sale', 'parked',
     'this domain is for sale', 'buy this domain', 'questo dominio',
+    // Phase D.5: domain-marketplace listings ("contea.com for sale | Spaceship.com")
+    ' for sale | ', 'spaceship.com', 'sav.com', 'afternic',
+    // Phase D.5: under-construction / placeholder titles ("possagno.it")
+    'coming soon', 'in costruzione', 'sito in costruzione', 'website coming',
   ];
   if (title && titleParkingMarkers.some((m) => title.includes(m))) return true;
   const bodyParkingMarkers = [
@@ -222,6 +251,9 @@ export function isTinyOrParked(html: string): boolean {
     'is available for purchase', 'domain parked', 'sedo.com', 'dan.com',
     'huge domains', 'godaddy auctions', 'questo dominio è in vendita',
     'acquista questo dominio',
+    // Phase D.5: marketplace + placeholder body markers
+    'this domain is coming soon', 'domain is coming soon', 'sito in costruzione',
+    'website is coming', 'spaceship.com',
   ];
   return bodyParkingMarkers.some((m) => lower.includes(m));
 }
@@ -297,9 +329,17 @@ export function evaluateSemanticEvidence(
     leadCityCompact.includes(distinctiveTokens[0]) &&
     domainStem.length >= 4 &&
     leadCityCompact.includes(domainStem);
+  // Phase D.5 — also flag when the COMPACT stripped brand (multi-token
+  // brand joined into one string) is itself a denylisted stem. This
+  // catches "Solar System" → compactStripped="solarsystem" matching
+  // the manually-verified `solarsystem.it` (Rappazzo Sistemi solar
+  // panels, Sicily). The 1-distinctive-token gate alone misses
+  // multi-word brand-noise compounds.
+  const compactIsCommonStem = compactStripped.length > 0 && isCommonBareStem(compactStripped);
   const hasCommonBareStem =
     (distinctiveTokens.length === 1 && isCommonBareStem(distinctiveTokens[0])) ||
-    onlyTokenIsCity;
+    onlyTokenIsCity ||
+    compactIsCommonStem;
 
   const ner = ItalianNerParser.parse(normalized.company_name);
 
