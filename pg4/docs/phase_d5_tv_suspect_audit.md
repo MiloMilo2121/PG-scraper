@@ -174,7 +174,7 @@ founds** at zero cost.
 | run | found | FP_in_findings (audit-confirmed) | precision_floor | direct_fetch calls | duration |
 | --- | --- | --- | --- | --- | --- |
 | p65 | 71 | 6 (verified above) | ≤ 91.5 % | 399 | 1249 s |
-| **p66** | **66** | **0** (all 6 rejected) | **≥ 98.5 %** (65 confirmed + 1 new unknown) | 759 | 1252 s |
+| **p66 final** | **66** | **0** (all 6 rejected) | **≥ 98.5 %** (65 confirmed + 1 new unknown) | 375 | 1252 s |
 
 p66 net delta vs p65:
 
@@ -197,6 +197,12 @@ time. The placeholder marker check is fragile when the upstream
 oscillates between `coming soon` and full HTML. Adding `possagno` to
 `COMMON_BARE_STEMS` (same family as `comelico`) makes the rejection
 deterministic.
+
+The `p66_tv_enriched_free_audited.cost-ledger.jsonl` file contains both
+p66 attempts because the ledger path was reused. The final summary is
+`run-1778092079483-aa19`: 441 leads, 66 found, 375 direct_fetch calls.
+The earlier summary (`run-1778090934212-918c`: 67 found, 384 direct_fetch
+calls) is the superseded attempt before the `possagno` denylist pin.
 
 ## Code changes shipped in this commit
 
