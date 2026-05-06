@@ -50,6 +50,24 @@ export const ReasonCode = {
   ERROR_PROVIDER_RATE_LIMIT: 'ERROR_PROVIDER_RATE_LIMIT',
   ERROR_FETCH: 'ERROR_FETCH',
 
+  // Phase 4.5 (Phase D) — SerpStage reason-code split, replacing the
+  // single REJECTED_DIRECTORY catch-all with operator-actionable signals.
+  // REJECTED_DIRECTORY is preserved for back-compat (still emitted by the
+  // shared content_filter when the input website itself is a directory).
+  SERP_EMPTY_ALL_PROVIDERS: 'SERP_EMPTY_ALL_PROVIDERS',
+  SERP_DIRECTORY_ONLY: 'SERP_DIRECTORY_ONLY',
+  SERP_REJECTED_BY_VERIFY: 'SERP_REJECTED_BY_VERIFY',
+
+  // Phase D — semantic gate rejection sub-reasons. Surfaced when
+  // PreVerifyGate refuses a candidate that would have been accepted by
+  // the previous (looser) version. Each reason maps to an audit pattern.
+  SEMANTIC_REJECTED_COMMON_STEM: 'SEMANTIC_REJECTED_COMMON_STEM',
+  SEMANTIC_REJECTED_MISSING_CITY: 'SEMANTIC_REJECTED_MISSING_CITY',
+  SEMANTIC_REJECTED_SECTOR_CONFLICT: 'SEMANTIC_REJECTED_SECTOR_CONFLICT',
+  SEMANTIC_REJECTED_TINY_OR_PARKED: 'SEMANTIC_REJECTED_TINY_OR_PARKED',
+  SEMANTIC_REJECTED_RDAP_MISMATCH: 'SEMANTIC_REJECTED_RDAP_MISMATCH',
+  SEMANTIC_REJECTED_NO_DISTINCTIVE_TOKENS: 'SEMANTIC_REJECTED_NO_DISTINCTIVE_TOKENS',
+
   // Internal
   ERROR_INTERNAL: 'ERROR_INTERNAL',
 } as const;

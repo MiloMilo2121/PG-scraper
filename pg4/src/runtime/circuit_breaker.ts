@@ -26,6 +26,12 @@ export interface CircuitConfig {
 
 interface CircuitInternal {
   state: CircuitState;
+  /**
+   * Weighted failure counter (Phase D). Most failure kinds count as 1.0;
+   * `timeout` counts as 0.5 because a single slow target should not
+   * poison the breaker for all targets behind the same provider id.
+   * Block / rate_limit / transport stay full-weight.
+   */
   consecutiveFailures: number;
   firstFailureTs: number;
   openedAt: number;
@@ -81,13 +87,18 @@ export class CircuitBreaker {
   }
 
   /**
-   * Record a punitive failure. `kind` is informational and surfaces in
-   * `snapshot()`; it does NOT change the trip math, which gives every
-   * call site a single, simple contract: "if you call `recordFailure`,
-   * the breaker treats it as a real failure". Empty SERP results MUST
-   * NOT call this — pg3's logs proved free SERP returns empty more
-   * often than not, and the breaker would lock down DDG/crt.sh
-   * permanently.
+   * Record a punitive failure. `kind` is informational AND modulates
+   * the increment weight (Phase D):
+   *   - `timeout` → +0.5 (slow targets shouldn't poison the breaker
+   *                       across all targets sharing the provider id)
+   *   - all other failure kinds → +1.0
+   *
+   * Empty SERP results MUST NOT call this — pg3's logs proved free SERP
+   * returns empty more often than not, and the breaker would lock down
+   * DDG/crt.sh permanently.
+   *
+   * Trip rule: cumulative weighted failures inside `windowMs` reach
+   * `failureThreshold`.
    */
   recordFailure(key: string, kind?: string): void {
     const cfg = this.cfgFor(key);
@@ -98,19 +109,20 @@ export class CircuitBreaker {
       this.states.set(key, s);
     }
     s.lastFailureKind = kind;
+    const weight = kind === 'timeout' ? 0.5 : 1;
     if (s.state === 'half_open') {
       // A failure in the trial run reopens the circuit.
       s.state = 'open';
       s.openedAt = t;
-      s.consecutiveFailures += 1;
+      s.consecutiveFailures += weight;
       return;
     }
     // Reset the window if too much time passed since the first failure.
     if (s.firstFailureTs === 0 || t - s.firstFailureTs > cfg.windowMs) {
       s.firstFailureTs = t;
-      s.consecutiveFailures = 1;
+      s.consecutiveFailures = weight;
     } else {
-      s.consecutiveFailures += 1;
+      s.consecutiveFailures += weight;
     }
     if (s.consecutiveFailures >= cfg.failureThreshold) {
       s.state = 'open';

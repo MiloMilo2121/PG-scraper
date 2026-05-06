@@ -9,7 +9,17 @@ import type { ProviderRouter } from '../../providers/provider_router';
 import { tierCapForLead } from '../../runtime/run_context';
 import { verifyCandidates } from './verify_candidates';
 
-/** Query free SERP providers, dedupe candidates, verify top hits. */
+/**
+ * Query free SERP providers, dedupe candidates, verify top hits.
+ *
+ * Phase D — reason-code split. Replaces the catch-all `REJECTED_DIRECTORY`
+ * with three operator-actionable signals:
+ *   - `SERP_EMPTY_ALL_PROVIDERS`  every provider returned []
+ *   - `SERP_DIRECTORY_ONLY`       results existed but all classified as
+ *                                 directory by `SerpDeduplicator`
+ *   - `SERP_REJECTED_BY_VERIFY`   candidates fetched but the verify step
+ *                                 (PreVerifyGate / RDAP) rejected them
+ */
 export class SerpStage implements Stage {
   readonly name = 'serp';
   private dedup = new SerpDeduplicator();
@@ -28,11 +38,23 @@ export class SerpStage implements Stage {
       meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
     });
     if (!result.results || result.results.length === 0) {
-      return { stage: this.name, status: 'not_found', duration_ms: Date.now() - start, reason_code: RC.DISCOVERY_EXHAUSTED, detail: 'no_serp_results' };
+      return {
+        stage: this.name,
+        status: 'not_found',
+        duration_ms: Date.now() - start,
+        reason_code: RC.SERP_EMPTY_ALL_PROVIDERS,
+        detail: 'no_serp_results',
+      };
     }
     const ranked = this.dedup.dedupe([result.results], { limit: 8 });
     if (ranked.length === 0) {
-      return { stage: this.name, status: 'not_found', duration_ms: Date.now() - start, reason_code: RC.REJECTED_DIRECTORY, detail: 'all_directory' };
+      return {
+        stage: this.name,
+        status: 'not_found',
+        duration_ms: Date.now() - start,
+        reason_code: RC.SERP_DIRECTORY_ONLY,
+        detail: `serp=${result.provider} input=${result.results.length} dropped_all_as_directory`,
+      };
     }
     const candidateUrls = ranked.slice(0, 5).map((c) => c.best_url);
     const verdict = await verifyCandidates(this.router, candidateUrls, normalized, lead, {
@@ -42,9 +64,21 @@ export class SerpStage implements Stage {
     if (verdict.matched) {
       lead.website_discovery_method = DiscoveryMethod.SERP_COMPANY;
       lead.website_confidence = verdict.confidence;
-      return { stage: this.name, status: 'success', duration_ms: Date.now() - start, provider: verdict.provider, detail: `serp=${result.provider} top=${ranked[0].host}` };
+      return {
+        stage: this.name,
+        status: 'success',
+        duration_ms: Date.now() - start,
+        provider: verdict.provider,
+        detail: `serp=${result.provider} top=${ranked[0].host} ${verdict.detail ?? ''}`.trim(),
+      };
     }
-    return { stage: this.name, status: 'not_found', duration_ms: Date.now() - start, reason_code: RC.DISCOVERY_EXHAUSTED, detail: `serp=${result.provider} candidates=${ranked.length}` };
+    return {
+      stage: this.name,
+      status: 'not_found',
+      duration_ms: Date.now() - start,
+      reason_code: RC.SERP_REJECTED_BY_VERIFY,
+      detail: `serp=${result.provider} candidates=${ranked.length} reject=${verdict.rejectDetail ?? 'unknown'}`,
+    };
   }
 
   private buildQuery(n: NormalizedLead): string {

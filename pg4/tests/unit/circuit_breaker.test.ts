@@ -77,6 +77,24 @@ describe('CircuitBreaker', () => {
     expect(cb.allow('serper')).toBe(true);
   });
 
+  it('Phase D: timeout failures count as half-weight', () => {
+    // 5 timeouts × 0.5 = 2.5 (< threshold 3) → still closed.
+    const cb = new CircuitBreaker({ failureThreshold: 3, windowMs: 60_000, cooldownMs: 5_000 });
+    for (let i = 0; i < 5; i++) cb.recordFailure('serper', 'timeout');
+    expect(cb.allow('serper')).toBe(true);
+    // Two more full-weight failures (block) push past threshold.
+    cb.recordFailure('serper', 'block'); // 2.5 + 1 = 3.5
+    expect(cb.allow('serper')).toBe(false);
+  });
+
+  it('Phase D: full-weight (block / rate_limit) trips at threshold', () => {
+    const cb = new CircuitBreaker({ failureThreshold: 3, windowMs: 60_000, cooldownMs: 5_000 });
+    cb.recordFailure('bing', 'block');
+    cb.recordFailure('bing', 'rate_limit');
+    cb.recordFailure('bing', 'transport');
+    expect(cb.allow('bing')).toBe(false);
+  });
+
   it('snapshot returns a diagnostic view of all keys', () => {
     const cb = new CircuitBreaker({ failureThreshold: 3, windowMs: 10_000, cooldownMs: 5_000 });
     cb.recordFailure('a');

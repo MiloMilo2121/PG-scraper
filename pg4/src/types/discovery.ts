@@ -36,6 +36,13 @@ export type GateStatus = 'VERIFIED' | 'VERIFIED_SEMANTIC' | 'NEEDS_BROWSER' | 'R
 export interface GateResult {
   status: GateStatus;
   url: string;
-  evidence?: 'piva_match' | 'name_semantic' | 'title_match';
+  evidence?:
+    | 'piva_match'
+    | 'phone_match'
+    | 'name_semantic'
+    | 'title_match'
+    | 'strong_full_name'
+    | 'strong_brand'
+    | 'multi_token_anchor';
   detail?: string;
 }
