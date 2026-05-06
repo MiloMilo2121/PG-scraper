@@ -16,6 +16,18 @@ export interface RouteOptions {
    * for per-lead cost reconstruction in post-mortem JSONL analysis.
    */
   meta?: Record<string, string | number | boolean>;
+  /**
+   * Phase D.2: when true, the router does not record this attempt to
+   * the circuit breaker. The cost ledger still records the call (so
+   * cost accounting stays accurate) and breaker filtering still
+   * applies (a tripped breaker still blocks the call). Used by
+   * `verify_candidates` to retry a transport-flapped candidate
+   * without double-counting toward the breaker threshold — the first
+   * attempt already counted, the retry should not push the breaker
+   * over the trip line just because the same network blip happened
+   * twice.
+   */
+  bypassBreakerRecord?: boolean;
 }
 
 /**
@@ -73,6 +85,7 @@ export class ProviderRouter {
 
   async fetch(url: string, opts: RouteOptions & { timeoutMs?: number } = {}) {
     const candidates = this.filter(this.https, opts);
+    const bypassBreaker = opts.bypassBreakerRecord === true;
     let lastError: string | undefined;
     for (const p of candidates) {
       try {
@@ -80,7 +93,7 @@ export class ProviderRouter {
         const ok = res.status >= 200 && res.status < 400 && !!res.html;
         if (ok) {
           this.ledger.record(p.id, p.family, res.cost_eur || p.costPerCallEur, true, { kind: 'success', meta: opts.meta });
-          this.breaker.recordSuccess(p.id);
+          if (!bypassBreaker) this.breaker.recordSuccess(p.id);
           return { ...res, provider: p.id };
         }
         // 404 / 403 on a SINGLE URL is a per-target outcome, not a
@@ -91,12 +104,12 @@ export class ProviderRouter {
           ? classifyHttpFailure({ status: res.status, error: res.error })
           : 'other';
         this.ledger.record(p.id, p.family, res.cost_eur || p.costPerCallEur, false, { kind, meta: opts.meta });
-        if (transportLike) this.breaker.recordFailure(p.id, kind);
+        if (transportLike && !bypassBreaker) this.breaker.recordFailure(p.id, kind);
         lastError = res.error;
       } catch (err) {
         const kind = classifyThrown(err);
         this.ledger.record(p.id, p.family, p.costPerCallEur, false, { kind, meta: opts.meta });
-        this.breaker.recordFailure(p.id, kind);
+        if (!bypassBreaker) this.breaker.recordFailure(p.id, kind);
         lastError = (err as Error).message;
       }
     }

@@ -5,6 +5,7 @@ import { PreVerifyGate } from '../../discovery/website/preverify_gate';
 import { isParked, isUnderConstruction } from '../../discovery/website/content_filter';
 import { RdapValidator } from '../../discovery/website/rdap_validator';
 import type { RdapEvidence } from '../../discovery/website/rdap_validator';
+import { classifyHttpFailure } from '../../types/providers';
 import { DEFAULTS } from '../../config/defaults';
 
 /**
@@ -36,6 +37,24 @@ export interface VerifyCandidatesOpts {
    * `true` (corroborate). Tests pass `false` to skip the network.
    */
   corroborateWithRdap?: boolean;
+  /**
+   * Phase D.2: number of additional attempts for transport-class
+   * fetch failures (ECONNREFUSED / ETIMEDOUT / 0 / 5xx-class transport).
+   * Default 1 — i.e. up to 2 attempts total per candidate. Retries are
+   * NEVER attempted for 4xx, semantic rejects, parked pages, or rate
+   * limits. Tests can pass 0 to disable retries entirely.
+   */
+  transportRetries?: number;
+  /**
+   * Phase D.2: pluggable jitter generator for the retry delay (ms).
+   * Tests pass `() => 0` to skip the wait. Defaults to 300-700 ms.
+   */
+  retryDelayMs?: () => number;
+  /**
+   * Phase D.2: pluggable sleep function so tests can fast-forward.
+   * Defaults to `setTimeout`-based real sleep at runtime.
+   */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface VerifyVerdict {
@@ -58,14 +77,43 @@ export async function verifyCandidates(
 ): Promise<VerifyVerdict> {
   const rdapProbe = opts.rdapProbe ?? ((d, l, o) => RdapValidator.checkDomainOwnership(d, l, o));
   const corroborate = opts.corroborateWithRdap !== false;
+  const transportRetries = opts.transportRetries ?? 1;
+  const retryDelayMs = opts.retryDelayMs ?? (() => 300 + Math.floor(Math.random() * 400));
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
 
   let lastDetail = '';
   let lastRejectDetail = '';
   let timedOut = false;
   for (const candidate of candidates) {
-    const res = await router.fetch(candidate, { timeoutMs: opts.timeoutMs, meta: opts.meta });
+    let res = await router.fetch(candidate, { timeoutMs: opts.timeoutMs, meta: opts.meta });
+    // Phase D.2: single retry on transport-class failures only.
+    // Network flap (ECONNREFUSED on `pianon.eu` was the canonical case)
+    // costs us real TPs without any logic problem; one retry with
+    // 300-700 ms jitter typically recovers them. Never retry on 4xx,
+    // semantic rejects, parked pages, or rate-limit signals.
+    let retriesUsed = 0;
+    while (
+      retriesUsed < transportRetries &&
+      (!res.html || res.status < 200 || res.status >= 400)
+    ) {
+      const kind = classifyHttpFailure({ status: res.status, error: res.error });
+      if (kind !== 'transport' && kind !== 'timeout') break;
+      retriesUsed++;
+      await sleep(retryDelayMs());
+      // Phase D.2: retry attempts must NOT double-count toward the
+      // breaker threshold. The first attempt already incremented the
+      // breaker; retrying the same flapped target should not push the
+      // breaker over the trip line just because the network blip
+      // repeats. Without this, p53 BL re-runs lost ~14 TPs to breaker
+      // amplification (dropped from 19 found to 5 — 8 found).
+      res = await router.fetch(candidate, {
+        timeoutMs: opts.timeoutMs,
+        meta: opts.meta,
+        bypassBreakerRecord: true,
+      });
+    }
     if (!res.html || res.status < 200 || res.status >= 400) {
-      lastDetail = `${candidate} status=${res.status}${res.error ? ` err=${res.error}` : ''}`;
+      lastDetail = `${candidate} status=${res.status}${res.error ? ` err=${res.error}` : ''}${retriesUsed > 0 ? ` retries=${retriesUsed}` : ''}`;
       if (res.error?.toLowerCase().includes('timeout')) timedOut = true;
       continue;
     }

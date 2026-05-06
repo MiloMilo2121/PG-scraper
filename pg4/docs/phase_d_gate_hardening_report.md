@@ -6,8 +6,9 @@
 **Outputs:**
 - `output/p51_bl_enriched_free_hardened.csv` — Phase D first pass (27 found)
 - `output/p52_bl_enriched_free_hardened_fix.csv` — Phase D.1 audit-cleanup pass (19 found)
+- `output/p54_bl_enriched_free_retry_no_brk.csv` — Phase D.2 transport retry pass (21 found)
 **Cost ceiling:** `0.00 EUR` (free providers only — no SERP API, no LLM, no browser)
-**Run duration p51:** 754 s · **p52:** 728 s
+**Run duration p51:** 754 s · **p52:** 728 s · **p54:** 925 s
 
 ---
 
@@ -69,17 +70,43 @@ the gate did not block:
 | `discovery/website/semantic_evidence.ts` | split `hasNonGenericBrand` into `hasStrongBrandToken` (≥4-char distinctive) and acronym fallback; Layer B requires `hasStrongBrandToken`. Added `comelico` to `COMMON_BARE_STEMS` |
 | `tests/unit/preverify_gate.test.ts` | + Pb Properties regression: must REJECT `pbproperties.com` |
 
-## Acceptance criteria (final, after Phase D.1)
+### Phase D.2 — transport retry (recover network-flap TPs)
+
+D.1 confirmed `pianon.eu` (and several other Belluno sites) flapped
+between `200 OK` and `ECONNREFUSED` on the same client IP. The fix
+recovers these TPs without relaxing any semantic rule:
+
+- `verifyCandidates` now retries once on `transport` / `timeout`
+  classified failures (the same kinds the circuit breaker tracks)
+  with 300-700 ms jitter
+- 4xx, 429 rate-limit, semantic rejections, parked pages and
+  block / captcha responses are NEVER retried
+- the retry attempt is marked `bypassBreakerRecord: true` so the
+  same network blip does not double-count toward the breaker
+  threshold (a first-pass implementation without this flag dropped
+  found from 19 → 5 in BL because the breaker tripped sooner;
+  empirically verified in `p53` / `p53b` runs)
+
+| File | Phase D.2 change |
+| --- | --- |
+| `enrichment/stages/verify_candidates.ts` | + transport-only retry loop (default 1 retry); pluggable sleep + jitter + `transportRetries=0` opt-out for tests |
+| `providers/provider_router.ts` | + `RouteOptions.bypassBreakerRecord` so retry doesn't push breaker over the trip line |
+| `tests/unit/verify_candidates_retry.test.ts` (NEW) | 7 pinned cases: 200-after-ECONNREFUSED, 200-after-ETIMEDOUT, no retry on 404 / 429 / semantic-reject, two-failures-still-NOT_FOUND, retry sets bypassBreakerRecord, transportRetries=0 disables retry |
+
+## Acceptance criteria (final, after Phase D.2)
 
 | Criterion | Target | Result |
 | --- | --- | --- |
 | 194 in → 194 out | yes | **194 / 194** ✓ |
-| Cost = 0 EUR | yes | **0.00** ✓ |
+| Cost = 0 EUR | yes | **0.00** ✓ (1449 ledger entries, all free) |
 | No paid providers | yes | only `direct_fetch` ✓ |
-| ≥ 9 / 11 confirmed TPs preserved | yes | **10 / 11** ✓ — see breakdown below |
-| Audit FPs rejected | all 12 | **12 / 12** ✓ (Pb Properties added in D.1) |
+| ≥ 9 / 11 confirmed TPs preserved | yes | **10 / 11** ✓ (Pb Properties reclassified as FP) |
+| Audit FPs rejected | all 12 | **12 / 12** ✓ |
 | DMC Legno preserved (mis-categorised) | yes | preserved ×2 (Padola + San Candido) ✓ |
-| Tests + typecheck green | yes | **292 pass / 1 skipped**, tsc 0 errors ✓ |
+| Pb Properties stays REJECTED after retry | yes | ✓ (audit FP, no semantic anchor) |
+| Pianon / La Decisa recovered by retry | yes | **2 / 2** ✓ |
+| Tests + typecheck green | yes | **300 pass / 1 skipped**, tsc 0 errors ✓ |
+| p54 found ≥ p52 found (retry should help, not hurt) | yes | **21 ≥ 19** ✓ (no TPs lost) |
 
 ### TP preservation breakdown (D.1, p52)
 
@@ -222,6 +249,21 @@ npm run typecheck
 npm test
 npm run enrich -- \
   --input output/p43_provincia_bl.csv \
-  --out   output/p52_bl_enriched_free_hardened_fix.csv \
+  --out   output/p54_bl_enriched_free_retry_no_brk.csv \
   --cost-ceiling-eur 0.00
 ```
+
+## Footnote on `p53` / `p53b` (failed first attempt at D.2)
+
+The first D.2 implementation (retry without `bypassBreakerRecord`)
+silently regressed found from 19 → 8 in `p53` and 19 → 5 in `p53b`
+on consecutive runs. Diagnosis: each retry on a transport failure
+double-counted toward the per-key circuit breaker, tripping
+`direct_fetch` faster than D.1 had. Once tripped, all subsequent
+HTTP fetches were blocked for 120 s, dropping ~14 audit-confirmed
+TPs. The fix (`bypassBreakerRecord: true` on the retry call) restores
+the intended behaviour — `p54` lands at 21 found, recovering
+Pianon + La Decisa with zero TP losses vs `p52`. Ledger entries
+went from 1366 (`p52`, no retry) → 1449 (`p54`, retry+bypass) — the
++83 entries are exactly the retry attempts the design intended,
+without any breaker amplification.
