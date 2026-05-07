@@ -92,6 +92,14 @@ const COMMON_BARE_STEMS = new Set<string>([
   // either the comune's own portal or a placeholder. Same family as
   // `comelico`. Manual WebFetch verified placeholder state.
   'possagno',
+  // Phase E (p71 VR audit) — manually verified single-token brand stems
+  // matching well-known third-party domains. Per-case evidence in
+  // pg4/docs/phase_e_vr_audit.md.
+  'palace',     // p71: "Palace Immobiliare" (Montagnana) → palace.it = Palace Merano medical spa (BZ)
+  'domino',     // p71: "Domino S.r.l." (Lazise) → domino.it = digital marketing agency (Turin/Venice)
+  'camelot',    // p71: "Camelot Sas" (Villafranca VR) → camelot.it = e-voting platform (Ivrea)
+  'liberta',    // p71: "Libertà Immobiliare" (Legnago) → liberta.eu = Nameshift.com domain marketplace (NL)
+  'alfaomega',  // p71: "Alfa Omega Immobiliare" (Verona) → alfaomega.it = pharma/nutraceutical (Monza)
   // generic single-token Italian brand-noise:
   'futuro', 'ambiente', 'qualita', 'prestigio', 'centro', 'punto',
 ]);

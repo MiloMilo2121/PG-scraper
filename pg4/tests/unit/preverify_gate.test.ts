@@ -255,6 +255,82 @@ describe('PreVerifyGate — Phase D audit REJECT cases (must NOT match)', () => 
     expect(r.detail).toMatch(/tiny_or_parked/);
   });
 
+  it('Phase E — Palace Immobiliare → palace.it (Palace Merano medical spa, not real estate)', () => {
+    const lead = normalizeLead({
+      company_name: 'Palace Immobiliare S.r.l.',
+      city: 'Montagnana',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('Palace', realEstateBody);
+    const r = PreVerifyGate.check('https://palace.it', html, lead);
+    expect(r.status).toBe('REJECTED');
+    expect(r.detail).toMatch(/common_stem/);
+  });
+
+  it('Phase E — Domino S.r.l. → domino.it (digital marketing agency Turin/Venice)', () => {
+    const lead = normalizeLead({
+      company_name: 'Domino S.r.l.',
+      city: 'Lazise',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('Domino', realEstateBody);
+    const r = PreVerifyGate.check('https://domino.it', html, lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase E — Camelot Sas → camelot.it (e-voting platform Ivrea)', () => {
+    const lead = normalizeLead({
+      company_name: 'Camelot Sas',
+      city: 'Villafranca di Verona',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('Camelot', realEstateBody);
+    const r = PreVerifyGate.check('https://camelot.it', html, lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase E — Libertà Immobiliare → liberta.eu (Nameshift domain marketplace)', () => {
+    const lead = normalizeLead({
+      company_name: "Liberta' Immobiliare S.r.l.",
+      city: 'Legnago',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('Liberta', realEstateBody);
+    const r = PreVerifyGate.check('https://liberta.eu', html, lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase E — Alfa Omega Immobiliare → alfaomega.it (Monza pharmaceuticals, multi-token brand)', () => {
+    // Multi-token brand: NER tokens=["alfa","omega"] → distinctive=2.
+    // The 1-distinctive-token denylist check would miss this; the
+    // compactStripped denylist check (D.5) catches "alfaomega".
+    const lead = normalizeLead({
+      company_name: 'Alfa Omega Immobiliare',
+      city: 'Verona',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('Alfa Omega', realEstateBody);
+    const r = PreVerifyGate.check('https://alfaomega.it', html, lead);
+    expect(r.status).toBe('REJECTED');
+    expect(r.detail).toMatch(/common_stem/);
+  });
+
+  it('Phase E — Cangrande Immobiliare → cangrande.it stays MATCHED (audit-confirmed TP)', () => {
+    // Manual WebFetch confirmed cangrande.it IS Cangrande Immobiliare
+    // di Francesco Geom. Savino, Verona — same firm, same sector,
+    // same city. Must NOT regress to REJECTED when adding Phase E
+    // denylist entries. `cangrande` is intentionally NOT in
+    // COMMON_BARE_STEMS.
+    const lead = normalizeLead({
+      company_name: 'Cangrande Immobiliare',
+      city: 'Verona',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('Cangrande', `${realEstateBody} Sede a Verona.`);
+    const r = PreVerifyGate.check('https://cangrande.it', html, lead);
+    expect(r.status).toBe('VERIFIED_SEMANTIC');
+  });
+
   it('Phase D.5 — Immobiliare Possagno → possagno.it (town stem, intermittent placeholder)', () => {
     const lead = normalizeLead({
       company_name: 'Immobiliare Possagno',
