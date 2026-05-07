@@ -1,6 +1,7 @@
 import type { HttpProvider, LLMProvider, SerpProvider } from '../types/providers';
 import { ProviderRouter } from './provider_router';
 import type { CostLedger } from '../runtime/cost_ledger';
+import { CircuitBreaker } from '../runtime/circuit_breaker';
 import { getEnv } from '../config/env';
 import { logger } from '../runtime/logger';
 
@@ -37,7 +38,32 @@ export function buildProviderCatalog(ledger: CostLedger): ProviderRouter {
     // Phase 3+: OpenAIProvider, OpenRouterProvider, DeepseekProvider
   ];
 
-  const router = new ProviderRouter(serps, https, llms, ledger);
+  // Phase F.2 — per-provider breaker tuning. The default global config
+  // (5 failures / 60 s / 120 s cooldown) was tripping `direct_fetch`
+  // on multi-province free-only runs because:
+  //   - direct_fetch is a per-target tool (success rate depends on
+  //     each upstream domain, not on direct_fetch itself), so 5
+  //     consecutive flapping targets trip the breaker
+  //   - once OPEN, ALL future leads in the run lose verify capability
+  //     (every stage calls verifyCandidates), starving the rest of
+  //     the run
+  //   - direct_fetch is FREE — no cost penalty for retrying — so the
+  //     breaker is over-protective for this provider
+  //
+  // p82 / p83 PD runs both ended with `direct_fetch` OPEN
+  // (`consecutiveFailures=5`, `lastFailureKind=transport`) despite
+  // healthy bing_html / D.3 retry. Loosening the per-key config so
+  // direct_fetch tolerates wider bursts of transport flap, with a
+  // shorter cooldown so it recovers fast when the network heals.
+  // Other providers (paid SERPs, etc.) keep the strict default.
+  const breaker = new CircuitBreaker();
+  breaker.configure('direct_fetch', {
+    failureThreshold: 15,
+    windowMs: 60_000,
+    cooldownMs: 30_000,
+  });
+
+  const router = new ProviderRouter(serps, https, llms, ledger, breaker);
 
   if (env.NODE_ENV !== 'test') {
     logger.info({ providers: router.describe() }, '[ProviderCatalog] capability surface at boot');
