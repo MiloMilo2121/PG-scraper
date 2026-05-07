@@ -112,10 +112,18 @@ retry budget is freed for the legit composite-brand candidate.
 | cost = 0 | yes | ✓ |
 | 1 ledger summary | yes | ✓ |
 | no paid provider calls | yes | ✓ |
-| breaker not open at end | yes | ✓ closed |
+| breaker not open at end | yes | ✗ direct_fetch open |
 | no known blocked stems accepted | yes | ✓ (25 + 9 prior, all clean) |
 | 9 audit FPs rejected | yes | ✓ all 9 |
 | typecheck + tests green | yes | **352 pass / 1 skipped** |
+
+The final p82 ledger has a single summary and zero cost, but
+`direct_fetch` ended open (`consecutiveFailures=5`,
+`lastFailureKind=transport`). This does not invalidate the Phase F
+precision result, but it matters for the next phase: paid SERP should
+only be enabled with a strict per-lead ceiling and explicit ledger
+inspection, because local fetch noise can still affect recall and
+stage timing.
 
 ## Cumulative state across BL + TV + VR + PD
 
@@ -135,6 +143,7 @@ Directory denylist: 3 new entries (coobiz / italialei / inelenco).
     giemme, colonna, chemello, lachiave, phosphoro) — each 2-min
     WebFetch.
 17. **Then** consider paid providers (Serper at €0.001/call) for the
-    long tail that free-only cannot reach.
+    long tail that free-only cannot reach, with a strict per-lead cost
+    ceiling and explicit inspection of breaker state.
 18. **Re-audit suspect TPs across all provinces with manual paid
     evidence** before declaring final precision floor.
