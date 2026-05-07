@@ -11,6 +11,19 @@ export interface RunContext {
   startedAt: number;
   costCeilingEur: number;
   abort: AbortSignal;
+  /**
+   * Phase G — paid providers gate. Default false. Set true via the
+   * `--enable-paid` CLI flag / `PAID_PROVIDERS_ENABLED=true` env. When
+   * false, no provider with `costPerCallEur > 0` is ever called,
+   * regardless of tier or budget.
+   */
+  paidEnabled?: boolean;
+  /**
+   * Phase G — run-level cost ceiling (EUR). Aggregate cap across the
+   * whole run; once reached, paid providers stop. `undefined` means
+   * no run-level cap.
+   */
+  runCostCeilingEur?: number;
 }
 
 export interface PerLeadContext {
@@ -30,6 +43,13 @@ export interface PerLeadContext {
   costCeilingEur: number;
   /** Set to true the first time the budget is exhausted for this lead. */
   budgetExhausted?: boolean;
+  /**
+   * Phase G — when true, stages may run paid-tier providers within
+   * the per-lead budget. Default false. Threaded from `RunContext`
+   * which gets it from the CLI flag / env. The router still enforces
+   * per-call cost gates as a defence-in-depth.
+   */
+  paidEnabled?: boolean;
 }
 
 /**

@@ -12,6 +12,15 @@ export interface RunOptions {
   ledgerJsonlPath?: string;
   /** Override the per-lead cost ceiling from config/env. */
   costCeilingEur?: number;
+  /**
+   * Phase G — when true, stages may run paid providers within the
+   * per-lead and per-run budgets. Default false. Default-deny is
+   * the load-bearing safety: a misconfigured ceiling cannot
+   * accidentally enable paid calls.
+   */
+  paidEnabled?: boolean;
+  /** Phase G — run-level cost cap. `undefined` = no aggregate cap. */
+  runCostCeilingEur?: number;
 }
 
 /**
@@ -42,6 +51,8 @@ export function createRun(opts: RunOptions = {}): Run {
     startedAt: Date.now(),
     costCeilingEur: opts.costCeilingEur ?? cfg.pipeline.costCeilingEurPerLead,
     abort: new AbortController().signal,
+    paidEnabled: opts.paidEnabled === true,
+    runCostCeilingEur: opts.runCostCeilingEur,
   };
   return { ctx, cfg, ledger, cache, backpressure, rate };
 }
@@ -56,6 +67,7 @@ export function createPerLeadContext(run: Run): PerLeadContext {
     layersAttempted: [],
     abort: run.ctx.abort,
     costCeilingEur: run.ctx.costCeilingEur,
+    paidEnabled: run.ctx.paidEnabled === true,
   };
 }
 

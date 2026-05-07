@@ -19,25 +19,76 @@ import { verifyCandidates } from './verify_candidates';
  *                                 directory by `SerpDeduplicator`
  *   - `SERP_REJECTED_BY_VERIFY`   candidates fetched but the verify step
  *                                 (PreVerifyGate / RDAP) rejected them
+ *
+ * Phase G — paid fallback. After the free pass returns no verified
+ * match, optionally run a paid SERP pass (Serper) gated by:
+ *   - `paidEnabled === true` on the per-lead context
+ *   - per-lead remaining budget covers the paid call cost
+ *   - paid provider available (key + env flag)
+ * The paid pass goes through the SAME directory/preverify/RDAP
+ * pipeline. Discovery method on a paid match is `SERP_PAID`.
  */
+export interface SerpStageOpts {
+  /**
+   * Phase G — when true the stage will run a paid SERP fallback if
+   * the free pass returns no verified match. The router still
+   * enforces per-lead budget, key presence, and env flags. When
+   * false (default), the stage behaves exactly as in Phase F.
+   */
+  paidFallbackEnabled?: boolean;
+  /** List of provider ids to use in the paid fallback. Default `['serper']`. */
+  paidProviderIds?: ReadonlyArray<string>;
+}
+
 export class SerpStage implements Stage {
   readonly name = 'serp';
   private dedup = new SerpDeduplicator();
-  constructor(private router: ProviderRouter) {}
+  constructor(
+    private router: ProviderRouter,
+    private opts: SerpStageOpts = {},
+  ) {}
 
   async run(ctx: PerLeadContext, lead: Lead, normalized: NormalizedLead): Promise<StageOutcome> {
     const start = Date.now();
     const query = this.buildQuery(normalized);
-    // Per-lead budget gate: when the ceiling is hit we cap to free SERP
-    // (tier ≤ 1). Free SERP is the default cap anyway today, but the
-    // helper makes the policy uniform if/when the operator opens paid
-    // tiers via env or CLI flag.
+
+    // ---- Free pass (tier ≤ 1, paid disabled) --------------------------------
     const maxTier = Math.min(1, tierCapForLead(ctx, 1));
-    const result = await this.router.search(query, {
+    const free = await this.router.search(query, {
       maxTier,
       meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
     });
-    if (!result.results || result.results.length === 0) {
+
+    if (free.results && free.results.length > 0) {
+      const ranked = this.dedup.dedupe([free.results], { limit: 8 });
+      if (ranked.length > 0) {
+        const candidateUrls = ranked.slice(0, 5).map((c) => c.best_url);
+        const verdict = await verifyCandidates(this.router, candidateUrls, normalized, lead, {
+          timeoutMs: DEFAULTS.pipeline.requestTimeoutMs,
+          meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
+        });
+        if (verdict.matched) {
+          lead.website_discovery_method = DiscoveryMethod.SERP_COMPANY;
+          lead.website_confidence = verdict.confidence;
+          return {
+            stage: this.name,
+            status: 'success',
+            duration_ms: Date.now() - start,
+            provider: verdict.provider,
+            detail: `serp=${free.provider} top=${ranked[0].host} ${verdict.detail ?? ''}`.trim(),
+          };
+        }
+      }
+    }
+
+    // ---- Paid fallback (Serper / tier 2) ------------------------------------
+    if (this.opts.paidFallbackEnabled === true && ctx.paidEnabled === true) {
+      const paidVerdict = await this.runPaidPass(ctx, lead, normalized, query, free.provider, start);
+      if (paidVerdict !== null) return paidVerdict;
+    }
+
+    // ---- Free-only failure paths --------------------------------------------
+    if (!free.results || free.results.length === 0) {
       return {
         stage: this.name,
         status: 'not_found',
@@ -46,30 +97,14 @@ export class SerpStage implements Stage {
         detail: 'no_serp_results',
       };
     }
-    const ranked = this.dedup.dedupe([result.results], { limit: 8 });
+    const ranked = this.dedup.dedupe([free.results], { limit: 8 });
     if (ranked.length === 0) {
       return {
         stage: this.name,
         status: 'not_found',
         duration_ms: Date.now() - start,
         reason_code: RC.SERP_DIRECTORY_ONLY,
-        detail: `serp=${result.provider} input=${result.results.length} dropped_all_as_directory`,
-      };
-    }
-    const candidateUrls = ranked.slice(0, 5).map((c) => c.best_url);
-    const verdict = await verifyCandidates(this.router, candidateUrls, normalized, lead, {
-      timeoutMs: DEFAULTS.pipeline.requestTimeoutMs,
-      meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
-    });
-    if (verdict.matched) {
-      lead.website_discovery_method = DiscoveryMethod.SERP_COMPANY;
-      lead.website_confidence = verdict.confidence;
-      return {
-        stage: this.name,
-        status: 'success',
-        duration_ms: Date.now() - start,
-        provider: verdict.provider,
-        detail: `serp=${result.provider} top=${ranked[0].host} ${verdict.detail ?? ''}`.trim(),
+        detail: `serp=${free.provider} input=${free.results.length} dropped_all_as_directory`,
       };
     }
     return {
@@ -77,8 +112,51 @@ export class SerpStage implements Stage {
       status: 'not_found',
       duration_ms: Date.now() - start,
       reason_code: RC.SERP_REJECTED_BY_VERIFY,
-      detail: `serp=${result.provider} candidates=${ranked.length} reject=${verdict.rejectDetail ?? 'unknown'}`,
+      detail: `serp=${free.provider} candidates=${ranked.length}`,
     };
+  }
+
+  /**
+   * Phase G — paid SERP fallback. Returns a populated `StageOutcome`
+   * when the paid pass yields a verified match, or `null` to let the
+   * free-pass failure paths run.
+   */
+  private async runPaidPass(
+    ctx: PerLeadContext,
+    lead: Lead,
+    normalized: NormalizedLead,
+    query: string,
+    freeProvider: string,
+    start: number,
+  ): Promise<StageOutcome | null> {
+    const remaining = (ctx.costCeilingEur ?? 0) - ctx.costEur;
+    const paidIds = this.opts.paidProviderIds; // undefined → router picks any paid provider matching paidEnabled
+    const paid = await this.router.search(query, {
+      paidEnabled: true,
+      remainingLeadBudgetEur: remaining,
+      includeProviderIds: paidIds,
+      meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name, pass: 'paid' },
+    });
+    if (!paid.results || paid.results.length === 0) return null;
+    const ranked = this.dedup.dedupe([paid.results], { limit: 8 });
+    if (ranked.length === 0) return null;
+    const candidateUrls = ranked.slice(0, 5).map((c) => c.best_url);
+    const verdict = await verifyCandidates(this.router, candidateUrls, normalized, lead, {
+      timeoutMs: DEFAULTS.pipeline.requestTimeoutMs,
+      meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name, pass: 'paid' },
+    });
+    if (verdict.matched) {
+      lead.website_discovery_method = DiscoveryMethod.SERP_PAID;
+      lead.website_confidence = verdict.confidence;
+      return {
+        stage: this.name,
+        status: 'success',
+        duration_ms: Date.now() - start,
+        provider: verdict.provider,
+        detail: `serp_free=${freeProvider} serp_paid=${paid.provider} top=${ranked[0].host} ${verdict.detail ?? ''}`.trim(),
+      };
+    }
+    return null;
   }
 
   private buildQuery(n: NormalizedLead): string {

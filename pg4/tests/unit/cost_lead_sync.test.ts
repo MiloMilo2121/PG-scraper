@@ -43,7 +43,10 @@ const deadDns = async () => Promise.reject(new Error('ENOTFOUND'));
 
 describe('lead.cost_eur is sourced from the CostLedger (per-lead)', () => {
   it('reflects the cost of every router call tagged with this lead_id', async () => {
-    const run = createRun();
+    // Phase G — paid is default-deny in createRun, so the test must
+    // opt in. Cost ceiling must be high enough to cover repeated
+    // €0.05 paid SERP calls (multiple stages may invoke).
+    const run = createRun({ paidEnabled: true, costCeilingEur: 1.0 });
     const paid = new PaidSerp();
     const router = new ProviderRouter([paid], [new StubHttp()], [], run.ledger);
     const lead = { company_name: 'Acme SRL', city: 'Milano', province: 'MI', vat_code: '12345678901', phone: '021', address: 'Via Roma 1' };
@@ -63,7 +66,7 @@ describe('lead.cost_eur is sourced from the CostLedger (per-lead)', () => {
   });
 
   it('isolates costs per lead via meta.lead_id', async () => {
-    const run = createRun();
+    const run = createRun({ paidEnabled: true, costCeilingEur: 1.0 });
     const paid = new PaidSerp();
     const router = new ProviderRouter([paid], [new StubHttp()], [], run.ledger);
     const baseLead = { company_name: 'Acme SRL', city: 'Milano', province: 'MI', vat_code: '12345678901', phone: '021', address: 'Via Roma 1' };

@@ -10,6 +10,7 @@ import { DnsMxProvider } from './serp/dns_mx';
 import { CrtshProvider } from './serp/crtsh';
 import { DdgLiteProvider } from './serp/ddg_lite';
 import { BingHtmlProvider } from './serp/bing_html';
+import { SerperProvider } from './serp/serper';
 
 /**
  * The provider registry. Adds providers in tier order. Missing API keys are
@@ -28,7 +29,8 @@ export function buildProviderCatalog(ledger: CostLedger): ProviderRouter {
     new CrtshProvider(),
     new DdgLiteProvider(),
     new BingHtmlProvider(),
-    // Phase 3+: SerperProvider, ExaProvider, TavilyProvider, PerplexityProvider
+    new SerperProvider(), // Phase G — paid tier 2; available() gated by SERPER_ENABLED + SERPER_API_KEY
+    // Phase 3+: ExaProvider, TavilyProvider, PerplexityProvider
   ];
 
   const https: HttpProvider[] = [new DirectFetchProvider()];

@@ -85,10 +85,13 @@ export async function runEnrichmentPipeline(input: PipelineInput): Promise<Enric
   }
 
   // ---- Multi-stage discovery ladder ----
+  // Phase G — `paidFallbackEnabled` is forwarded from the per-lead
+  // context. The router still enforces per-call cost gates as
+  // defence-in-depth.
   const stages: Stage[] = [
     new InputWebsiteStage(router),
     new HyperGuesserStage(router, input.dnsResolver),
-    new SerpStage(router),
+    new SerpStage(router, { paidFallbackEnabled: perLead.paidEnabled === true }),
     new RdapBoostStage(),
   ];
 

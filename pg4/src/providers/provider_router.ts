@@ -28,6 +28,28 @@ export interface RouteOptions {
    * twice.
    */
   bypassBreakerRecord?: boolean;
+  /**
+   * Phase G — paid-call gate. When `false` (default), providers with
+   * `costPerCallEur > 0` are filtered out — even if they're
+   * registered, available, and within the tier cap. Callers must
+   * explicitly opt in to paid calls AND respect remaining budgets.
+   */
+  paidEnabled?: boolean;
+  /**
+   * Phase G — per-lead remaining budget (EUR). Providers whose
+   * `costPerCallEur` exceeds this value are filtered out. The caller
+   * is responsible for tracking the remaining budget per lead and
+   * passing it on each call. `undefined` means "no per-lead cap"
+   * (legacy behaviour for free-only callers).
+   */
+  remainingLeadBudgetEur?: number;
+  /**
+   * Phase G — restrict this call to a specific list of provider ids.
+   * When set, only providers whose `id` is in the list are
+   * considered. Used by SerpStage to run a paid second pass that
+   * targets ONLY the paid providers.
+   */
+  includeProviderIds?: ReadonlyArray<string>;
 }
 
 /**
@@ -155,10 +177,26 @@ export class ProviderRouter {
   }
 
   private filter<T extends AnyProvider>(arr: T[], opts: RouteOptions): T[] {
+    const paidEnabled = opts.paidEnabled === true;
     return arr
       .filter((p) => p.available())
       .filter((p) => this.breaker.allow(p.id))
       .filter((p) => opts.maxTier === undefined || p.tier <= opts.maxTier)
+      // Phase G — paid gate. Default-deny: any provider with
+      // costPerCallEur > 0 is excluded unless `paidEnabled === true`.
+      // This is the load-bearing safety: a run with cost ceiling 0
+      // never accidentally hits a paid provider just because tier
+      // limits drift or someone forgets to set maxTier.
+      .filter((p) => p.costPerCallEur === 0 || paidEnabled)
+      // Phase G — per-lead budget gate. Filter out paid providers
+      // whose single-call cost would exceed the remaining lead budget.
+      .filter((p) => {
+        if (p.costPerCallEur === 0) return true;
+        if (opts.remainingLeadBudgetEur === undefined) return true;
+        return p.costPerCallEur <= opts.remainingLeadBudgetEur;
+      })
+      // Phase G — explicit allowlist when caller targets specific ids.
+      .filter((p) => !opts.includeProviderIds || opts.includeProviderIds.includes(p.id))
       .sort((a, b) => a.tier - b.tier)
       .slice(0, opts.maxProviders ?? Number.MAX_SAFE_INTEGER);
   }

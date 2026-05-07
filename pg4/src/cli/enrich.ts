@@ -22,11 +22,34 @@ async function main() {
   const ledgerPath = optString(args, 'ledger-path') ?? csvOut.replace(/\.csv$/i, '') + '.cost-ledger.jsonl';
   const ceilingArg = optString(args, 'cost-ceiling-eur');
   const costCeiling = ceilingArg ? Number(ceilingArg) : undefined;
-  const run = createRun({ ledgerJsonlPath: ledgerPath, costCeilingEur: costCeiling });
+  // Phase G — paid providers gate. Default DENY: paid is off unless
+  // `--enable-paid` is passed. The cost-ceiling-eur=0 path also
+  // forces paid off as an extra safety, so an operator can run
+  // "free regression" by setting the ceiling to 0 even if they
+  // forgot to drop --enable-paid.
+  const enablePaid = !!args.flags['enable-paid'];
+  const runCeilingArg = optString(args, 'run-cost-ceiling-eur');
+  const runCostCeilingEur = runCeilingArg ? Number(runCeilingArg) : undefined;
+  const paidEnabled = enablePaid && (costCeiling === undefined || costCeiling > 0);
+  if (enablePaid && !paidEnabled) {
+    logger.warn(
+      { costCeiling },
+      '[enrich] --enable-paid is ignored because --cost-ceiling-eur is 0; force-OFF paid for this run',
+    );
+  }
+  const run = createRun({
+    ledgerJsonlPath: ledgerPath,
+    costCeilingEur: costCeiling,
+    paidEnabled,
+    runCostCeilingEur,
+  });
   const router = buildProviderCatalog(run.ledger);
 
   const output = new OutputManager(csvOut, jsonlOut, 'enriched');
-  logger.info({ runId: run.ctx.runId, input, csvOut }, '[enrich] starting');
+  logger.info(
+    { runId: run.ctx.runId, input, csvOut, paidEnabled, costCeilingEur: costCeiling, runCostCeilingEur },
+    '[enrich] starting',
+  );
 
   let total = 0;
   let withWebsite = 0;
