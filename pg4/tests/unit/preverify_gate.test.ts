@@ -315,6 +315,97 @@ describe('PreVerifyGate — Phase D audit REJECT cases (must NOT match)', () => 
     expect(r.detail).toMatch(/common_stem/);
   });
 
+  it('Phase F — Americanino → americanino.eu (clothing brand, not real estate)', () => {
+    const lead = normalizeLead({
+      company_name: 'Americanino',
+      city: 'Padova',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://americanino.eu', htmlPage('Americanino', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+    expect(r.detail).toMatch(/common_stem/);
+  });
+
+  it('Phase F — Raffaello S.r.l. → raffaello.it (Ferrero confectionery brand)', () => {
+    const lead = normalizeLead({
+      company_name: 'Raffaello S.r.l.',
+      city: 'Limena',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://raffaello.it', htmlPage('Raffaello', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase F — Cantele S.r.l. → cantele.it (wine producer Salento)', () => {
+    const lead = normalizeLead({
+      company_name: 'Cantele S.r.l.',
+      city: 'Padova',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://cantele.it', htmlPage('Cantele', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase F — Immobiliare Gemini → gemini.it (condo management software)', () => {
+    const lead = normalizeLead({
+      company_name: 'Immobiliare Gemini S.r.l.',
+      city: 'Albignasego',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://gemini.it', htmlPage('Gemini', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase F — Fusion S.a.s. → fusion.org (parked / domain marketplace)', () => {
+    const lead = normalizeLead({
+      company_name: 'Fusion S.a.s.',
+      city: 'Albignasego',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://fusion.org', htmlPage('Fusion', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase F — My Home S.r.l. → myhome.com (US Williston Financial real-estate tech)', () => {
+    const lead = normalizeLead({
+      company_name: 'My Home S.r.l.',
+      city: 'Padova',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://myhome.com', htmlPage('My Home', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase F — Immobiliare Orchidea → orchidea.it (Orchidea Milano furniture retail)', () => {
+    const lead = normalizeLead({
+      company_name: 'Immobiliare Orchidea S.r.l.',
+      city: 'Mestrino',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://orchidea.it', htmlPage('Orchidea', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase F — Ypsilon S.r.l. → ypsilon.net (travel tech AG, ISO/PCI)', () => {
+    const lead = normalizeLead({
+      company_name: 'Ypsilon S.r.l.',
+      city: 'Albignasego',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://ypsilon.net', htmlPage('Ypsilon', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase F — Alessandra S.r.l. → alessandra.com (Dr. Tony Alessandra US consultant)', () => {
+    const lead = normalizeLead({
+      company_name: 'Alessandra S.r.l.',
+      city: 'Padova',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://alessandra.com', htmlPage('Alessandra', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
   it('Phase E — Cangrande Immobiliare → cangrande.it stays MATCHED (audit-confirmed TP)', () => {
     // Manual WebFetch confirmed cangrande.it IS Cangrande Immobiliare
     // di Francesco Geom. Savino, Verona — same firm, same sector,

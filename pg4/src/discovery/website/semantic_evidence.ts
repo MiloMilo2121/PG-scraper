@@ -100,6 +100,18 @@ const COMMON_BARE_STEMS = new Set<string>([
   'camelot',    // p71: "Camelot Sas" (Villafranca VR) → camelot.it = e-voting platform (Ivrea)
   'liberta',    // p71: "Libertà Immobiliare" (Legnago) → liberta.eu = Nameshift.com domain marketplace (NL)
   'alfaomega',  // p71: "Alfa Omega Immobiliare" (Verona) → alfaomega.it = pharma/nutraceutical (Monza)
+  // Phase F (p81 PD audit) — manually verified single-token brand stems
+  // matching well-known third-party domains. Per-case evidence in
+  // pg4/docs/phase_f_pd_audit.md.
+  'americanino', // p81: "Americanino" (Padova) → americanino.eu = clothing/footwear brand (Sport Commerce Italia)
+  'raffaello',   // p81: "Raffaello S.r.l." (Limena) → raffaello.it = Ferrero confectionery brand
+  'cantele',     // p81: "Cantele S.r.l." (Padova) → cantele.it = Cantele Vini wine producer (Guagnano LE)
+  'gemini',      // p81: "Immobiliare Gemini" → gemini.it = condominium management software (also generic word)
+  'fusion',      // p81: "Fusion S.a.s." (Albignasego) → fusion.org = redirected to synergytech buy-domain (parked)
+  'myhome',      // p81: "My Home S.r.l." (Padova) → myhome.com = US Williston Financial real-estate tech
+  'orchidea',    // p81: "Immobiliare Orchidea" (Mestrino) → orchidea.it = Orchidea Milano furniture retail (Corsico)
+  'ypsilon',     // p81: "Ypsilon S.r.l." (Albignasego) → ypsilon.net = Ypsilon.Net AG travel tech (PCI / ISO)
+  'alessandra',  // p81: "Alessandra S.r.l." (Padova) → alessandra.com = Dr. Tony Alessandra US business consultant
   // generic single-token Italian brand-noise:
   'futuro', 'ambiente', 'qualita', 'prestigio', 'centro', 'punto',
 ]);
