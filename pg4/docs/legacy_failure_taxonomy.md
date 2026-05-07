@@ -129,7 +129,12 @@ Same error logged hundreds of times in a single batch.
 
 **pg4 guardrail.**
 - `parseGoogleMapsResults` already returns `{ total_cards, dropped }`. Phase 3.7 adds a `cap_likely: boolean` field set when `total_cards >= 110`, mirroring the PG `overflow` flag.
-- Phase 4 orchestrator splits the query (smaller geo grid / category sub-keyword) when `cap_likely === true`, the same way PG splits by comune when `overflow === true`.
+- Current Phase 4 orchestrator surfaces the signal in logs / checkpoint
+  (`maps_cap_likely_count`, `pg_overflow_count`) but does **not** split
+  automatically yet. This is deliberate pending live evidence: PD's
+  checkpoint later proved dense PG queries can have `overflow=true` on
+  every curated comune. Auto-split is therefore still an active followup,
+  not a closed guardrail.
 
 ---
 

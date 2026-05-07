@@ -167,11 +167,12 @@ CLI argv → cli/enrich.ts
 | Step | State |
 |---|---|
 | 1 — PG live canary on Belluno (1 comune, 2 pages) | ✅ passed: 47 unique leads, resume verified |
-| 2 — 3 comuni BL (Belluno + Feltre + Sedico) | next |
-| 3 — Province BL PG-only | after step 2 holds |
-| 4 — Auto-split PG `overflow=true` → comune drill-down | after step 3 |
-| 5 — Maps live opt-in, after Cloudflare/consent hardening | not before step 4 |
-| 6 — Paid providers (Serper/Exa/Perplexity/OpenAI/Firecrawl/BrightData/Hunter) | only after end-to-end cost gate is exercised on real numbers |
+| 2 — 3 comuni BL (Belluno + Feltre + Sedico) | ✅ passed: 116 unique leads, resume verified |
+| 3 — Province BL PG-only | ✅ passed: 194 unique leads, 0 overflow |
+| 4 — Dense province PG-only (PD) | ✅ ran: 437 unique leads from 900 cards; every checkpoint entry had `overflow=true` |
+| 5 — Auto-split PG `overflow=true` / Maps `cap_likely=true` | pending; now proven necessary for dense provinces |
+| 6 — Maps live opt-in, after Cloudflare/consent hardening | pending |
+| 7 — Paid providers (Serper first) | Serper integrated and cost-gated, but disabled after p90 precision ≈50%; filters #31/#32 required before p91 |
 
 ### Why pg4 stays small
 
