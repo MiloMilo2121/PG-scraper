@@ -1,7 +1,7 @@
 # Phase G — Serper provider (gated, paid SERP fallback)
 
-**Status:** **CODE + TESTS SHIPPED. Live paid benchmark
-BLOCKED_BY_MISSING_SERPER_API_KEY** — see G.5 below.
+**Status:** **LIVE PAID BENCHMARK EXECUTED. Serper remains
+DISABLED by decision** — see G.5/G.6 below.
 
 **Goal:** add Serper.dev as a tier-2 paid SERP fallback to the free
 ladder, without:
