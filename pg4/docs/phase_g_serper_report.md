@@ -252,60 +252,39 @@ Total real spend across all attempts: **€0.328** (€0.229 attempt 2
   precision to climb from ~50 % to ~85 %+.
 - **#34** Per-host scoping for direct_fetch breaker (carried over).
 
-Both `process.env.SERPER_API_KEY` and `.env` are unset on this
-working IP. Per the user's hard rule:
+### G.8 — Next paid run contract
 
-> If SERPER_API_KEY missing: do NOT fake benchmark. Stop at code +
-> tests + docs. Write docs/phase_g_serper_report.md with status
-> BLOCKED_BY_MISSING_SERPER_API_KEY. Commit and push.
+Do **not** run another Serper benchmark until #31 and #32 are shipped.
+The p90 result proved that the paid integration is safe from a cost
+perspective, but not yet reliable enough from a precision perspective.
 
-No paid call has been made. No measurement has been faked. The code
-+ tests are in place; once the operator provides
-`SERPER_API_KEY` + `SERPER_ENABLED=true` in `.env`, the live
-benchmark can run with:
+Once the Serper-specific filters are in place, the next benchmark is:
 
 ```bash
 npm run enrich -- \
   --input output/p80_provincia_pd.csv \
-  --out output/p90_pd_enriched_serper_010.csv \
+  --out output/p91_pd_enriched_serper_filtered_010.csv \
   --enable-paid \
   --cost-ceiling-eur 0.003 \
   --run-cost-ceiling-eur 0.10
 ```
 
-Worst-case spend with the `0.003` per-lead cap on PD's 437 leads
-running paid fallback once each: 437 × €0.001 = **€0.437** if every
-lead exhausts the free pass. In practice only the leads where the
-free pass returns no verified match will trigger paid, so estimated
-spend is ≤ €0.30.
-
-Hard acceptance for the future paid run:
+Hard acceptance for p91:
 - 437 in → 437 out
 - exactly one ledger summary
-- paid calls present only if `--enable-paid` flag was set
-- total cost ≤ configured ceilings
+- total cost ≤ €0.10
+- `serper.calls > 0`, but no Serper-specific aggregator domain is
+  accepted as `official_website`
 - breaker states reported (both direct_fetch and serper)
-- Manual audit of every newly-found Serper website (≤ 25 typically;
-  if more, audit at least the top 25 riskiest)
+- Manual audit of every newly-found `SERP_PAID` website. If the paid
+  set is too large, audit the riskiest first: single-token domains,
+  `.com` generics, public/education/government-looking domains, and
+  any site whose title does not clearly match the lead.
 
----
-
-## G.6 — Decision so far
-
-Cannot decide KEEP / KEEP-LONG-TAIL / DISABLE / NEED-MORE-AUDIT
-without the live benchmark. Decision deferred to first p90 run with
-real key.
-
----
-
-## G.7 — Followups
-
-- **#27** Run paid benchmark p90 once `SERPER_API_KEY` is
-  available.
-- **#28** Run-level cost cap (`runCostCeilingEur`) currently
-  threaded through context but not enforced; add an aggregate-cost
-  router gate when paid is on.
-- **#29** Per-host scoping for `direct_fetch` breaker (carried over
-  from F.2 followup #22).
-- **#30** Re-tune Serper breaker if p90 reveals per-IP rate-limit
-  behaviour.
+Decision target for p91:
+- **KEEP** if new paid precision is ≥90 % and cost per accepted TP is
+  acceptable.
+- **KEEP-LONG-TAIL** if precision is good but cost per TP is high.
+- **DISABLE** if paid precision stays below 85 %.
+- **NEED-MORE-AUDIT** if PD alone is ambiguous and a second province
+  is needed.
