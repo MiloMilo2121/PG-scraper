@@ -90,6 +90,58 @@ describe('ProviderRouter — Phase G paid gate', () => {
     expect(paid.callCount).toBe(1);
   });
 
+  it('paidOnly=true filters out free providers so paid is actually reached', async () => {
+    // Repro of the p90 first-attempt bug: paid pass without paidOnly
+    // returned bing_html-class results before reaching Serper.
+    // free.search returns NON-empty (mimicking bing_html), which would
+    // satisfy router.search() and prevent the paid call.
+    const ledger = new CostLedger();
+    const free = new FakeFreeSerp();   // tier 1, returns 1 result
+    const paid = new FakePaidSerp();    // tier 2, returns 1 result
+    const router = new ProviderRouter([free, paid], [], [], ledger);
+    // Without paidOnly: router returns on free.search (tier 1) first.
+    free.callCount = 0; paid.callCount = 0;
+    await router.search('q', { paidEnabled: true, remainingLeadBudgetEur: 0.01 });
+    expect(free.callCount).toBe(1);
+    expect(paid.callCount).toBe(0); // free satisfied → paid never reached
+    // With paidOnly: free is filtered, paid IS called.
+    free.callCount = 0; paid.callCount = 0;
+    await router.search('q', { paidEnabled: true, paidOnly: true, remainingLeadBudgetEur: 0.01 });
+    expect(free.callCount).toBe(0);
+    expect(paid.callCount).toBe(1);
+  });
+
+  it('runCostCeilingEur enforces aggregate cap across calls (the p90-blowup hotfix)', async () => {
+    // Phase G hotfix regression: without this gate the router would
+    // keep calling paid providers indefinitely after the cap.
+    const ledger = new CostLedger();
+    const empty = new FakeFreeSerp();
+    empty.search = async () => [];
+    const paid = new FakePaidSerp(); // tier 2, cost 0.001
+    const router = new ProviderRouter([empty, paid], [], [], ledger);
+    // Simulate prior spend by recording two paid calls (= €0.002 in ledger).
+    ledger.record('seed', 'serp', 0.001, true, { kind: 'success' });
+    ledger.record('seed', 'serp', 0.001, true, { kind: 'success' });
+    expect(ledger.getTotal()).toBeCloseTo(0.002, 6);
+    // Now ask for paid with a run-cap of 0.0025: only one more paid call would
+    // fit (0.002 + 0.001 = 0.003 > 0.0025), so the gate must filter paid out.
+    paid.callCount = 0;
+    await router.search('q', {
+      paidEnabled: true,
+      remainingLeadBudgetEur: 0.01,
+      runCostCeilingEur: 0.0025,
+    });
+    expect(paid.callCount).toBe(0);
+    // Bumping cap to 0.005 lets one more call fit.
+    paid.callCount = 0;
+    await router.search('q', {
+      paidEnabled: true,
+      remainingLeadBudgetEur: 0.01,
+      runCostCeilingEur: 0.005,
+    });
+    expect(paid.callCount).toBe(1);
+  });
+
   it('cost ceiling 0 + paidEnabled=false: ledger total cost is 0', async () => {
     const ledger = new CostLedger();
     const free = new FakeFreeSerp();

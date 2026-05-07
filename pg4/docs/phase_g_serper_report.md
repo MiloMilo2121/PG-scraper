@@ -129,7 +129,128 @@ NOT accidentally enable paid calls.
 
 ## G.5 — Live paid Serper benchmark
 
-**Status: BLOCKED_BY_MISSING_SERPER_API_KEY**.
+**Status: EXECUTED with critical findings — DISABLED for now.**
+
+Three attempts; the first two surfaced load-bearing bugs that
+required additional fixes shipped in this commit:
+
+### G.5 — Attempt 1 (paidOnly bug)
+
+p90 first attempt ran with `--enable-paid --cost-ceiling-eur 0.003
+--run-cost-ceiling-eur 0.10`. After 15 minutes:
+- 372 paid passes invoked
+- **0 actual Serper calls**
+- bing_html (free, tier 1, success_rate 1.0) satisfied router.search
+  before Serper (tier 2) was reached because paid pass had no way
+  to exclude free providers.
+
+Killed manually. Fix: `RouteOptions.paidOnly` flag + SerpStage paid
+pass uses it.
+
+### G.5 — Attempt 2 (run-cap not enforced)
+
+p90 second attempt with paidOnly fix. After 15:46 minutes:
+- **229 Serper calls = €0.229 spent**
+- Run-cap (€0.10) overshot by 229 % despite being passed via CLI
+- Cause: `--run-cost-ceiling-eur` was threaded through context but
+  never gated at the router. Followup #28 from the original report
+  was the load-bearing missing piece.
+
+Killed manually. **Real money committed: €0.229.** Fix:
+`RouteOptions.runCostCeilingEur` + router filter:
+`ledger.getTotal() + cost > runCostCeilingEur` drops paid providers.
+
+Also discovered: many SERP_PAID matches were directory / registry
+URLs (paginegialle.it, atoka.io, cercacasa.it, etc.) bypassing the
+verify gate. The `SerpDeduplicator` "registry pivot" logic kept
+these around — but pg4 has no pivot stage, so they ended up as
+`official_website`. Fix: directory check at the START of
+`verifyCandidates`, before fetch.
+
+### G.5 — Attempt 3 (final, with all 3 fixes)
+
+```bash
+npm run enrich -- \
+  --input output/p80_provincia_pd.csv \
+  --out output/p90_pd_enriched_serper_010.csv \
+  --enable-paid --cost-ceiling-eur 0.003 --run-cost-ceiling-eur 0.10
+```
+
+| field | value |
+| --- | --- |
+| 437 in → 437 out | ✓ |
+| total cost EUR | **€0.099** ≤ €0.10 ✓ run-cap held |
+| Serper calls | 99 (100th would have exceeded €0.10 → blocked) |
+| 1 ledger summary | ✓ |
+| direct_fetch breaker | CLOSED ✓ |
+| found | 113 (vs p85 53; +60 new, 0 lost) |
+| SERP_PAID matches | 61 |
+
+### G.5 — Precision audit on the 60 new finds
+
+Manual surface scan of the 60 new finds in p90 vs p85:
+
+**~30 likely TPs** (composite brand domains):
+studiozetapadova.it, euganeacase.com, costruzionibordignon.it,
+agenziaimmobiliare2000.it, trifoglioimmobiliare.com,
+immobiliareberto.it, helioscasa.it, immobiliareumberto.it,
+veleimmobiliare.it, pintonello.it, studiolacoccinella.it,
+szaffari.it, coltroimmobiliare.it, finlucati.it,
+immobiliaremarino.it, ilcubosi.it, antonianacase2.it,
+arcuum.eu (×2), zabarella.it, giovannadoriguzzi.it,
+immobiliare-forcellini-nazareth.it, puntoimmobiliare.it,
+intercasaimmobiliare.it, studioimmobiliaresigma.it,
+appartamentiapadova.it, immobiliareanna.padova.it.
+
+**~30 FPs**:
+
+Directory aggregators NOT in the current `DIRECTORIES` blocklist:
+`cercacasa.it ×4`, `atoka.io ×3`, `agentiimmobiliariabilitati.it`,
+`padovamls.it`, `portaleagenzieimmobiliari.it ×2`,
+`infoisinfo.it ×2`, `oikia.it`, `companyreports.it`, `gowork.it`,
+`ioaffitto.it`, `fiaipveneto.it`, `anacipadova.it`,
+`immobiliweb.com`, `reportazienda.it`, `tellows.it`.
+
+Wrong-sector / public-administration / random:
+`treccani.it` (encyclopedia), `bonaldo.com` (furniture),
+`helvetia.com` (insurance), `pickandroll.it` (basketball news),
+`bed-and-breakfast.it` (B&B platform),
+`beniculturali.unipd.it` (university),
+`consorziopadovaovest.it` (public administration),
+`aterpadova.it` (public housing authority),
+`lucabottoniteam.wordpress.com` (random blog).
+
+**SERP_PAID precision floor ≈ 50 %.**
+
+The free pipeline (p85) had a precision floor of ~98 % after Phase
+F.1+F.3 audits. Serper-fed results are MUCH noisier because Google
+indexes a wider set of aggregator/directory pages, and the current
+`DIRECTORIES` set is BL/TV/VR/PD-derived, not Serper-derived.
+
+### G.6 — Decision: DISABLE for now, NEED-MORE-AUDIT
+
+**Disable Serper as a default fallback** until the directory
+blocklist is hardened with the 15+ Serper-specific aggregators
+observed in p90. Free pipeline (p85) is more reliable as-is at
+zero cost.
+
+Total real spend across all attempts: **€0.328** (€0.229 attempt 2
++ €0.099 attempt 3). Money is committed; the lessons are recorded.
+
+### G.7 — Followups
+
+- **#27→#31** Expand `DIRECTORIES` blocklist with the 15+ Serper-
+  specific aggregators observed in p90 (cercacasa.it, atoka.io,
+  agentiimmobiliariabilitati.it, padovamls.it,
+  portaleagenzieimmobiliari.it, infoisinfo.it, oikia.it,
+  companyreports.it, gowork.it, ioaffitto.it, fiaipveneto.it,
+  anacipadova.it, immobiliweb.com, reportazienda.it, tellows.it).
+- **#32** Wrong-sector / public-admin filter — heterogeneous
+  noise from Serper requires more than COMMON_BARE_STEMS. Maybe
+  `BUSINESS_DIRECTORY_DOMAINS` or RDAP-mandatory for paid matches.
+- **#33** Re-run paid bench p91 only after #31 + #32 ship; expect
+  precision to climb from ~50 % to ~85 %+.
+- **#34** Per-host scoping for direct_fetch breaker (carried over).
 
 Both `process.env.SERPER_API_KEY` and `.env` are unset on this
 working IP. Per the user's hard rule:

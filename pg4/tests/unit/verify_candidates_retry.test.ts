@@ -281,6 +281,21 @@ describe('verifyCandidates — Phase D.3 scheduled multi-retry', () => {
     expect(router.fetchCalls()).toBe(3); // weak: 1, strong: 2 (1 + 1 retry)
   });
 
+  it('Phase G hotfix — directory / registry URL is rejected before fetch', async () => {
+    // The pg4 SerpDeduplicator's registry-pivot logic kept paginegialle.it
+    // around for a hypothetical pivot, but pg4 has no pivot stage. Such
+    // URLs must NEVER reach verify let alone become official_website.
+    const router = fakeRouter([{ status: 200, html: goodHtml }]);
+    const verdict = await verifyCandidates(router, ['https://www.paginegialle.it/some-listing'], normalized, { ...lead }, {
+      ...baseOpts,
+      retryDelaysMs: [0],
+    });
+    expect(verdict.matched).toBe(false);
+    expect(verdict.rejectDetail).toBe('directory_or_portal');
+    // Crucially: no fetch happened.
+    expect(router.fetchCalls()).toBe(0);
+  });
+
   it('jitter is applied to each scheduled delay', async () => {
     const slept: number[] = [];
     const router = fakeRouter([

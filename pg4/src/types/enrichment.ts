@@ -50,6 +50,13 @@ export interface PerLeadContext {
    * per-call cost gates as a defence-in-depth.
    */
   paidEnabled?: boolean;
+  /**
+   * Phase G hotfix — run-level cost ceiling threaded from
+   * `RunContext`. SerpStage forwards it to the router so the paid
+   * call is filtered out if `ledger.getTotal() + cost` would exceed
+   * the cap.
+   */
+  runCostCeilingEur?: number;
 }
 
 /**

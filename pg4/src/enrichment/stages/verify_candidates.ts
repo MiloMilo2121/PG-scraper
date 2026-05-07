@@ -2,7 +2,7 @@ import type { Lead } from '../../types/lead';
 import type { NormalizedLead } from '../../types/discovery';
 import type { ProviderRouter } from '../../providers/provider_router';
 import { PreVerifyGate } from '../../discovery/website/preverify_gate';
-import { isParked, isUnderConstruction } from '../../discovery/website/content_filter';
+import { isParked, isUnderConstruction, isDirectoryOrSocial } from '../../discovery/website/content_filter';
 import { RdapValidator } from '../../discovery/website/rdap_validator';
 import type { RdapEvidence } from '../../discovery/website/rdap_validator';
 import { classifyHttpFailure } from '../../types/providers';
@@ -137,6 +137,20 @@ export async function verifyPlannedCandidates(
   let timedOut = false;
   for (const plan of plans) {
     const candidate = plan.url;
+    // Phase G hotfix — directory / portal / registry URLs MUST NEVER
+    // become `official_website`. SerpDeduplicator's "registry pivot"
+    // logic kept these around for hypothetical pivot stages, but pg4
+    // has no pivot stage — registry pages contain the company's
+    // listing (name + city + sector keywords) and superficially
+    // pass PreVerifyGate. p90 first-attempt produced 159 SERP_PAID
+    // matches with paginegialle.it / atoka.io / cercacasa.it /
+    // padovamls.it / unipd.it URLs because of this. Reject early:
+    // never fetch, never measure, never set as official_website.
+    if (isDirectoryOrSocial(candidate)) {
+      lastDetail = `${candidate} directory_or_portal`;
+      lastRejectDetail = 'directory_or_portal';
+      continue;
+    }
     const retryDelaysMs = plan.retryDelaysMs ?? defaultRetryDelays;
     const retryBudgetMs = plan.retryBudgetMs ?? defaultRetryBudget;
     let res = await router.fetch(candidate, { timeoutMs: opts.timeoutMs, meta: opts.meta });

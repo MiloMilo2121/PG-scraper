@@ -50,6 +50,25 @@ export interface RouteOptions {
    * targets ONLY the paid providers.
    */
   includeProviderIds?: ReadonlyArray<string>;
+  /**
+   * Phase G fix — when true, FREE providers (`costPerCallEur === 0`)
+   * are filtered OUT. Used by the SerpStage paid second pass: the
+   * free pass already ran every free provider; the paid pass should
+   * target ONLY paid providers, otherwise the router returns on the
+   * first free provider that produces results (bing_html in PD has
+   * a 1.0 success rate) and Serper never gets called.
+   */
+  paidOnly?: boolean;
+  /**
+   * Phase G hotfix — run-level cost ceiling (EUR). When set, the
+   * router compares `ledger.getTotal() + provider.costPerCallEur`
+   * against this cap and filters paid providers out when the next
+   * call would exceed it. Without this enforcement (the original
+   * `--run-cost-ceiling-eur` was threaded through context but never
+   * gated at the router), p90 first-attempt blew past a €0.10 cap
+   * to €0.229 before being killed manually.
+   */
+  runCostCeilingEur?: number;
 }
 
 /**
@@ -194,6 +213,20 @@ export class ProviderRouter {
         if (p.costPerCallEur === 0) return true;
         if (opts.remainingLeadBudgetEur === undefined) return true;
         return p.costPerCallEur <= opts.remainingLeadBudgetEur;
+      })
+      // Phase G fix — paid-only second-pass mode. Filters out free
+      // providers so the SerpStage paid pass actually reaches the
+      // paid SERP. Without this, the free providers (bing_html etc.)
+      // satisfy the loop first and Serper is never called.
+      .filter((p) => !opts.paidOnly || p.costPerCallEur > 0)
+      // Phase G hotfix — run-level cap enforcement. If the ledger
+      // total + this call's cost would exceed the run cap, drop
+      // the paid provider. This is the cap that was missing in the
+      // p90 first-attempt (spent €0.229 before manual kill).
+      .filter((p) => {
+        if (p.costPerCallEur === 0) return true;
+        if (opts.runCostCeilingEur === undefined) return true;
+        return this.ledger.getTotal() + p.costPerCallEur <= opts.runCostCeilingEur;
       })
       // Phase G — explicit allowlist when caller targets specific ids.
       .filter((p) => !opts.includeProviderIds || opts.includeProviderIds.includes(p.id))

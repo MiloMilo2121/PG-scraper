@@ -68,6 +68,7 @@ export function createPerLeadContext(run: Run): PerLeadContext {
     abort: run.ctx.abort,
     costCeilingEur: run.ctx.costCeilingEur,
     paidEnabled: run.ctx.paidEnabled === true,
+    runCostCeilingEur: run.ctx.runCostCeilingEur,
   };
 }
 

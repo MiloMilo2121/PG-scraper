@@ -130,10 +130,21 @@ export class SerpStage implements Stage {
     start: number,
   ): Promise<StageOutcome | null> {
     const remaining = (ctx.costCeilingEur ?? 0) - ctx.costEur;
-    const paidIds = this.opts.paidProviderIds; // undefined → router picks any paid provider matching paidEnabled
+    const paidIds = this.opts.paidProviderIds; // undefined → router picks any paid provider
+    // Phase G fix — `paidOnly: true` excludes free providers. Without
+    // this, router's tier-ascending loop returns on the first free
+    // provider that produces results (bing_html), so Serper is never
+    // reached. p90 first-attempt ledger showed 372 paid-pass calls
+    // and 0 actual Serper calls because of this.
+    // Phase G hotfix — `runCostCeilingEur` threaded so the router
+    // can enforce the run-level cap. p90 second-attempt blew past
+    // the €0.10 cap (spent €0.229) because the cap was previously
+    // threaded but never gated.
     const paid = await this.router.search(query, {
       paidEnabled: true,
+      paidOnly: true,
       remainingLeadBudgetEur: remaining,
+      runCostCeilingEur: ctx.runCostCeilingEur,
       includeProviderIds: paidIds,
       meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name, pass: 'paid' },
     });
