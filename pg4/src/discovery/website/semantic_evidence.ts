@@ -119,6 +119,10 @@ const COMMON_BARE_STEMS = new Set<string>([
   'sartori',    // p82: "Immobiliare Sartori" (Casalserugo) → sartori.it = Sartori Studio Legale law firm (Trento)
   'colonna',    // p82: "Studio Immobiliare Colonna" (Montegrotto) → colonna.net = Wittmann family personal site (US / Germany)
   'chemello',   // p82: "Immobiliare Chemello" (Sandrigo VI) → chemello.it = Chemello Metalworking (same town, funeral-art metalwork, NOT real estate)
+  // Phase F.3 (p84 PD pre-Serper sanity audit) — see
+  // pg4/docs/phase_f3_pre_serper_sanity_audit.md.
+  'academy',    // p84: "Academy S.r.l." (Rovigo) → academy.it = The British Academy English-language school (Cassino/Sora, Lazio)
+  'giemme',     // p84: "Giemme S.r.l." (Albignasego) → giemme.org = Gi. Emme Macchine Utensili machine tools (same town, different sector — same family pattern as Chemello)
   // generic single-token Italian brand-noise:
   'futuro', 'ambiente', 'qualita', 'prestigio', 'centro', 'punto',
 ]);

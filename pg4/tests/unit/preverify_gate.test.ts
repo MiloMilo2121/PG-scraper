@@ -479,6 +479,31 @@ describe('PreVerifyGate — Phase D audit REJECT cases (must NOT match)', () => 
     expect(r.status).toBe('VERIFIED_SEMANTIC');
   });
 
+  it('Phase F.3 — Academy S.r.l. → academy.it (The British Academy English school, Lazio)', () => {
+    const lead = normalizeLead({
+      company_name: 'Academy S.r.l.',
+      city: 'Rovigo',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://academy.it', htmlPage('Academy', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+    expect(r.detail).toMatch(/common_stem/);
+  });
+
+  it('Phase F.3 — Giemme S.r.l. → giemme.org (Gi. Emme Macchine Utensili, same town different sector)', () => {
+    // Same town as the lead (Albignasego PD), but giemme.org is a
+    // machine-tools company since 1997, not a real estate agency.
+    // Same family pattern as Chemello in F.1: shared
+    // surname/family/town, distinct legal entity, distinct sector.
+    const lead = normalizeLead({
+      company_name: 'Giemme S.r.l.',
+      city: 'Albignasego',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://giemme.org', htmlPage('Giemme', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
   it('Phase E — Cangrande Immobiliare → cangrande.it stays MATCHED (audit-confirmed TP)', () => {
     // Manual WebFetch confirmed cangrande.it IS Cangrande Immobiliare
     // di Francesco Geom. Savino, Verona — same firm, same sector,
