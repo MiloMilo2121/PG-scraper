@@ -112,6 +112,13 @@ const COMMON_BARE_STEMS = new Set<string>([
   'orchidea',    // p81: "Immobiliare Orchidea" (Mestrino) → orchidea.it = Orchidea Milano furniture retail (Corsico)
   'ypsilon',     // p81: "Ypsilon S.r.l." (Albignasego) → ypsilon.net = Ypsilon.Net AG travel tech (PCI / ISO)
   'alessandra',  // p81: "Alessandra S.r.l." (Padova) → alessandra.com = Dr. Tony Alessandra US business consultant
+  // Phase F.1 (p82 PD suspect audit) — manually verified single-token
+  // brand stems matching well-known third-party domains. Per-case
+  // evidence in pg4/docs/phase_f1_pd_suspect_audit.md.
+  'franca',     // p82: "Franca Immobiliare" (Albignasego) → franca.it = Residence Franca tourist residence (Arco TN, Lago di Garda)
+  'sartori',    // p82: "Immobiliare Sartori" (Casalserugo) → sartori.it = Sartori Studio Legale law firm (Trento)
+  'colonna',    // p82: "Studio Immobiliare Colonna" (Montegrotto) → colonna.net = Wittmann family personal site (US / Germany)
+  'chemello',   // p82: "Immobiliare Chemello" (Sandrigo VI) → chemello.it = Chemello Metalworking (same town, funeral-art metalwork, NOT real estate)
   // generic single-token Italian brand-noise:
   'futuro', 'ambiente', 'qualita', 'prestigio', 'centro', 'punto',
 ]);

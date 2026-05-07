@@ -406,6 +406,79 @@ describe('PreVerifyGate — Phase D audit REJECT cases (must NOT match)', () => 
     expect(r.status).toBe('REJECTED');
   });
 
+  it('Phase F.1 — Franca Immobiliare → franca.it (Residence Franca tourist residence Arco TN)', () => {
+    const lead = normalizeLead({
+      company_name: 'Franca Immobiliare',
+      city: 'Albignasego',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://franca.it', htmlPage('Franca', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+    expect(r.detail).toMatch(/common_stem/);
+  });
+
+  it('Phase F.1 — Immobiliare Sartori → sartori.it (Sartori Studio Legale Trento law firm)', () => {
+    const lead = normalizeLead({
+      company_name: 'Immobiliare Sartori',
+      city: 'Casalserugo',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://sartori.it', htmlPage('Sartori', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase F.1 — Studio Immobiliare Colonna → colonna.net (Wittmann family personal site)', () => {
+    const lead = normalizeLead({
+      company_name: 'Studio Immobiliare Colonna',
+      city: 'Montegrotto Terme',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://colonna.net', htmlPage('Colonna', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase F.1 — Immobiliare Chemello → chemello.it (Chemello Metalworking, same town, different business)', () => {
+    // Edge case: same surname AND same town as the lead, but the
+    // chemello.it owner is "Chemello Metalworking Srl" (funeral-art
+    // metalwork). Same family, different legal entity. Treat as FP
+    // because pg4 cannot determine the relationship at zero cost.
+    const lead = normalizeLead({
+      company_name: 'Immobiliare Chemello',
+      city: 'Sandrigo',
+      category: 'agenzie immobiliari',
+    });
+    const r = PreVerifyGate.check('https://chemello.it', htmlPage('Chemello', realEstateBody), lead);
+    expect(r.status).toBe('REJECTED');
+  });
+
+  it('Phase F.1 — La Chiave → lachiave.com stays MATCHED (audit-confirmed TP)', () => {
+    // Manual WebFetch confirmed lachiave.com IS Immobiliare La Chiave
+    // (Padova, Via Torino 11). Real estate agency, same firm, same
+    // city. TP regression pin.
+    const lead = normalizeLead({
+      company_name: 'Immobiliare La Chiave S.r.l.',
+      city: 'Padova',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('La Chiave', `${realEstateBody} Sede a Padova.`);
+    const r = PreVerifyGate.check('https://lachiave.com', html, lead);
+    expect(r.status).toBe('VERIFIED_SEMANTIC');
+  });
+
+  it('Phase F.1 — Phosphoro → phosphoro.com stays MATCHED (audit-confirmed TP)', () => {
+    // Manual WebFetch confirmed phosphoro.com IS Phosphoro rental
+    // platform headquartered in Padova ("Affitti sicuri di stanze,
+    // appartamenti..."). Same firm, same city. TP regression pin.
+    const lead = normalizeLead({
+      company_name: 'Phosphoro S.r.l.',
+      city: 'Padova',
+      category: 'agenzie immobiliari',
+    });
+    const html = htmlPage('Phosphoro', `${realEstateBody} Sede a Padova. Phosphoro affitti sicuri.`);
+    const r = PreVerifyGate.check('https://phosphoro.com', html, lead);
+    expect(r.status).toBe('VERIFIED_SEMANTIC');
+  });
+
   it('Phase E — Cangrande Immobiliare → cangrande.it stays MATCHED (audit-confirmed TP)', () => {
     // Manual WebFetch confirmed cangrande.it IS Cangrande Immobiliare
     // di Francesco Geom. Savino, Verona — same firm, same sector,
