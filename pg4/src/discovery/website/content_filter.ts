@@ -27,6 +27,12 @@ const DIRECTORIES = new Set([
   // Italian aggregators / directory portals
   'virgilio.it', 'aziende.virgilio.it', 'kompass.com', 'europages.com',
   'misterimprese.it', 'prontopro.it', 'prontoimprese.it', 'habitissimo.it',
+  // Phase E.1 (p72 VR audit) — directory portals that bypassed the
+  // SerpDeduplicator and got accepted as official_website. Same family
+  // as inelenco.com from earlier audits. Each manually verified to
+  // serve "<lead>/azienda/..." or "<lead>/informazioni-dettagliate/..."
+  // listing URLs, not the firm's own site.
+  'coobiz.it', 'italialei.it', 'inelenco.com',
 
   // Job boards
   'infojobs.it', 'indeed.com', 'glassdoor.it', 'trovalavoro.it',

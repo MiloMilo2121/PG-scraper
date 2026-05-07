@@ -142,3 +142,81 @@ work — different layer, different fix.
     long tail that free-only cannot reach.
 15. **SERP directory denylist extension** for `coobiz.it`,
     `italialei.it`, etc. (separate from gate-level COMMON_BARE_STEMS).
+    → **Implemented in Phase E.1** (see below).
+
+## Phase E.1 — directory leak fix
+
+Two p72-found URLs were directory-portal listings rather than the
+firm's real site:
+
+- `Giriolo Barbara → www.coobiz.it/azienda/badia-polesine-...`
+- `Lanza Luigi → italialei.it/informazioni-dettagliate/...`
+
+These bypassed the existing directory blocklist used by
+`InputWebsiteCandidate`, `SerpDeduplicator`, and `verify_candidates`.
+Same architectural family as the historical `inelenco.com` issue
+that Phase D had observed but not pinned.
+
+### Surgical fix
+
+Add three hosts to the `DIRECTORIES` set in
+`src/discovery/website/content_filter.ts`:
+- `coobiz.it`
+- `italialei.it`
+- `inelenco.com` (defensive — was observed but never pinned)
+
+Each entry blocks the host AND any subdomain via the existing
+`endsWith(`.${d}`)` rule. This is the same single-source-of-truth
+denylist used by every gate-adjacent layer.
+
+### Tests
+
+3 new pinned URLs in `tests/unit/legacy_guardrails.test.ts §2`:
+- the actual `coobiz.it/azienda/...` URL from p72
+- the actual `italialei.it/informazioni-dettagliate/...` URL
+- the historical `inelenco.com/?dir=vedi&id=...` URL
+
+343 unit tests pass / 1 skipped, typecheck 0 errors.
+
+### p73 results (Phase E.1)
+
+| run | found | confirmed FP | direct_fetch calls | ledger summaries |
+| --- | --- | --- | --- | --- |
+| p71 | 57 | 5 | 353 | 1 ✓ |
+| p72 | 78 | 0 of 5 audited; 2 directory leaks | 465 | 1 ✓ |
+| **p73** | **66** | **0** (directories also rejected) | 360 | 1 ✓ |
+
+p73 vs p72 delta:
+
+- **−2 expected losses**: `coobiz.it` and `italialei.it` (the
+  directory leaks fixed by E.1).
+- **−17 network-noise losses**: pre-existing TPs that p72 had found
+  but p73 missed because the candidate fetch flapped this run
+  (`Chinaglia`, `Miotto`, `Immobiliare Albertini`, `Bardolino`,
+  `Facchinetti`, `Vivere il Garda`, `Network Immobiliare`,
+  `Garda Estates`, `Amministrazioni Castallo`, `Abe-Mark`,
+  `Edil Benaco`, `Reboma`, `Mondo Immobiliare`,
+  `Intermediazioni Immobiliari`, `Domus Immobiliare`, `BL Immobiliare`,
+  `First House Bovolone`).
+- **+7 gained**: `Affitti Verona`, `Castle & Co.`, `Boninsegna`,
+  `Castel D'Azzano`, `Mincio Relais`, `Immobilveneto`,
+  `First House Legnago` — pre-existing TPs that surfaced this run.
+
+Net **p71 → p73 = +9** (57 → 66) at strictly higher precision floor.
+The 17 network-noise dropouts vs p72 are the same family as
+BL p52 → p53 (the `pianon.eu` flap class) — D.3 retry recovers
+single-blip but consecutive flap is hit-or-miss.
+
+### Phase E.1 acceptance
+
+| criterion | target | result |
+| --- | --- | --- |
+| 433 in → 433 out | yes | ✓ |
+| cost 0 | yes | ✓ |
+| 1 ledger summary | yes | ✓ |
+| coobiz.it rejected | yes | ✓ |
+| italialei.it rejected | yes | ✓ |
+| inelenco.com rejected (defensive) | yes | ✓ |
+| cangrande.it preserved (TP) | yes | ✓ |
+| Phase E denylist preserved (palace/domino/camelot/liberta/alfaomega) | yes | ✓ |
+| typecheck + tests green | yes | 343 pass / 1 skipped |

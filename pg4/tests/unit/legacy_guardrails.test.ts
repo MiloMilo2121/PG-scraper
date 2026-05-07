@@ -28,6 +28,10 @@ describe('§2 — dirty hosts NEVER count as official_website', () => {
     'https://feltre1.tecnocasa.it/contatti',
     'https://www.bing.com/search?q=foo',
     'https://www.google.com/maps/place/foo',
+    // Phase E.1 — directory portals that surfaced in p72 VR run
+    'https://www.coobiz.it/azienda/badia-polesine-agenzia-intermediazione/co6341031',
+    'https://italialei.it/informazioni-dettagliate/33013116/lanza-luigi/',
+    'https://inelenco.com/?dir=vedi&id=3397091-privati',
   ];
   for (const s of samples) {
     it(`blocks ${s}`, () => {
