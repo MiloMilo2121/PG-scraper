@@ -86,6 +86,16 @@ export interface RouteOptions {
  */
 export class ProviderRouter {
   private readonly breaker: CircuitBreaker;
+  /**
+   * Phase G.1 — atomic budget reservation counter. Concurrent paid
+   * calls must not both pass the run-cap filter when only one would
+   * fit, so we reserve cost at filter time and release after the
+   * call settles. JS is single-threaded, so increment + check on
+   * the sync filter path is genuinely atomic; the only race window
+   * is multiple awaits overlapping AFTER the filter, which the
+   * counter closes.
+   */
+  private reservedEur = 0;
 
   constructor(
     private readonly serps: SerpProvider[],
@@ -100,6 +110,17 @@ export class ProviderRouter {
   async search(query: string, opts: RouteOptions = {}) {
     const candidates = this.filter(this.serps, opts);
     for (const p of candidates) {
+      // Phase G.1 — atomic budget reservation. The sync filter check
+      // already passed, but a concurrent caller may have reserved
+      // since. Re-check sync right before reserving so we never
+      // overshoot under concurrency.
+      if (p.costPerCallEur > 0 && opts.runCostCeilingEur !== undefined) {
+        if (this.ledger.getTotal() + this.reservedEur + p.costPerCallEur > opts.runCostCeilingEur) {
+          continue; // budget no longer fits — skip this provider
+        }
+      }
+      const reserved = p.costPerCallEur > 0 && opts.runCostCeilingEur !== undefined;
+      if (reserved) this.reservedEur += p.costPerCallEur;
       try {
         const results = await p.search(query, { signal: opts.signal });
         // Empty result is NOT a failure — pg3 audit found 16K+ SERP_EMPTY
@@ -119,6 +140,8 @@ export class ProviderRouter {
         this.ledger.record(p.id, p.family, p.costPerCallEur, false, { kind, meta: opts.meta });
         this.breaker.recordFailure(p.id, kind);
         logger.warn({ provider: p.id, kind, err: (err as Error).message }, '[Router] serp provider failed');
+      } finally {
+        if (reserved) this.reservedEur -= p.costPerCallEur;
       }
     }
     return { provider: 'none', results: [] };
@@ -129,6 +152,11 @@ export class ProviderRouter {
     const bypassBreaker = opts.bypassBreakerRecord === true;
     let lastError: string | undefined;
     for (const p of candidates) {
+      if (p.costPerCallEur > 0 && opts.runCostCeilingEur !== undefined) {
+        if (this.ledger.getTotal() + this.reservedEur + p.costPerCallEur > opts.runCostCeilingEur) continue;
+      }
+      const reserved = p.costPerCallEur > 0 && opts.runCostCeilingEur !== undefined;
+      if (reserved) this.reservedEur += p.costPerCallEur;
       try {
         const res = await p.fetch(url, { timeoutMs: opts.timeoutMs, signal: opts.signal });
         const ok = res.status >= 200 && res.status < 400 && !!res.html;
@@ -152,6 +180,8 @@ export class ProviderRouter {
         this.ledger.record(p.id, p.family, p.costPerCallEur, false, { kind, meta: opts.meta });
         if (!bypassBreaker) this.breaker.recordFailure(p.id, kind);
         lastError = (err as Error).message;
+      } finally {
+        if (reserved) this.reservedEur -= p.costPerCallEur;
       }
     }
     return { provider: 'none', status: 0, html: undefined, error: lastError, duration_ms: 0, cost_eur: 0 };
@@ -160,6 +190,11 @@ export class ProviderRouter {
   async complete(req: Parameters<LLMProvider['complete']>[0], opts: RouteOptions = {}) {
     const candidates = this.filter(this.llms, opts);
     for (const p of candidates) {
+      if (p.costPerCallEur > 0 && opts.runCostCeilingEur !== undefined) {
+        if (this.ledger.getTotal() + this.reservedEur + p.costPerCallEur > opts.runCostCeilingEur) continue;
+      }
+      const reserved = p.costPerCallEur > 0 && opts.runCostCeilingEur !== undefined;
+      if (reserved) this.reservedEur += p.costPerCallEur;
       try {
         const res = await p.complete(req, { signal: opts.signal });
         this.ledger.record(p.id, p.family, res.cost_eur || p.costPerCallEur, true, { kind: 'success', meta: opts.meta });
@@ -170,6 +205,8 @@ export class ProviderRouter {
         this.ledger.record(p.id, p.family, p.costPerCallEur, false, { kind, meta: opts.meta });
         this.breaker.recordFailure(p.id, kind);
         logger.warn({ provider: p.id, kind, err: (err as Error).message }, '[Router] llm provider failed');
+      } finally {
+        if (reserved) this.reservedEur -= p.costPerCallEur;
       }
     }
     return null;
@@ -220,13 +257,15 @@ export class ProviderRouter {
       // satisfy the loop first and Serper is never called.
       .filter((p) => !opts.paidOnly || p.costPerCallEur > 0)
       // Phase G hotfix — run-level cap enforcement. If the ledger
-      // total + this call's cost would exceed the run cap, drop
-      // the paid provider. This is the cap that was missing in the
-      // p90 first-attempt (spent €0.229 before manual kill).
+      // total + reserved + this call's cost would exceed the cap,
+      // drop the paid provider. Includes `reservedEur` so concurrent
+      // pipelines can't both pass when only one would fit.
+      // p90 first-attempt blew past a €0.10 cap to €0.229; this
+      // closes the race window.
       .filter((p) => {
         if (p.costPerCallEur === 0) return true;
         if (opts.runCostCeilingEur === undefined) return true;
-        return this.ledger.getTotal() + p.costPerCallEur <= opts.runCostCeilingEur;
+        return this.ledger.getTotal() + this.reservedEur + p.costPerCallEur <= opts.runCostCeilingEur;
       })
       // Phase G — explicit allowlist when caller targets specific ids.
       .filter((p) => !opts.includeProviderIds || opts.includeProviderIds.includes(p.id))

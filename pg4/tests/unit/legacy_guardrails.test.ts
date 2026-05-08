@@ -32,6 +32,31 @@ describe('§2 — dirty hosts NEVER count as official_website', () => {
     'https://www.coobiz.it/azienda/badia-polesine-agenzia-intermediazione/co6341031',
     'https://italialei.it/informazioni-dettagliate/33013116/lanza-luigi/',
     'https://inelenco.com/?dir=vedi&id=3397091-privati',
+    // Phase G.1 — Serper-observed directory aggregators in p90 PD run
+    'https://cercacasa.it/dettaglio-agenzia/foo',
+    'https://atoka.io/public/it/azienda/foo',
+    'https://agentiimmobiliariabilitati.it/agenti/veneto/padova/foo',
+    'https://www.padovamls.it/it/agenti/foo',
+    'https://www.portaleagenzieimmobiliari.it/annunci-agenzia-immobiliare/123-foo',
+    'https://infoisinfo.it/carta/foo',
+    'https://www.oikia.it/agenzie-immobiliari/foo',
+    'https://www.companyreports.it/foo',
+    'https://gowork.it/foo-padova',
+    'https://www.ioaffitto.it/dettaglio_agenzia/foo.html',
+    'https://www.fiaipveneto.it/associati/foo/',
+    'https://www.anacipadova.it/elenco-amministratori-anaci-a-padova/',
+    'https://www.immobiliweb.com/Scheda-Agenzia_foo_padova.html',
+    'https://reportazienda.it/aziende/PD/foo',
+    'https://www.tellows.it/num/049650628',
+    // Phase G.1 — wrong-sector / public-admin observed in p90
+    'https://www.treccani.it/enciclopedia/italia/',
+    'https://www.beniculturali.unipd.it/foo',
+    'https://www.consorziopadovaovest.it/foo',
+    'https://www.helvetia.com/it/web/it/chi-siamo.html',
+    'https://www.bonaldo.com/',
+    'https://www.bed-and-breakfast.it/it/padova',
+    'https://www.pickandroll.it/foo',
+    'https://lucabottoniteam.wordpress.com/',
   ];
   for (const s of samples) {
     it(`blocks ${s}`, () => {

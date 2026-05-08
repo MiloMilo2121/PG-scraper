@@ -245,12 +245,115 @@ Total real spend across all attempts: **€0.328** (€0.229 attempt 2
   portaleagenzieimmobiliari.it, infoisinfo.it, oikia.it,
   companyreports.it, gowork.it, ioaffitto.it, fiaipveneto.it,
   anacipadova.it, immobiliweb.com, reportazienda.it, tellows.it).
+  → **shipped in G.1**.
 - **#32** Wrong-sector / public-admin filter — heterogeneous
-  noise from Serper requires more than COMMON_BARE_STEMS. Maybe
-  `BUSINESS_DIRECTORY_DOMAINS` or RDAP-mandatory for paid matches.
+  noise from Serper requires more than COMMON_BARE_STEMS.
+  → **partially shipped in G.1** as a denylist of observed hosts
+  (treccani.it, unipd.it, helvetia.com, bonaldo.com,
+  consorziopadovaovest.it, pickandroll.it, bed-and-breakfast.it,
+  wordpress.com). Heterogeneous tail still a concern — full
+  RDAP-mandatory-for-paid is followup.
 - **#33** Re-run paid bench p91 only after #31 + #32 ship; expect
   precision to climb from ~50 % to ~85 %+.
+  → **NOT yet executed**. Code is now ready (G.1) but no live
+  paid run was done in this commit per user instruction.
 - **#34** Per-host scoping for direct_fetch breaker (carried over).
+
+---
+
+## G.1 — Code review hardening (no paid run executed)
+
+External code review of the G.5 attempt-3 results surfaced four
+load-bearing issues. All four are fixed in this commit. **No paid
+run executed in G.1** per user instruction; p91 deferred until the
+operator explicitly says "Go".
+
+### Fix #1 — DIRECTORIES + wrong-sector blocklist expansion
+
+`src/discovery/website/content_filter.ts` — added 22 hosts seen as
+FPs in p90:
+
+- 15 directory aggregators: cercacasa.it, atoka.io,
+  agentiimmobiliariabilitati.it, padovamls.it,
+  portaleagenzieimmobiliari.it, infoisinfo.it, oikia.it,
+  companyreports.it, gowork.it, ioaffitto.it, fiaipveneto.it,
+  anacipadova.it, immobiliweb.com, reportazienda.it, tellows.it,
+  bachecacase.com, risorseimmobiliari.it, realadvisor.it,
+  distrettodelbacchiglione.it, mia-azienda.com, visurissima.it,
+  reteimprese.it.
+- 9 wrong-sector / public-admin: treccani.it, unipd.it,
+  consorziopadovaovest.it, pickandroll.it, bed-and-breakfast.it,
+  helvetia.com, bonaldo.com, wordpress.com, pd.camcom.it,
+  vi.camcom.it.
+
+Existing `endsWith(`.${host}`)` rule covers subdomains
+automatically. 24 new pinned URLs in
+`tests/unit/legacy_guardrails.test.ts §2`.
+
+### Fix #2 — Serper network/5xx classification
+
+`src/providers/serp/serper.ts` — previously, network errors and
+5xx upstream both returned `[]`. The router treated `[]` as an
+empty success and the breaker never saw the failure. Fix:
+
+- network errors → `throw err` → router classifies as `transport`
+- 5xx upstream → `throw new Error('serper upstream <code>')` →
+  router classifies as `transport`
+- 4xx other → `throw new Error('serper http <code>')` → `other`
+- 401/403 → `ProviderBlockError` (unchanged)
+- 429 → `ProviderBlockError` (unchanged)
+- 200 with empty `organic` → `[]` (legitimate empty success)
+- JSON parse error → `throw new Error('serper json parse: ...')`
+
+### Fix #3 — providers_used must include paid SERP
+
+`src/enrichment/stages/serp_stage.ts` — when the paid pass
+matches, `lead.providers_used` was reporting only `direct_fetch`
+(the HTTP fetcher used to verify), not `serper`. The paid SERP
+that produced the candidate was invisible to the cost-attribution
+chain. Fix: `ctx.providersUsed.add(paid.provider)` on a
+SERP_PAID match.
+
+### Fix #4 — atomic run-cost reservation (concurrency-safe)
+
+`src/providers/provider_router.ts` — the run-cap filter was
+`ledger.getTotal() + cost ≤ cap`. Under concurrency (default 4
+leads in flight), two filter calls both saw `total = €0.099` and
+both passed when only one would fit. Race window confirmed in a
+unit test.
+
+Fix: a `reservedEur` counter on the router. The filter now reads
+`ledger.getTotal() + reservedEur + cost`. Each await-bound paid
+attempt reserves before the await and releases in `finally`. A
+SECOND sync re-check before reservation closes the inter-await
+race window.
+
+| code path | before | after |
+| --- | --- | --- |
+| filter | ledger.getTotal() + cost ≤ cap | ledger.getTotal() + reserved + cost ≤ cap |
+| inside for-loop | n/a | re-check + reserve + try/finally release |
+
+Unit test: 2 concurrent `router.search` calls with cap=€0.001 and
+slow paid provider — exactly 1 paid call fires, ledger ends at
+€0.001 (was 2 calls / €0.002 before fix).
+
+### Test count after G.1
+
+- 402 unit tests pass / 1 skipped, typecheck 0 errors
+- new pinned cases:
+  - 24 directory / wrong-sector URLs in legacy_guardrails
+  - SerperProvider parser handles null/undefined (defence)
+  - concurrent paid-cap test (race regression pinned)
+
+### G.1 acceptance status
+
+- Code shipped, tests green ✓
+- Live regression still pending (a `--cost-ceiling-eur 0` run on
+  PD to prove paid calls remain 0 with all G.1 changes). Will be
+  added to this report when the run completes.
+- p91 paid bench DEFERRED — only after explicit operator go-ahead.
+- Total real spend so far across G.5 + G.1: **€0.328** (no
+  additional paid calls in G.1).
 
 ### G.8 — Next paid run contract
 

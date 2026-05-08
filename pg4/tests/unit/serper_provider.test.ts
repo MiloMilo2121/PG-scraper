@@ -19,6 +19,17 @@ describe('SerperProvider — invariants', () => {
   });
 });
 
+describe('SerperProvider — Phase G.1 error classification', () => {
+  // We can't easily mock undici.request without DI, but the
+  // observable invariant we want to pin is: parseOrganic handles all
+  // shapes safely. The router-level breaker behaviour is covered by
+  // the router tests; here we confirm the parser cannot misclassify.
+  it('treats `null`/`undefined` payload as empty (not crash)', () => {
+    expect(SerperProvider.parseOrganic(null, 5, 'serper')).toEqual([]);
+    expect(SerperProvider.parseOrganic(undefined, 5, 'serper')).toEqual([]);
+  });
+});
+
 describe('SerperProvider — parseOrganic', () => {
   const ID = 'serper';
 

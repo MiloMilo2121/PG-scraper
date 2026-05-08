@@ -33,6 +33,43 @@ const DIRECTORIES = new Set([
   // serve "<lead>/azienda/..." or "<lead>/informazioni-dettagliate/..."
   // listing URLs, not the firm's own site.
   'coobiz.it', 'italialei.it', 'inelenco.com',
+  // Phase G.1 (p90 PD Serper audit) — paid SERP returned dozens of
+  // listing-aggregator hosts that BL/TV/VR/PD free providers never
+  // surfaced. Each one observed in p90 SERP_PAID matches as a
+  // listing/profile page rather than the firm's own site.
+  'cercacasa.it',                  // agency-listing portal
+  'atoka.io',                       // company-data aggregator
+  'agentiimmobiliariabilitati.it',  // FIAIP-adjacent listing
+  'padovamls.it',                  // local MLS aggregator
+  'portaleagenzieimmobiliari.it',  // listing portal
+  'infoisinfo.it',                 // generic business directory
+  'oikia.it',                      // real-estate directory
+  'companyreports.it',             // company-data aggregator
+  'gowork.it',                     // job/business directory
+  'ioaffitto.it',                  // rental listings portal
+  'fiaipveneto.it',                // professional association directory
+  'anacipadova.it',                // condominium-admins directory
+  'immobiliweb.com',               // agency-listing portal
+  'reportazienda.it',              // company-data aggregator
+  'tellows.it',                    // phone reverse-lookup
+  'bachecacase.com',               // listing aggregator
+  'risorseimmobiliari.it',         // listing aggregator
+  'realadvisor.it',                // listing aggregator
+  'distrettodelbacchiglione.it',   // local territory portal
+  'mia-azienda.com', 'visurissima.it', 'reteimprese.it',
+  // Phase G.1 — Italian wrong-sector / public-admin hosts seen as
+  // p90 FPs because they happen to mention the company name in some
+  // page (e.g. employee bio, condo admin list, encyclopedia entry).
+  // These are never a real-estate-agency website.
+  'treccani.it',                   // encyclopedia
+  'unipd.it',                      // university (incl. subdomains)
+  'consorziopadovaovest.it',       // public consortium
+  'pickandroll.it',                // basketball news
+  'bed-and-breakfast.it',          // B&B portal
+  'helvetia.com',                  // insurance multinational
+  'bonaldo.com',                   // furniture brand
+  'wordpress.com',                 // generic blog hosting
+  'pd.camcom.it', 'vi.camcom.it',  // chambers of commerce
 
   // Job boards
   'infojobs.it', 'indeed.com', 'glassdoor.it', 'trovalavoro.it',

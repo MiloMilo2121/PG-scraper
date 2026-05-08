@@ -142,6 +142,36 @@ describe('ProviderRouter — Phase G paid gate', () => {
     expect(paid.callCount).toBe(1);
   });
 
+  it('Phase G.1 — concurrent paid calls cannot both pass when only one fits the cap', async () => {
+    // Two pipelines fire router.search at the same time. The cap is
+    // €0.001 (one call's worth). Without atomic reservation both
+    // would pass the filter (ledger.getTotal()=0 at filter time)
+    // and both would spend → total = €0.002 > cap. With reservation,
+    // only one wins; the other sees `ledger.getTotal() + reserved`
+    // already at €0.001 and is filtered out.
+    const ledger = new CostLedger();
+    const empty = new FakeFreeSerp();
+    empty.search = async () => [];
+    // Slow paid provider — 50 ms per call. Long enough for both
+    // pipelines to enter the await before either completes.
+    const slowPaid = new FakePaidSerp();
+    const origSearch = slowPaid.search.bind(slowPaid);
+    slowPaid.search = async () => {
+      await new Promise<void>((r) => setTimeout(r, 50));
+      return origSearch();
+    };
+    const router = new ProviderRouter([empty, slowPaid], [], [], ledger);
+    slowPaid.callCount = 0;
+    const [r1, r2] = await Promise.all([
+      router.search('q1', { paidEnabled: true, remainingLeadBudgetEur: 1, runCostCeilingEur: 0.001 }),
+      router.search('q2', { paidEnabled: true, remainingLeadBudgetEur: 1, runCostCeilingEur: 0.001 }),
+    ]);
+    void r1; void r2;
+    // Exactly one paid call should have fired, not two.
+    expect(slowPaid.callCount).toBe(1);
+    expect(ledger.getTotal()).toBeCloseTo(0.001, 6);
+  });
+
   it('cost ceiling 0 + paidEnabled=false: ledger total cost is 0', async () => {
     const ledger = new CostLedger();
     const free = new FakeFreeSerp();

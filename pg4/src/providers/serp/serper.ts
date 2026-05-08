@@ -58,9 +58,11 @@ export class SerperProvider implements SerpProvider {
         },
         body: JSON.stringify({ q: query, gl: 'it', hl: 'it', num: limit }),
       });
-    } catch {
-      // Network / abort — return empty, router classifies as transport.
-      return [];
+    } catch (err) {
+      // Phase G.1 — re-throw network errors so the router classifies
+      // them as transport / timeout and the breaker sees them.
+      // Returning [] would have been silently treated as `empty`.
+      throw err;
     }
 
     // 401/403 are config errors — auth invalid. Don't loop. Throw a
@@ -75,19 +77,32 @@ export class SerperProvider implements SerpProvider {
       await res.body.dump();
       throw new ProviderBlockError(this.id, 'serper rate limit (429)');
     }
-    // 5xx / network — empty result, router records non-success.
+    // Phase G.1 — 5xx upstream is a real failure, NOT empty. Throw an
+    // Error whose message starts with the status so `classifyThrown`
+    // routes it to `transport`, the breaker sees it, and the ledger
+    // does not silently mark it as `empty success`.
+    if (res.statusCode >= 500) {
+      await res.body.dump();
+      throw new Error(`serper upstream ${res.statusCode}`);
+    }
+    // Other 4xx — caller-side issue (malformed query etc.). Surface
+    // as `other` failure.
     if (res.statusCode < 200 || res.statusCode >= 400) {
       await res.body.dump();
-      return [];
+      throw new Error(`serper http ${res.statusCode}`);
     }
 
     let json: unknown;
     try {
       json = await res.body.json();
-    } catch {
-      return [];
+    } catch (err) {
+      // Body was 200 but unparseable — surface as transport.
+      throw new Error(`serper json parse: ${(err as Error).message}`);
     }
 
+    // Empty `organic` on a 200 IS a legitimate empty (zero matches),
+    // not a failure. Router will record `kind: empty`, breaker
+    // recordsSuccess.
     return SerperProvider.parseOrganic(json, limit, this.id);
   }
 

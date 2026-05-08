@@ -159,6 +159,11 @@ export class SerpStage implements Stage {
     if (verdict.matched) {
       lead.website_discovery_method = DiscoveryMethod.SERP_PAID;
       lead.website_confidence = verdict.confidence;
+      // Phase G.1 — providers_used must record the PAID SERP that
+      // produced the candidate, not just the HTTP fetcher used to
+      // verify it. Without this every SERP_PAID lead reports only
+      // `direct_fetch` and the cost-attribution chain breaks.
+      ctx.providersUsed.add(paid.provider);
       return {
         stage: this.name,
         status: 'success',
