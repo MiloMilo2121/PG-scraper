@@ -112,6 +112,15 @@ export interface LiveModeInput {
   maxPages?: number;
   interDelayMs?: number;
   runMaps?: boolean;
+  /**
+   * R5 — Maps coverage mode. `'default'` runs ONE query per comune
+   * (today's behaviour); `'full'` expands to a curated list of
+   * sector-keyword variants per category and fires each as a separate
+   * Maps scroll session. The Deduplicator collapses cross-query
+   * overlap. Unknown categories silently fall back to default.
+   * Defaults to `'default'`.
+   */
+  mapsCoverage?: import('./sources/maps_coverage').CoverageMode;
   headless?: boolean;
   checkpointPath?: string;
   restartEvery?: number;
@@ -210,19 +219,33 @@ export async function runLiveMode(a: LiveModeInput): Promise<void> {
       await factory.saveSessionState();
     }
     // Stage 2 (optional): Maps per comune.
+    // R5 — when `mapsCoverage='full'`, expand the category to multiple
+    // sector-keyword variants and run each as its own scroll session.
+    // The Deduplicator collapses cross-variant overlap.
     if (a.runMaps) {
+      const { expandMapsQueryVariants, hasFullCoverageVariants } = await import('./sources/maps_coverage');
+      const coverage = a.mapsCoverage ?? 'default';
+      const queryVariants = expandMapsQueryVariants(a.category, coverage);
+      if (coverage === 'full' && !hasFullCoverageVariants(a.category)) {
+        logger.warn(
+          { category: a.category, coverage },
+          '[scrape] --coverage=full requested but no variants curated for this category; falling back to default single query',
+        );
+      }
       for (const comune of comuni) {
-        const r = await scrapeMapsLocation(factory, {
-          category: a.category,
-          location: comune,
-          checkpoint,
-        });
-        totalCards += r.total_cards;
-        dropped += r.dropped;
-        if (r.cap_likely) comuniWithCapLikely += 1;
-        parsedLeadsBeforeDedupe += r.results.length;
-        ingestBatch(allLeads, dedup, r.results);
-        await factory.saveSessionState();
+        for (const queryCategory of queryVariants) {
+          const r = await scrapeMapsLocation(factory, {
+            category: queryCategory,
+            location: comune,
+            checkpoint,
+          });
+          totalCards += r.total_cards;
+          dropped += r.dropped;
+          if (r.cap_likely) comuniWithCapLikely += 1;
+          parsedLeadsBeforeDedupe += r.results.length;
+          ingestBatch(allLeads, dedup, r.results);
+          await factory.saveSessionState();
+        }
       }
     }
   } finally {

@@ -42,6 +42,18 @@ async function main() {
   if (!category) {
     throw new Error('Live mode requires --category. Pass --fixture <path> for offline mode.');
   }
+  // R5 — `--coverage` flag. Accept 'default' (single query) or 'full'
+  // (sector-keyword variants per comune). Anything else is rejected
+  // so a typo doesn't silently fall back to default and surprise
+  // the operator with under-coverage.
+  const coverageRaw = optString(args, 'coverage');
+  let mapsCoverage: 'default' | 'full' | undefined;
+  if (coverageRaw !== undefined) {
+    if (coverageRaw !== 'default' && coverageRaw !== 'full') {
+      throw new Error(`--coverage must be "default" or "full", got "${coverageRaw}"`);
+    }
+    mapsCoverage = coverageRaw;
+  }
   await runLiveMode({
     out,
     category,
@@ -51,6 +63,7 @@ async function main() {
     maxPages: parseIntOrUndefined(optString(args, 'max-pages')),
     interDelayMs: parseIntOrUndefined(optString(args, 'inter-delay-ms')),
     runMaps: !!args.flags['maps'],
+    mapsCoverage,
     headless: args.flags['headless'] !== 'false',
     checkpointPath: optString(args, 'checkpoint'),
     restartEvery: parseIntOrUndefined(optString(args, 'restart-every')),
