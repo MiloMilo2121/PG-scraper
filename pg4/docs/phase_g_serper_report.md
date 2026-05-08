@@ -391,3 +391,32 @@ Decision target for p91:
 - **DISABLE** if paid precision stays below 85 %.
 - **NEED-MORE-AUDIT** if PD alone is ambiguous and a second province
   is needed.
+
+---
+
+## G.1 — Live safety regression (FINAL)
+
+```bash
+npm run enrich -- \
+  --input output/p80_provincia_pd.csv \
+  --out /tmp/p_safety_regression.csv \
+  --cost-ceiling-eur 0.00
+```
+
+Run completed in 21:43 min. Final:
+
+| field | value |
+| --- | --- |
+| 437 in → 437 out | ✓ |
+| cost EUR | **0.000000** ✓ |
+| Serper calls | **0** ✓ |
+| ledger summaries | 1 ✓ |
+| found | 52 (vs p85 53; ±1 noise variance) |
+| providers used | dns_mx, crtsh, direct_fetch, ddg_lite, bing_html — Serper absent |
+
+**Default-deny holds with all G.1 changes in place.** Free-pipeline
+found count (52) is within ±1 of p85's 53 and p89's 52. The 24 new
+DIRECTORIES entries did NOT regress any free-pipeline TPs — none of
+the new entries was previously surfacing as a legitimate result.
+
+G.1 acceptance: ALL ✓.
