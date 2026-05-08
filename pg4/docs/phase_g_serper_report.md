@@ -270,10 +270,10 @@ operator explicitly says "Go".
 
 ### Fix #1 — DIRECTORIES + wrong-sector blocklist expansion
 
-`src/discovery/website/content_filter.ts` — added 22 hosts seen as
+`src/discovery/website/content_filter.ts` — added 32 hosts seen as
 FPs in p90:
 
-- 15 directory aggregators: cercacasa.it, atoka.io,
+- 22 directory aggregators: cercacasa.it, atoka.io,
   agentiimmobiliariabilitati.it, padovamls.it,
   portaleagenzieimmobiliari.it, infoisinfo.it, oikia.it,
   companyreports.it, gowork.it, ioaffitto.it, fiaipveneto.it,
@@ -281,7 +281,7 @@ FPs in p90:
   bachecacase.com, risorseimmobiliari.it, realadvisor.it,
   distrettodelbacchiglione.it, mia-azienda.com, visurissima.it,
   reteimprese.it.
-- 9 wrong-sector / public-admin: treccani.it, unipd.it,
+- 10 wrong-sector / public-admin: treccani.it, unipd.it,
   consorziopadovaovest.it, pickandroll.it, bed-and-breakfast.it,
   helvetia.com, bonaldo.com, wordpress.com, pd.camcom.it,
   vi.camcom.it.
@@ -348,20 +348,22 @@ slow paid provider — exactly 1 paid call fires, ledger ends at
 ### G.1 acceptance status
 
 - Code shipped, tests green ✓
-- Live regression still pending (a `--cost-ceiling-eur 0` run on
-  PD to prove paid calls remain 0 with all G.1 changes). Will be
-  added to this report when the run completes.
+- Live safety regression complete: `--cost-ceiling-eur 0` on PD
+  produced 437 / 437 rows, cost €0, Serper calls 0, found 52.
 - p91 paid bench DEFERRED — only after explicit operator go-ahead.
 - Total real spend so far across G.5 + G.1: **€0.328** (no
   additional paid calls in G.1).
 
 ### G.8 — Next paid run contract
 
-Do **not** run another Serper benchmark until #31 and #32 are shipped.
-The p90 result proved that the paid integration is safe from a cost
-perspective, but not yet reliable enough from a precision perspective.
+The p90 result proved that the paid integration was safe from a cost
+perspective but not reliable enough from a precision perspective. G.1
+shipped the Serper-specific directory and wrong-sector filters, plus
+the concurrency-safe run-cap reservation. p91 is therefore technically
+unblocked, but still requires explicit operator go-ahead because it
+will make paid calls.
 
-Once the Serper-specific filters are in place, the next benchmark is:
+The next benchmark is:
 
 ```bash
 npm run enrich -- \
