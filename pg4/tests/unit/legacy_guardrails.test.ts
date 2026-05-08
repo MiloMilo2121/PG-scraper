@@ -57,6 +57,19 @@ describe('§2 — dirty hosts NEVER count as official_website', () => {
     'https://www.bed-and-breakfast.it/it/padova',
     'https://www.pickandroll.it/foo',
     'https://lucabottoniteam.wordpress.com/',
+    // Phase G.2 — Serper round-2 directory FPs from p91
+    'https://www.casavenezia.it/it/agenzie/le_agenzie/foo/',
+    'https://www.intercasarredamenti.it/chi-siamo/', // furniture, wrong sector
+    'https://www.impresaitalia.info/kk03424261/foo/padova.aspx',
+    'https://www.mioaffitto.it/microsite/foo.html',
+    'https://cittanostra.it/agenzie-immobiliari/scheda-foo',
+    'https://www.bedandbreakfast.it/it/vicino/stazione-padova',
+    'https://www.bancadellecase.it/agenzia/foo',
+    'https://www.icribis.com/it/scheda-azienda/PD258373_FOO',
+    'https://www.agenziaroma.com/',
+    'https://www.aterpadova.it/',                 // public housing auth
+    'https://www.aopd.veneto.it/sez,217',          // hospital
+    'https://www.arte-casa.info/',
   ];
   for (const s of samples) {
     it(`blocks ${s}`, () => {

@@ -422,3 +422,97 @@ DIRECTORIES entries did NOT regress any free-pipeline TPs — none of
 the new entries was previously surfacing as a legitimate result.
 
 G.1 acceptance: ALL ✓.
+
+---
+
+## G.2 — Round-2 directory expansion (post-p91)
+
+### p91 results (G.1 stack, paid Serper)
+
+```bash
+npm run enrich -- \
+  --input output/p80_provincia_pd.csv \
+  --out output/p91_pd_enriched_serper_filtered_010.csv \
+  --enable-paid --cost-ceiling-eur 0.003 --run-cost-ceiling-eur 0.10
+```
+
+| field | value |
+| --- | --- |
+| 437 in → 437 out | ✓ |
+| total cost EUR | **€0.099** ≤ €0.10 ✓ run-cap held atomically |
+| Serper calls | 99 |
+| 1 ledger summary | ✓ |
+| direct_fetch breaker | CLOSED ✓ |
+| found | 93 (vs p85 53; +40 new, 0 lost) |
+| SERP_PAID matches | 41 (vs p90 61: G.1 caught 20 FPs offline-predicted) |
+
+### G.6 audit on the 41 p91 SERP_PAID
+
+- **~25 likely TPs** — composite brand domains:
+  studiozetapadova.it, costruzionibordignon.it, agenziaimmobiliare2000.it,
+  studioimmobiliaresigma.it, livianaimmobiliare.it,
+  trifoglioimmobiliare.com, helioscasa.it, immobiliareumberto.it,
+  immobiliareberto.it, ilcubosi.it, antonianacase2.it, arcuum.eu (×2),
+  studiolacoccinella.it, szaffari.it, coltroimmobiliare.it,
+  finlucati.it, immobiliaremarino.it, veleimmobiliare.it,
+  pintonello.it, astrolabioimmobili.it, puntoimmobiliare.it,
+  giovannadoriguzzi.it, immobiliareanna.padova.it,
+  immobiliare-forcellini-nazareth.it.
+
+- **~16 FPs (new domains not in G.1 blocklist)**:
+  - `casavenezia.it/it/agenzie/le_agenzie/...` — directory listing
+  - `intercasarredamenti.it/chi-siamo/` — furniture brand (wrong sector)
+  - `impresaitalia.info/...` (×2) — directory
+  - `mioaffitto.it/microsite/...` — directory
+  - `cittanostra.it/agenzie-immobiliari/...` — directory
+  - `bedandbreakfast.it/...` (no-hyphen variant) — directory
+  - `bancadellecase.it/agenzia/...` — directory
+  - `icribis.com/...` — directory
+  - `agenziaroma.com` — geo mismatch (Roma vs Padova)
+  - `aterpadova.it` — public housing authority
+  - `aopd.veneto.it/sez,217` — Azienda Ospedaliera Padova (hospital!)
+  - `arte-casa.info` — parked-style .info
+
+**SERP_PAID precision = ~25/41 = 61 %** (vs p90 49 % — improvement
++12 pp but still below the 85 % KEEP threshold).
+
+### Decision: NEED-MORE-AUDIT — round-2 blocklist shipped
+
+Added 12 hosts to `DIRECTORIES` and 12 URLs to the legacy_guardrails
+pinned list:
+
+`casavenezia.it`, `impresaitalia.info`, `mioaffitto.it`,
+`cittanostra.it`, `bedandbreakfast.it`, `bancadellecase.it`,
+`icribis.com`, `agenziaroma.com`, `aterpadova.it`,
+`aopd.veneto.it`, `arte-casa.info`, `intercasarredamenti.it`.
+
+414 unit tests pass / 1 skipped, typecheck 0 errors.
+
+### Cumulative spend across Phase G
+
+| stage | spend | reason |
+| --- | --- | --- |
+| G.5 attempt 2 | €0.229 | run-cap not enforced (bug, killed) |
+| G.5 attempt 3 | €0.099 | run-cap held; 60 SERP_PAID, ~50 % precision |
+| G.1 safety regr | €0.000 | default-deny verified |
+| G.5 p91 (G.1 stack) | €0.099 | 41 SERP_PAID, ~61 % precision |
+| **TOTAL** | **€0.427** | |
+
+### G.6 final decision (after G.2 round-2 blocklist)
+
+- **NEED-MORE-AUDIT**: Serper SERP_PAID precision still below 85 %
+  threshold even with G.1+G.2 blocklist. Round-2 catches 12 more
+  observed FPs but Serper's organic tail keeps surfacing novel
+  aggregators.
+- **Hold paid runs.** Free pipeline (~98 % precision, 53 found on
+  PD) remains the trust baseline.
+- **Followup #35**: A SECOND offline simulation against p91 with
+  the round-2 blocklist applied, to estimate the precision lift
+  before another paid run. This is zero-cost like the post-p90
+  simulation that justified p91.
+- **Followup #36**: Beyond blocklist, Serper-fallback may need a
+  positive-sector check (RDAP-mandatory or HTML-must-contain-
+  agency-keywords) to filter the long tail of wrong-sector hits
+  (intercasarredamenti, aopd.veneto.it, agenziaroma.com).
+
+No new paid run executed in G.2.

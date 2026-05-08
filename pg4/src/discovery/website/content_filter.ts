@@ -70,6 +70,21 @@ const DIRECTORIES = new Set([
   'bonaldo.com',                   // furniture brand
   'wordpress.com',                 // generic blog hosting
   'pd.camcom.it', 'vi.camcom.it',  // chambers of commerce
+  // Phase G.2 (p91 PD Serper round-2 audit) — additional Serper-
+  // observed FPs that slipped past G.1 blocklist. Each manually
+  // verified or classified by URL pattern in the p91 SERP_PAID set.
+  'casavenezia.it',                // agency-listing portal (Venezia)
+  'impresaitalia.info',            // company-data aggregator
+  'mioaffitto.it',                 // rental listings (variant of ioaffitto)
+  'cittanostra.it',                // local listings portal
+  'bedandbreakfast.it',            // B&B portal (no-hyphen variant)
+  'bancadellecase.it',             // listing aggregator
+  'icribis.com',                   // company-data aggregator
+  'agenziaroma.com',               // generic real-estate franchise — geo mismatch
+  'aterpadova.it',                 // public housing authority (PA, not agency)
+  'aopd.veneto.it',                // Azienda Ospedaliera Padova (hospital!)
+  'arte-casa.info',                // .info parked-style
+  'intercasarredamenti.it',         // furniture brand — wrong sector for "Intercasa" real-estate lead
 
   // Job boards
   'infojobs.it', 'indeed.com', 'glassdoor.it', 'trovalavoro.it',
