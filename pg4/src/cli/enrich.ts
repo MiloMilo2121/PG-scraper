@@ -6,6 +6,7 @@ import { OutputManager } from '../io/output_manager';
 import { createRun, createPerLeadContext } from '../runtime/run_context';
 import { buildProviderCatalog } from '../providers/provider_catalog';
 import { runEnrichmentPipeline } from '../enrichment/enrichment_pipeline';
+import { PgDetailHarvester } from '../discovery/sources/pagine_gialle_detail_harvester';
 
 /**
  * `npm run enrich -- --input output/raw.csv --out output/enriched.csv`
@@ -44,6 +45,9 @@ async function main() {
     runCostCeilingEur,
   });
   const router = buildProviderCatalog(run.ledger);
+  // R1 — shared harvester so duplicate `pg_url`s across leads only
+  // hit the network once per run.
+  const pgHarvester = new PgDetailHarvester();
 
   const output = new OutputManager(csvOut, jsonlOut, 'enriched');
   logger.info(
@@ -68,6 +72,7 @@ async function main() {
           router,
           lead: item.lead,
           ingestError: item.ingestError,
+          pgHarvester,
         });
         if (result.lead.official_website) withWebsite += 1;
         await output.write(result.lead, { stage_outcomes: result.stage_outcomes });

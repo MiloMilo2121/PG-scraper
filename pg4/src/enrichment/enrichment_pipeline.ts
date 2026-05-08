@@ -8,9 +8,11 @@ import type { Run } from '../runtime/run_context';
 import { logger } from '../runtime/logger';
 import { classifyError } from '../runtime/errors';
 import { InputWebsiteStage } from './stages/input_website_stage';
+import { PgDetailStage } from './stages/pg_detail_stage';
 import { HyperGuesserStage } from './stages/hyper_guesser_stage';
 import { SerpStage } from './stages/serp_stage';
 import { RdapBoostStage } from './stages/rdap_stage';
+import { PgDetailHarvester } from '../discovery/sources/pagine_gialle_detail_harvester';
 
 /**
  * Enrichment pipeline.
@@ -39,6 +41,14 @@ export interface PipelineInput {
    * Used by HyperGuesserStage to keep tests offline.
    */
   dnsResolver?: (host: string) => Promise<string[]>;
+  /**
+   * R1 — optional PG harvester. Tests inject a mock to keep the
+   * suite 0-network. Defaults to a fresh `PgDetailHarvester` per
+   * pipeline invocation. Production callers (CLI) can pass a
+   * SHARED instance to take advantage of the run-scoped cache
+   * across leads with the same `pg_url`.
+   */
+  pgHarvester?: PgDetailHarvester;
 }
 
 export async function runEnrichmentPipeline(input: PipelineInput): Promise<EnrichmentResult> {
@@ -85,11 +95,19 @@ export async function runEnrichmentPipeline(input: PipelineInput): Promise<Enric
   }
 
   // ---- Multi-stage discovery ladder ----
+  // R1 — `PgDetailStage` runs BEFORE HyperGuesser/SERP. When the
+  // lead has a `pg_url`, it harvests the PG company-detail page for
+  // official_website / P.IVA / phone / email / address and
+  // backfills the lead. This both short-circuits the ladder when
+  // PG already advertises the site AND enriches the input for the
+  // downstream stages.
   // Phase G — `paidFallbackEnabled` is forwarded from the per-lead
   // context. The router still enforces per-call cost gates as
   // defence-in-depth.
+  const harvester = input.pgHarvester ?? new PgDetailHarvester();
   const stages: Stage[] = [
     new InputWebsiteStage(router),
+    new PgDetailStage(router, harvester),
     new HyperGuesserStage(router, input.dnsResolver),
     new SerpStage(router, { paidFallbackEnabled: perLead.paidEnabled === true }),
     new RdapBoostStage(),
