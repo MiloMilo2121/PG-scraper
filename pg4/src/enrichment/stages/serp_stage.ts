@@ -8,6 +8,8 @@ import { DEFAULTS } from '../../config/defaults';
 import type { ProviderRouter } from '../../providers/provider_router';
 import { tierCapForLead } from '../../runtime/run_context';
 import { verifyCandidates } from './verify_candidates';
+import { evaluateSerperGate } from '../../discovery/website/smart_serper_gate';
+import { logger } from '../../runtime/logger';
 
 /**
  * Query free SERP providers, dedupe candidates, verify top hits.
@@ -82,9 +84,32 @@ export class SerpStage implements Stage {
     }
 
     // ---- Paid fallback (Serper / tier 2) ------------------------------------
+    // R4 — SmartSerperGate is the EARLIER veto layer. The lead must
+    // have a deterministic signal beyond the name (P.IVA, phone,
+    // email-domain, pg_url, address+locality) AND the brand must not
+    // be in COMMON_BARE_STEMS. Budget gates in ProviderRouter remain
+    // as defence-in-depth.
     if (this.opts.paidFallbackEnabled === true && ctx.paidEnabled === true) {
-      const paidVerdict = await this.runPaidPass(ctx, lead, normalized, query, free.provider, start);
-      if (paidVerdict !== null) return paidVerdict;
+      const decision = evaluateSerperGate(normalized, lead);
+      if (!decision.allow) {
+        logger.info(
+          { lead_id: ctx.leadId, run_id: ctx.runId, reasons: decision.reasons },
+          '[serp.paid] gate denied — skipping paid pass',
+        );
+      } else {
+        // Use the gate's top-priority recommended query (R2 variant).
+        // pg4 keeps paid as a scalpel: ONE targeted query per lead.
+        const paidQuery = decision.recommendedQueries[0]?.query ?? query;
+        const paidVerdict = await this.runPaidPass(
+          ctx,
+          lead,
+          normalized,
+          paidQuery,
+          free.provider,
+          start,
+        );
+        if (paidVerdict !== null) return paidVerdict;
+      }
     }
 
     // ---- Free-only failure paths --------------------------------------------
