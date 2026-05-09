@@ -6,6 +6,7 @@ import { isParked, isUnderConstruction, isDirectoryOrSocial } from '../../discov
 import { RdapValidator } from '../../discovery/website/rdap_validator';
 import type { RdapEvidence } from '../../discovery/website/rdap_validator';
 import { classifyHttpFailure } from '../../types/providers';
+import type { HttpFetchResult } from '../../types/providers';
 import { DEFAULTS } from '../../config/defaults';
 
 /**
@@ -62,6 +63,15 @@ export interface VerifyCandidatesOpts {
    * Defaults to `setTimeout`-based real sleep at runtime.
    */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * R6.1 — per-lead HTTP fetch memoization. When provided, the same
+   * URL is fetched at most once per lead across stages. The cache
+   * stores BOTH successes and failures: a host that blew up in
+   * PgDetailStage short-circuits in HyperGuesser instead of consuming
+   * another retry budget on the same flap. Lead context owns the
+   * Map; callers pass `ctx.httpFetchCache`.
+   */
+  fetchCache?: Map<string, HttpFetchResult>;
 }
 
 export interface VerifyVerdict {
@@ -153,7 +163,19 @@ export async function verifyPlannedCandidates(
     }
     const retryDelaysMs = plan.retryDelaysMs ?? defaultRetryDelays;
     const retryBudgetMs = plan.retryBudgetMs ?? defaultRetryBudget;
-    let res = await router.fetch(candidate, { timeoutMs: opts.timeoutMs, meta: opts.meta });
+    const cacheKey = canonicalUrlKey(candidate);
+    // R6.1 — per-lead HTTP fetch cache. PgDetailStage often probes
+    // the same URL HyperGuesser will probe seconds later; on flaky
+    // hosts both stages timed out independently. The cache returns
+    // the prior result whether success or failure.
+    let res: HttpFetchResult;
+    const cached = opts.fetchCache?.get(cacheKey);
+    if (cached) {
+      res = cached;
+    } else {
+      res = await router.fetch(candidate, { timeoutMs: opts.timeoutMs, meta: opts.meta });
+      opts.fetchCache?.set(cacheKey, res);
+    }
     // Phase D.2/D.3: scheduled retry on transport-class failures only.
     // Single retry (D.2) recovers single-blip ECONNREFUSED-then-200
     // (pianon.eu in BL). Multi-retry with backoff (D.3) recovers
@@ -198,6 +220,9 @@ export async function verifyPlannedCandidates(
         meta: opts.meta,
         bypassBreakerRecord: true,
       });
+      // R6.1 — overwrite the cache with the latest retry result so
+      // subsequent stages see the most recent state of the host.
+      opts.fetchCache?.set(cacheKey, res);
     }
     if (!res.html || res.status < 200 || res.status >= 400) {
       lastDetail = `${candidate} status=${res.status}${res.error ? ` err=${res.error}` : ''}${retriesUsed > 0 ? ` retries=${retriesUsed}` : ''}`;
@@ -281,4 +306,21 @@ export async function verifyPlannedCandidates(
     if (gate.detail) lastRejectDetail = gate.detail;
   }
   return { matched: false, detail: lastDetail || 'no_candidate_verified', timedOut, rejectDetail: lastRejectDetail || undefined };
+}
+
+
+/**
+ * R6.1 — canonicalise a URL for fetch-cache keying. Trims trailing
+ * slash and lowercases the scheme + host. Keeps the path / query so
+ * 'https://foo.it' and 'https://foo.it/contatti' are different keys.
+ */
+function canonicalUrlKey(url: string): string {
+  try {
+    const u = new URL(url);
+    u.hostname = u.hostname.toLowerCase();
+    u.protocol = u.protocol.toLowerCase();
+    return u.toString().replace(/\/$/, '');
+  } catch {
+    return url;
+  }
 }

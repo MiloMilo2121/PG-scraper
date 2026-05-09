@@ -57,6 +57,7 @@ export class HyperGuesserStage implements Stage {
     const verdict = await verifyPlannedCandidates(this.router, plans, normalized, lead, {
       timeoutMs: DEFAULTS.pipeline.requestTimeoutMs,
       meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
+      fetchCache: ctx.httpFetchCache,
     });
     if (verdict.matched) {
       lead.website_discovery_method = DiscoveryMethod.HYPER_GUESSER;

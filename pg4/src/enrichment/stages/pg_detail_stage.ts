@@ -94,8 +94,21 @@ export class PgDetailStage implements Stage {
     const verdict = await verifyCandidates(this.router, [candidate], normalized, lead, {
       timeoutMs: DEFAULTS.pipeline.requestTimeoutMs,
       meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
+      fetchCache: ctx.httpFetchCache,
     });
-    if (verdict.matched) {
+    // R6.1 — REJECT semantic-only verdicts for PG-advertised websites.
+    // Audit (PD p_recal_pd_free): "Italy Prime Estates" had PG advertise
+    // caseimperiali.com (Atlas SRL / Remax ABC Case in Rubano) as its
+    // official site. The harvested URL contained NEITHER the lead's
+    // P.IVA NOR the lead's phone — verify accepted on Layer A name-stem
+    // match alone (`Italy` / `Prime` / `Estates` are generic English
+    // tokens). PG's website attestation can be wrong; without a strong
+    // corroborator on the SITE itself (piva or phone match) we don't
+    // accept the URL. The lead still benefits from backfill (P.IVA,
+    // phone, email) and downstream stages (HyperGuesser, SERP) get the
+    // enriched input.
+    const isStrongVerdict = verdict.matched && (verdict.method === 'piva' || verdict.method === 'phone');
+    if (isStrongVerdict) {
       lead.website_discovery_method = DiscoveryMethod.PG_PHONE_SOURCE_TRUST;
       lead.website_confidence = verdict.confidence;
       return {
@@ -103,17 +116,31 @@ export class PgDetailStage implements Stage {
         status: 'success',
         duration_ms: Date.now() - start,
         provider: verdict.provider,
-        detail: PgDetailStage.fmtBackfillDetail(harvest, true) + ' verify=ok',
+        detail:
+          PgDetailStage.fmtBackfillDetail(harvest, true) +
+          ` verify=ok method=${verdict.method}`,
       };
     }
+    const rejectDetail = verdict.matched
+      ? `semantic_only_rejected_method=${verdict.method ?? 'semantic'}`
+      : `verify_reject=${verdict.rejectDetail ?? 'unknown'}`;
+    // R6.1 — undo any side effects `verifyCandidates` left on the
+    // lead. The shared verify helper sets `lead.official_website` on
+    // ANY positive match (including semantic). When we reject a
+    // semantic-only verdict, we must clear it so the pipeline doesn't
+    // finalize with the harvested URL anyway. The PD audit caught
+    // this: Italy Prime Estates ended up with status=FOUND_WEBSITE_ONLY
+    // and official_website=caseimperiali.com despite every stage
+    // outcome reporting `not_found`.
+    lead.official_website = undefined;
+    lead.website_confidence = undefined;
+    lead.website_discovery_method = undefined;
     return {
       stage: this.name,
       status: 'not_found',
       duration_ms: Date.now() - start,
       reason_code: RC.SERP_REJECTED_BY_VERIFY,
-      detail:
-        PgDetailStage.fmtBackfillDetail(harvest, false) +
-        ` verify_reject=${verdict.rejectDetail ?? 'unknown'}`,
+      detail: PgDetailStage.fmtBackfillDetail(harvest, false) + ` ${rejectDetail}`,
     };
   }
 

@@ -1,6 +1,7 @@
 import type { Lead } from './lead';
 import type { NormalizedLead } from './discovery';
 import type { StageOutcome } from './output';
+import type { HttpFetchResult } from './providers';
 
 /**
  * Run-scoped context passed to every stage in the enrichment pipeline.
@@ -57,6 +58,21 @@ export interface PerLeadContext {
    * the cap.
    */
   runCostCeilingEur?: number;
+  /**
+   * R6.1 — per-lead HTTP fetch memoization. `verifyCandidates` (and
+   * any other caller that wants to opt in) reads/writes this map
+   * keyed by canonical URL so the same URL is fetched at most once
+   * per lead across stages. The R1 PG-detail stage and HyperGuesser
+   * routinely produce the SAME candidate URL; without this cache
+   * both stages timed out independently on flaky hosts (Liviana p_recal
+   * audit). The cache stores SUCCESSES AND FAILURES — a host that
+   * blew up in PgDetailStage will short-circuit in HyperGuesser
+   * instead of consuming another retry budget on the same flap.
+   *
+   * Lifetime: one Map per `PerLeadContext`, GC'd at lead end.
+   * Memory bounded by candidates-per-lead × leads-in-flight.
+   */
+  httpFetchCache: Map<string, HttpFetchResult>;
 }
 
 /**

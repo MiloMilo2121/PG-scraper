@@ -32,6 +32,7 @@ export class InputWebsiteStage implements Stage {
     const verdict = await verifyCandidates(this.router, assessed.candidates.slice(0, 3), normalized, lead, {
       timeoutMs: DEFAULTS.pipeline.requestTimeoutMs,
       meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
+      fetchCache: ctx.httpFetchCache,
     });
     if (verdict.matched) {
       lead.website_discovery_method = verdict.method === 'piva' ? DiscoveryMethod.INPUT_PIVA_MATCH : DiscoveryMethod.INPUT_SEMANTIC;

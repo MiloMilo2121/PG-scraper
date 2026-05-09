@@ -70,6 +70,14 @@ const DIRECTORIES = new Set([
   'bonaldo.com',                   // furniture brand
   'wordpress.com',                 // generic blog hosting
   'pd.camcom.it', 'vi.camcom.it',  // chambers of commerce
+  // R6.1 (p_recal2 PD audit) — SERP_COMPANY FPs surfaced after the
+  // PgDetailStage semantic-veto + cache fixes increased free-pass
+  // recall. Each manually verified via WebFetch.
+  'luxuryestate.com',              // global luxury-listing aggregator
+  'netcenterpadova.eu',            // Padova business-center / coworking
+  'itpres.com',                    // weak HG candidate (Italy Prime
+                                    // Estates "itpres.com" — appears as
+                                    // generic Italian-prestige domain)
   // Phase G.2 (p91 PD Serper round-2 audit) — additional Serper-
   // observed FPs that slipped past G.1 blocklist. Each manually
   // verified or classified by URL pattern in the p91 SERP_PAID set.

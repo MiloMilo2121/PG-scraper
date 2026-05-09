@@ -97,6 +97,87 @@ describe('PgDetailStage', () => {
     expect(lead.vat_code).toBe('01234567890');
   });
 
+  it('R6.1 — rejects semantic-only verify on PG-advertised website (still backfills evidence)', async () => {
+    // Audit case: "Italy Prime Estates" (Padova) had PG advertise
+    // caseimperiali.com (Atlas SRL, Rubano) as its official site.
+    // The advertised URL contained NEITHER the lead's P.IVA NOR the
+    // lead's phone — only generic real-estate name tokens. The R1
+    // pre-fix accepted via Layer A name-semantic match (confidence
+    // 0.8) and we ended up tagging the wrong site.
+    //
+    // The fix: if `verdict.method === 'semantic'`, REJECT for the
+    // PG-advertised path. Backfill of vat/phone/email continues so
+    // downstream stages still get the enriched input.
+    const run = createRun();
+    // The "live page" matches the lead's brand and locality (so the
+    // gate's semantic Layer fires), but contains NO matching P.IVA
+    // and NO matching phone. This is exactly the production
+    // failure mode: PG advertises a third-party portal whose copy
+    // happens to mention the lead's brand keywords as marketing
+    // text. Without the fix, `verifyCandidates` accepts via
+    // method='semantic' and silently sets `lead.official_website`.
+    // Use a long, distinctive brand so PreVerifyGate's Layer A
+    // (`strong_full_name`) actually fires on the live page — that's
+    // the path that puts `lead.official_website = candidate` before
+    // returning. A short brand like "Foo S.r.l." would fall through
+    // to no-match and the bug wouldn't be exercised.
+    const longBrand = 'Pierobon Estimo Immobiliare';
+    const livePageNoMatchHtml =
+      `<html><head><title>${longBrand} - Padova</title></head><body>` +
+      `<h1>${longBrand}</h1><h2>${longBrand}</h2>` +
+      `<p>${longBrand} è un'agenzia immobiliare a Padova. ${realEstateBody}</p>` +
+      `<p>${longBrand} opera a Padova da molti anni con immobili di qualità a Padova.</p>` +
+      `</body></html>`;
+    const router = new ProviderRouter([], [new StubHttp(livePageNoMatchHtml, 200)], [], run.ledger);
+    const harvester = new PgDetailHarvester({
+      // PG advertised a non-directory URL; the harvest still surfaces
+      // P.IVA / phone / email from the PG company-detail page (NOT
+      // from the third-party portal — those values are the LEAD's,
+      // taken from PG's JSON-LD).
+      fetchHtml: async () => ({ status: 200, html: PG_DETAIL_HTML('https://www.unrelatedfoo.com') }),
+    });
+    const stage = new PgDetailStage(router, harvester);
+    const lead: Lead = {
+      company_name: longBrand,
+      city: 'Padova',
+      pg_url: PG_URL,
+      // Lead's vat / phone DO NOT appear on the live page — only the
+      // brand+locality semantic anchor fires. Pre-R6.1 this was
+      // enough to set `lead.official_website` despite no
+      // deterministic corroboration.
+      vat_code: '99999999999',
+      phone: '049 0000000',
+    };
+    const norm = {
+      company_name: lead.company_name,
+      company_name_variants: [],
+      city: lead.city,
+      vat_code: lead.vat_code,
+      phone: lead.phone,
+      quality_score: 0,
+      raw: lead,
+    };
+    const out = await stage.run(createPerLeadContext(run), lead, norm);
+    expect(out.status).toBe('not_found');
+    expect(out.reason_code).toBe('SERP_REJECTED_BY_VERIFY');
+    // The detail must show the semantic-only rejection path actually
+    // fired — not just any reject. Without this assertion, the test
+    // could pass even if the gate never reached semantic match,
+    // which would let the bug regress unnoticed.
+    expect(out.detail).toMatch(/semantic_only_rejected/);
+    // Critical: side-effects on the lead are CLEARED so the pipeline's
+    // finalize step doesn't end up with status=FOUND_WEBSITE_ONLY +
+    // a website nobody endorsed. This is the bug the p_recal2 audit
+    // surfaced for "Italy Prime Estates".
+    expect(lead.official_website).toBeUndefined();
+    expect(lead.website_discovery_method).toBeUndefined();
+    expect(lead.website_confidence).toBeUndefined();
+    // Backfill still happens — downstream stages benefit from the PG
+    // harvest's deterministic evidence even when the advertised
+    // website was rejected.
+    expect(lead.email).toBe('info@foosrl.com');
+  });
+
   it('rejects directory URL even when PG advertises it as "Sito web"', async () => {
     const run = createRun();
     const router = new ProviderRouter([], [new StubHttp(livePageHtml, 200)], [], run.ledger);

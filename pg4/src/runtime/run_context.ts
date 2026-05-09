@@ -69,6 +69,7 @@ export function createPerLeadContext(run: Run): PerLeadContext {
     costCeilingEur: run.ctx.costCeilingEur,
     paidEnabled: run.ctx.paidEnabled === true,
     runCostCeilingEur: run.ctx.runCostCeilingEur,
+    httpFetchCache: new Map(),
   };
 }
 

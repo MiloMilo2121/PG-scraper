@@ -68,6 +68,7 @@ export class SerpStage implements Stage {
         const verdict = await verifyCandidates(this.router, candidateUrls, normalized, lead, {
           timeoutMs: DEFAULTS.pipeline.requestTimeoutMs,
           meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
+          fetchCache: ctx.httpFetchCache,
         });
         if (verdict.matched) {
           lead.website_discovery_method = DiscoveryMethod.SERP_COMPANY;
@@ -180,6 +181,7 @@ export class SerpStage implements Stage {
     const verdict = await verifyCandidates(this.router, candidateUrls, normalized, lead, {
       timeoutMs: DEFAULTS.pipeline.requestTimeoutMs,
       meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name, pass: 'paid' },
+      fetchCache: ctx.httpFetchCache,
     });
     if (verdict.matched) {
       lead.website_discovery_method = DiscoveryMethod.SERP_PAID;
