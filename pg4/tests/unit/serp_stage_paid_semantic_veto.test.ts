@@ -125,9 +125,13 @@ describe('SerpStage paid pass — R7.0 semantic-only veto', () => {
   it('ACCEPTS SERP_PAID when verify hits piva on the candidate site', async () => {
     const run = createRun({ paidEnabled: true, costCeilingEur: 1.0, runCostCeilingEur: 0.20 });
     const longBrand = 'Pierobon Estimo Immobiliare';
+    // R9: page must clear sector-density ≥3 in addition to piva match.
     const realPage =
       `<html><body><h1>${longBrand}</h1>` +
-      `<p>P.IVA 01234567890. Padova, Via Roma 1.</p></body></html>`;
+      `<p>Agenzia immobiliare a Padova. Compravendita immobili, locazione ` +
+      `appartamenti, intermediazione immobiliare. P.IVA 01234567890.</p>` +
+      `<p>Via Roma 1, Padova. Vendita immobili, affitto, real estate.</p>` +
+      `</body></html>`;
     const free = new StubFreeSerp();
     const paid = new StubPaidSerp('https://www.pierobonestimo.it');
     const http = new StubHttp(realPage);

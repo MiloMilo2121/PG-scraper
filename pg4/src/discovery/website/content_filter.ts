@@ -119,6 +119,13 @@ const DIRECTORIES = new Set([
   'telefonforsaljare.nu',           // Swedish phone-spam aggregator (×5 in BL)
   'generali.it',                    // Generali insurance group (covers
                                     // agenzie.generali.it directory listings)
+  // R9 simulator — additional BL hosts surfaced by the offline
+  // PaidEvidenceGate simulation that the first BL audit missed.
+  // Each verified by inspection.
+  'gazzettaufficiale.it',           // Italian Official Gazette
+  'cercaaziendepro.it',             // business directory (CercaAziendePro)
+  'cenatesotto.halleyweb.it',       // Comune di Cenate Sotto bandi-gara portal
+  'domus-picta.com',                // Prosecco DOC wine portal (vineyard)
   // R8.1.VR audit — generalization run on Verona province dropped
   // precision to 75.9 % (44 TP / 14 FP / 58 paid). Triggered the
   // 85 % stop-rule before TV. 12 new host families surfaced —

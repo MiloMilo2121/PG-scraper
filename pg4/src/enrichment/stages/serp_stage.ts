@@ -9,6 +9,7 @@ import type { ProviderRouter } from '../../providers/provider_router';
 import { tierCapForLead } from '../../runtime/run_context';
 import { verifyCandidates } from './verify_candidates';
 import { evaluateSerperGate } from '../../discovery/website/smart_serper_gate';
+import { evaluatePaidEvidence } from '../../discovery/website/paid_evidence_gate';
 import { logger } from '../../runtime/logger';
 
 /**
@@ -193,7 +194,20 @@ export class SerpStage implements Stage {
     // that worked for PG-attestation works here: only piva or phone
     // match counts.
     const isStrongVerdict = verdict.matched && (verdict.method === 'piva' || verdict.method === 'phone');
-    if (isStrongVerdict) {
+    // R9 — structural Paid Evidence Gate. piva_match alone is not
+    // enough: BL → VR generalization showed 14 FPs slipping past
+    // piva_match (cross-vat wrong-sector firms publishing the lead's
+    // vat, aggregators publishing many firms' vats, govt/research
+    // sites publishing business data). The gate inspects the
+    // VERIFIED body for:
+    //   1) aggregator pattern (distinct vat count ≥ 4 → veto)
+    //   2) real-estate sector vocabulary density (< 3 → veto)
+    // Audit data: R9 offline simulation on BL+VR brought VR precision
+    // 75.9 % → 100 % at 9.1 % TP recall loss.
+    const gateOk = isStrongVerdict && verdict.body
+      ? evaluatePaidEvidence(verdict.body, normalized, lead)
+      : { allow: false, reasons: ['no_strong_verdict_or_body'] };
+    if (isStrongVerdict && gateOk.allow) {
       lead.website_discovery_method = DiscoveryMethod.SERP_PAID;
       lead.website_confidence = verdict.confidence;
       // Phase G.1 — providers_used must record the PAID SERP that
@@ -206,8 +220,17 @@ export class SerpStage implements Stage {
         status: 'success',
         duration_ms: Date.now() - start,
         provider: verdict.provider,
-        detail: `serp_free=${freeProvider} serp_paid=${paid.provider} top=${ranked[0].host} ${verdict.detail ?? ''} method=${verdict.method}`.trim(),
+        detail:
+          `serp_free=${freeProvider} serp_paid=${paid.provider} top=${ranked[0].host} ` +
+          `${verdict.detail ?? ''} method=${verdict.method} ` +
+          `paid_gate=ok:${gateOk.reasons.join(',')}`.trim(),
       };
+    }
+    if (isStrongVerdict && !gateOk.allow) {
+      logger.info(
+        { lead_id: ctx.leadId, run_id: ctx.runId, reasons: gateOk.reasons },
+        '[serp.paid] paid_evidence_gate rejected piva-matched candidate',
+      );
     }
     // R7.0 — undo verifyCandidates side-effects on a semantic-only
     // (or otherwise rejected) verdict. Same pattern PgDetailStage

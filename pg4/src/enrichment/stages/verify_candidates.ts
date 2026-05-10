@@ -83,6 +83,14 @@ export interface VerifyVerdict {
   timedOut?: boolean;
   /** Last detailed reason the gate emitted on this lead, for upstream stages. */
   rejectDetail?: string;
+  /**
+   * R9 — the HTML body that PreVerifyGate matched on. Set only on
+   * positive verdicts (`matched: true`) so downstream filters
+   * (PaidEvidenceGate in SerpStage) can inspect the page without a
+   * second fetch. Internal: not meant for stages other than those
+   * needing post-match analysis.
+   */
+  body?: string;
 }
 
 /**
@@ -246,6 +254,7 @@ export async function verifyPlannedCandidates(
         confidence: DEFAULTS.scoring.pivaMatchConfidence,
         provider: res.provider,
         detail: 'piva_match',
+        body: res.html,
       };
     }
     if (gate.status === 'VERIFIED' && gate.evidence === 'phone_match') {
@@ -260,6 +269,7 @@ export async function verifyPlannedCandidates(
         confidence: DEFAULTS.scoring.pivaMatchConfidence,
         provider: res.provider,
         detail: 'phone_match',
+        body: res.html,
       };
     }
     if (gate.status === 'VERIFIED_SEMANTIC') {
