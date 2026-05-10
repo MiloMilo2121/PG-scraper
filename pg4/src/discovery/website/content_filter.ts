@@ -126,6 +126,13 @@ const DIRECTORIES = new Set([
   'cercaaziendepro.it',             // business directory (CercaAziendePro)
   'cenatesotto.halleyweb.it',       // Comune di Cenate Sotto bandi-gara portal
   'domus-picta.com',                // Prosecco DOC wine portal (vineyard)
+  // R10 (paid VR rerun with R9 gate) — confirmation surfaced 2 FPs
+  // that bypassed the sector-density rule because the page lists
+  // "immobiliare" as an industry-category 6 times (member profile
+  // with category nav). Industrial-association class, parent host
+  // for all Confindustria provincial branches.
+  'confindustria.it',               // Italian industrial confederation (covers
+                                    // *.confindustria.it — vicenza/verona/etc.)
   // R8.1.VR audit — generalization run on Verona province dropped
   // precision to 75.9 % (44 TP / 14 FP / 58 paid). Triggered the
   // 85 % stop-rule before TV. 12 new host families surfaced —
