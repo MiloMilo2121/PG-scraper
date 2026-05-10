@@ -7,6 +7,7 @@ import { createRun, createPerLeadContext } from '../runtime/run_context';
 import { buildProviderCatalog } from '../providers/provider_catalog';
 import { runEnrichmentPipeline } from '../enrichment/enrichment_pipeline';
 import { PgDetailHarvester } from '../discovery/sources/pagine_gialle_detail_harvester';
+import { acquireOutputLock } from '../runtime/output_lock';
 
 /**
  * `npm run enrich -- --input output/raw.csv --out output/enriched.csv`
@@ -21,6 +22,8 @@ async function main() {
   const jsonlOut = csvOut.replace(/\.csv$/i, '') + '.jsonl';
 
   const ledgerPath = optString(args, 'ledger-path') ?? csvOut.replace(/\.csv$/i, '') + '.cost-ledger.jsonl';
+  const outputLock = acquireOutputLock(csvOut, { input, jsonlOut, ledgerPath, command: 'enrich' });
+  try {
   const ceilingArg = optString(args, 'cost-ceiling-eur');
   const costCeiling = ceilingArg ? Number(ceilingArg) : undefined;
   // Phase G — paid providers gate. Default DENY: paid is off unless
@@ -114,6 +117,9 @@ async function main() {
     },
     '[enrich] done'
   );
+  } finally {
+    outputLock.release();
+  }
 }
 
 main().catch((err) => {

@@ -1,6 +1,7 @@
 import { parseArgs, reqString, optString } from './_args';
 import { logger } from '../runtime/logger';
 import { runFixtureMode, runLiveMode } from '../discovery/scrape_pipeline';
+import { acquireOutputLock } from '../runtime/output_lock';
 
 /**
  * scrape — Phase 4 CLI (thin wrapper).
@@ -30,13 +31,18 @@ async function main() {
   const fixtureFlag = optString(args, 'fixture');
 
   if (fixtureFlag) {
-    await runFixtureMode({
-      out,
-      category,
-      fixture: fixtureFlag,
-      sourceFlag: optString(args, 'source'),
-    });
-    return;
+    const outputLock = acquireOutputLock(out, { command: 'scrape', mode: 'fixture', fixture: fixtureFlag });
+    try {
+      await runFixtureMode({
+        out,
+        category,
+        fixture: fixtureFlag,
+        sourceFlag: optString(args, 'source'),
+      });
+      return;
+    } finally {
+      outputLock.release();
+    }
   }
 
   if (!category) {
@@ -54,22 +60,27 @@ async function main() {
     }
     mapsCoverage = coverageRaw;
   }
-  await runLiveMode({
-    out,
-    category,
-    province: optString(args, 'province'),
-    region: optString(args, 'region'),
-    comuniCsv: optString(args, 'comuni'),
-    maxPages: parseIntOrUndefined(optString(args, 'max-pages')),
-    interDelayMs: parseIntOrUndefined(optString(args, 'inter-delay-ms')),
-    runMaps: !!args.flags['maps'],
-    mapsCoverage,
-    headless: args.flags['headless'] !== 'false',
-    checkpointPath: optString(args, 'checkpoint'),
-    restartEvery: parseIntOrUndefined(optString(args, 'restart-every')),
-    fresh: !!args.flags['fresh'],
-    allowMissingJsonl: !!args.flags['allow-missing-jsonl'],
-  });
+  const outputLock = acquireOutputLock(out, { command: 'scrape', mode: 'live', category });
+  try {
+    await runLiveMode({
+      out,
+      category,
+      province: optString(args, 'province'),
+      region: optString(args, 'region'),
+      comuniCsv: optString(args, 'comuni'),
+      maxPages: parseIntOrUndefined(optString(args, 'max-pages')),
+      interDelayMs: parseIntOrUndefined(optString(args, 'inter-delay-ms')),
+      runMaps: !!args.flags['maps'],
+      mapsCoverage,
+      headless: args.flags['headless'] !== 'false',
+      checkpointPath: optString(args, 'checkpoint'),
+      restartEvery: parseIntOrUndefined(optString(args, 'restart-every')),
+      fresh: !!args.flags['fresh'],
+      allowMissingJsonl: !!args.flags['allow-missing-jsonl'],
+    });
+  } finally {
+    outputLock.release();
+  }
 }
 
 function parseIntOrUndefined(v: string | undefined): number | undefined {
