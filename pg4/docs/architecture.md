@@ -172,7 +172,7 @@ CLI argv → cli/enrich.ts
 | 4 — Dense province PG-only (PD) | ✅ ran: 437 unique leads from 900 cards; every checkpoint entry had `overflow=true` |
 | 5 — Auto-split PG `overflow=true` / Maps `cap_likely=true` | pending; now proven necessary for dense provinces |
 | 6 — Maps live opt-in, after Cloudflare/consent hardening | pending |
-| 7 — Paid providers (Serper first) | Serper integrated and cost-gated, but disabled after p90 precision ≈50%; filters #31/#32 required before p91 |
+| 7 — Paid providers (Serper first) | ✅ R7 passed on PD: 137 found websites, €0.199 spend, 96.2% audited precision on the paid gain set; Serper remains explicit opt-in via `--enable-paid` + run cap |
 
 ### Why pg4 stays small
 
