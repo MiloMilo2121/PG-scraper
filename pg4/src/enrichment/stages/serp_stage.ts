@@ -183,7 +183,17 @@ export class SerpStage implements Stage {
       meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name, pass: 'paid' },
       fetchCache: ctx.httpFetchCache,
     });
-    if (verdict.matched) {
+    // R7.0 — precision-first: paid SERP must clear the SAME strong-
+    // evidence bar as R6.1's PgDetailStage. Reject `method === 'semantic'`.
+    // Audit lesson: Serper returns a long tail of brand-name-aggregator
+    // pages (luxuryestate.com, casavenezia.it, …) whose body mentions
+    // the lead's brand as a marketing token without any P.IVA / phone
+    // corroboration. Layer-A semantic match accepts those at confidence
+    // 0.7–0.8 and we end up paying for a directory leak. The same fix
+    // that worked for PG-attestation works here: only piva or phone
+    // match counts.
+    const isStrongVerdict = verdict.matched && (verdict.method === 'piva' || verdict.method === 'phone');
+    if (isStrongVerdict) {
       lead.website_discovery_method = DiscoveryMethod.SERP_PAID;
       lead.website_confidence = verdict.confidence;
       // Phase G.1 — providers_used must record the PAID SERP that
@@ -196,9 +206,18 @@ export class SerpStage implements Stage {
         status: 'success',
         duration_ms: Date.now() - start,
         provider: verdict.provider,
-        detail: `serp_free=${freeProvider} serp_paid=${paid.provider} top=${ranked[0].host} ${verdict.detail ?? ''}`.trim(),
+        detail: `serp_free=${freeProvider} serp_paid=${paid.provider} top=${ranked[0].host} ${verdict.detail ?? ''} method=${verdict.method}`.trim(),
       };
     }
+    // R7.0 — undo verifyCandidates side-effects on a semantic-only
+    // (or otherwise rejected) verdict. Same pattern PgDetailStage
+    // adopted in R6.1: the helper writes `lead.official_website`
+    // BEFORE returning, so a caller that downgrades the verdict must
+    // unset the field. Without this the lead would carry the rejected
+    // URL through to finalize even though the stage returned null.
+    lead.official_website = undefined;
+    lead.website_confidence = undefined;
+    lead.website_discovery_method = undefined;
     return null;
   }
 

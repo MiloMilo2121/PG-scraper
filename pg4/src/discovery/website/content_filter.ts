@@ -78,6 +78,41 @@ const DIRECTORIES = new Set([
   'itpres.com',                    // weak HG candidate (Italy Prime
                                     // Estates "itpres.com" — appears as
                                     // generic Italian-prestige domain)
+  // R7.1 (paid PD audit) — Serper-induced FP class: business-data
+  // aggregators that publish the firm's P.IVA in a directory entry,
+  // satisfying piva_match without being the firm's own site. Each
+  // manually verified via WebFetch in scripts/extract_gains audit.
+  'aziende.it',                    // Ad Intend Srl — Italian business-data aggregator
+  'eulerpool.com',                 // German financial-data aggregator
+  'gestionaleimmobiliare.it',      // generic real-estate sales-software portal
+  'xrayfinance.it',                // financial-data aggregator
+  'dbiz.it',                       // METRIKS.AI — Italian business directory
+  'sahibkimdir.com',               // Turkish phone/business lookup portal
+  'creditsafe.com',                // credit-reporting / business-data aggregator
+  'openbdap.rgs.mef.gov.it',       // Italian Min. Economia public-admin DB
+  'bur.regione.veneto.it',         // Bollettino Ufficiale Regione Veneto
+  'comunichiamoimpresa.it',        // Italian state-aid disclosure registry
+  'amministrazionicomunali.it',    // Italian municipal-tax tools portal
+  // R7.1 (paid PD audit) — wrong-sector cross-publishing: same legal
+  // entity (P.IVA) operates a non-real-estate business. Adding by
+  // host because the lead's vat happens to match these pages and
+  // there's no cheaper way to distinguish. 1-off but unambiguous.
+  'lafemmestore.eu',               // women's clothing store — same vat as a
+                                    // Retecasa Vigonza lead (owner has multiple businesses)
+  'centrobachelet.org',            // community center / non-profit — wrong sector
+  // R7.1.b (paid PD round-2 audit) — public-administration / transport
+  // sites that publish business data for their own purposes. Distinct
+  // class from aggregators: govt portals + state-owned operators.
+  'opencoesione.gov.it',           // Italian govt PNRR / cohesion-funds tracker
+  'fsbusitalia.it',                // Gruppo FS Italiane bus operator (public transport)
+  'provincia.pd.it',               // Provincia di Padova administrative site
+  // R7.1.c (paid PD round-3 audit) — final residuals: municipal
+  // service portals, research institutes, and a reviews aggregator
+  // that surfaced in the free pass after the paid blocklist
+  // tightened. Each manually verified.
+  'servizi.comune.albignasego.pd.it', // Comune di Albignasego service portal
+  'ac.infn.it',                     // Istituto Nazionale di Fisica Nucleare (national research)
+  'italiarecensioni.com',           // Italian business-reviews aggregator
   // Phase G.2 (p91 PD Serper round-2 audit) — additional Serper-
   // observed FPs that slipped past G.1 blocklist. Each manually
   // verified or classified by URL pattern in the p91 SERP_PAID set.
