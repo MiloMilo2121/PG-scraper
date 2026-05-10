@@ -113,6 +113,28 @@ const DIRECTORIES = new Set([
   'servizi.comune.albignasego.pd.it', // Comune di Albignasego service portal
   'ac.infn.it',                     // Istituto Nazionale di Fisica Nucleare (national research)
   'italiarecensioni.com',           // Italian business-reviews aggregator
+  // R8.1.BL audit — generalization run on Belluno province surfaced
+  // 6 paid FPs (precision 67/73 = 91.8 % — above target). Two new
+  // host families:
+  'telefonforsaljare.nu',           // Swedish phone-spam aggregator (×5 in BL)
+  'generali.it',                    // Generali insurance group (covers
+                                    // agenzie.generali.it directory listings)
+  // R8.1.VR audit — generalization run on Verona province dropped
+  // precision to 75.9 % (44 TP / 14 FP / 58 paid). Triggered the
+  // 85 % stop-rule before TV. 12 new host families surfaced —
+  // mostly aggregators + wrong-sector cross-publishing.
+  'casabitare.it',                  // real-estate aggregator/portal (×3)
+  'babileather.it',                 // leather/furniture firm sharing vat with
+                                    // a real-estate division (×2 in VR)
+  'youtube.com',                    // YouTube — generic video platform (covers m.youtube.com)
+  'cnr.it',                         // Italian National Research Council (CNR)
+  'opencup.gov.it',                 // Italian govt project tracker (PNRR class)
+  'visure24.com',                   // visure/business-document aggregator
+  'univalpo.it',                    // libera università popolare Valpolicella (educ)
+  'startuplus.it',                  // startup directory / incubator portal
+  'sihappy.it',                     // multi-category marketplace (immobiliare among others)
+  'ingebau.it',                     // engineering / construction firm (wrong sector)
+  'tipsammartino.it',               // print shop (wrong sector — Sammartino vat collision)
   // Phase G.2 (p91 PD Serper round-2 audit) — additional Serper-
   // observed FPs that slipped past G.1 blocklist. Each manually
   // verified or classified by URL pattern in the p91 SERP_PAID set.
