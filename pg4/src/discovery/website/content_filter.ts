@@ -137,6 +137,14 @@ const DIRECTORIES = new Set([
   // precision to 75.9 % (44 TP / 14 FP / 58 paid). Triggered the
   // 85 % stop-rule before TV. 12 new host families surfaced —
   // mostly aggregators + wrong-sector cross-publishing.
+  // R10.b TV audit (paid TV rerun with R9 gate) — 2 FPs out of 65
+  // SERP_PAID gains slipped past the structural gate. One is a
+  // government transparency portal that surfaces vat references in
+  // contractor PDFs; the other is a real-estate listing aggregator.
+  'cultura.gov.it',                 // Italian Ministry of Culture — covers
+                                    // trasparenza.cultura.gov.it (contractor
+                                    // disclosure PDFs that cite vat codes)
+  'infoimmobile.it',                // real-estate listings portal (info-style)
   'casabitare.it',                  // real-estate aggregator/portal (×3)
   'babileather.it',                 // leather/furniture firm sharing vat with
                                     // a real-estate division (×2 in VR)

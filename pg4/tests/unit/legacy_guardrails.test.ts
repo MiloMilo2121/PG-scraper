@@ -70,6 +70,9 @@ describe('§2 — dirty hosts NEVER count as official_website', () => {
     'https://www.aterpadova.it/',                 // public housing auth
     'https://www.aopd.veneto.it/sez,217',          // hospital
     'https://www.arte-casa.info/',
+    // R10.b TV — 2 FPs that slipped past R9 PaidEvidenceGate
+    'https://trasparenza.cultura.gov.it/foo/contratti/123',
+    'https://www.infoimmobile.it/agenzia/treviso/foo',
   ];
   for (const s of samples) {
     it(`blocks ${s}`, () => {
