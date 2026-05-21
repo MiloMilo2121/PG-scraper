@@ -199,6 +199,48 @@ Expected runtime: 30-50 minutes. Expected lift ratio: similar magnitude
 to R11 if the area-vs-density relationship holds; may compress on
 smaller comuni where PG overflow is not hit.
 
+## Phase 6 — free-only enrich sanity (zero paid)
+
+After R11 PASS, both raw outputs were run through enrich with paid
+disabled (`--cost-ceiling-eur 0.00`, no `--enable-paid`) to measure
+how much of the lift survives enrichment quality gates.
+
+  | dataset        | leads | with_website (raw) | with_website (free enrich) | lift                  |
+  | -------------- | ----: | -----------------: | -------------------------: | --------------------- |
+  | PG-only        |   253 |             22 (9 %) |                 53 (20.9 %) | +31 leads enriched    |
+  | PG + Maps full |   520 |          ~238 (46 %) |                229 (44.0 %) | +267 leads net new from Maps |
+
+`run` durations: PG-only 12.3 min, Maps full 19.5 min. Zero cost
+(serper.cost_eur = 0 in both ledgers). One ledger summary each.
+
+### Website discovery method split
+
+PG-only (53 / 253):
+- 22 PG_PHONE_SOURCE_TRUST
+- 31 HYPER_GUESSER
+
+Maps full (229 / 520):
+- 166 INPUT_SEMANTIC  ← Maps-scraped websites that passed the
+  semantic / host-denylist validation at enrich time
+- 46 HYPER_GUESSER
+- 17 PG_PHONE_SOURCE_TRUST
+
+Maps brings the `INPUT_SEMANTIC` channel into play. 166 / 216 raw
+Maps-website rows survived enrichment validation (76.9 % pass
+rate). The remaining 50 were either rejected by the host denylist
+(directories/aggregators) or absorbed into a different
+discovery_method during merge.
+
+The +15 incremental HYPER_GUESSER hits in Maps-full come from the
+extra 267 Maps-only leads exposing more name/phone signals for
+HG to operate on.
+
+### Net effect at zero paid spend
+
+Maps full + free enrich = +176 validated websites over PG-only
++ free enrich, on the same 2-comune slice, with €0.00 cost and
+no captcha events.
+
 ## Hygiene
 
 - Output lock from commit `6d404ec` held across both Steps; no
@@ -213,3 +255,9 @@ smaller comuni where PG overflow is not hit.
   - output/r11_pg_pd_2comuni.jsonl (253 rows)
   - output/r11_maps_pd_2comuni_full.csv (521 lines = 1 header + 520)
   - output/r11_maps_pd_2comuni_full.jsonl (520 rows)
+  - output/r11_pg_pd_2comuni_enriched_free.csv (254 lines)
+  - output/r11_pg_pd_2comuni_enriched_free.jsonl (253 rows)
+  - output/r11_pg_pd_2comuni_enriched_free.cost-ledger.jsonl (1050 events)
+  - output/r11_maps_pd_2comuni_full_enriched_free.csv (521 lines)
+  - output/r11_maps_pd_2comuni_full_enriched_free.jsonl (520 rows)
+  - output/r11_maps_pd_2comuni_full_enriched_free.cost-ledger.jsonl (1853 events)
