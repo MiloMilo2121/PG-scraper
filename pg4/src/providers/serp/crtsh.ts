@@ -1,7 +1,6 @@
 import { request } from 'undici';
 import type { SerpProvider, SerpResult } from '../../types/providers';
 import { DEFAULTS } from '../../config/defaults';
-import { getEnv } from '../../config/env';
 
 interface CrtShEntry {
   common_name?: string;
@@ -24,8 +23,9 @@ export class CrtshProvider implements SerpProvider {
   readonly costPerCallEur = 0;
 
   available(): boolean {
-    // R14 — off by default (near-zero yield for IT real-estate; see env.ts).
-    return getEnv().SERP_CRTSH_ENABLED === true;
+    // Always registered. Per-category routing (R14) decides whether this
+    // low-yield provider is used — see src/providers/provider_policy.ts.
+    return true;
   }
 
   async search(query: string, opts: { signal?: AbortSignal; limit?: number } = {}): Promise<SerpResult[]> {

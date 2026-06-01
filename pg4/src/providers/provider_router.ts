@@ -51,6 +51,14 @@ export interface RouteOptions {
    */
   includeProviderIds?: ReadonlyArray<string>;
   /**
+   * R14 — denylist. Providers whose `id` is in this list are excluded
+   * from this call, keeping everything else. Symmetric to
+   * `includeProviderIds` but additive-by-default: used by SerpStage to
+   * skip low-yield free providers for a category profile without having
+   * to enumerate the full keep-list. Applied after `includeProviderIds`.
+   */
+  excludeProviderIds?: ReadonlyArray<string>;
+  /**
    * Phase G fix — when true, FREE providers (`costPerCallEur === 0`)
    * are filtered OUT. Used by the SerpStage paid second pass: the
    * free pass already ran every free provider; the paid pass should
@@ -269,6 +277,8 @@ export class ProviderRouter {
       })
       // Phase G — explicit allowlist when caller targets specific ids.
       .filter((p) => !opts.includeProviderIds || opts.includeProviderIds.includes(p.id))
+      // R14 — explicit denylist (category routing skips low-yield providers).
+      .filter((p) => !opts.excludeProviderIds || !opts.excludeProviderIds.includes(p.id))
       .sort((a, b) => a.tier - b.tier)
       .slice(0, opts.maxProviders ?? Number.MAX_SAFE_INTEGER);
   }

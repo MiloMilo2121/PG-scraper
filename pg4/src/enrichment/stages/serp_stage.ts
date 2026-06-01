@@ -6,6 +6,8 @@ import { ReasonCode as RC, DiscoveryMethod } from '../../types/output';
 import { SerpDeduplicator } from '../../discovery/website/serp_deduplicator';
 import { DEFAULTS } from '../../config/defaults';
 import type { ProviderRouter } from '../../providers/provider_router';
+import { resolveFreeSerpRoute } from '../../providers/provider_policy';
+import { getEnv } from '../../config/env';
 import { tierCapForLead } from '../../runtime/run_context';
 import { verifyCandidates } from './verify_candidates';
 import { evaluateSerperGate } from '../../discovery/website/smart_serper_gate';
@@ -56,9 +58,21 @@ export class SerpStage implements Stage {
     const query = this.buildQuery(normalized);
 
     // ---- Free pass (tier ≤ 1, paid disabled) --------------------------------
+    // R14 — per-category routing. Skip proven zero-yield free SERP providers
+    // for the italian_real_estate profile (provider_policy.ts). dns_mx/crtsh/
+    // ddg_lite converted 0 final websites on the R12 PD batch; the override
+    // SERP_EXPANDED_FREE_ENABLED restores the full set for evaluation.
+    const route = resolveFreeSerpRoute(lead.category, getEnv().SERP_EXPANDED_FREE_ENABLED === true);
+    if (route.excludeProviderIds.length > 0) {
+      logger.debug(
+        { lead_id: ctx.leadId, run_id: ctx.runId, profile: route.profile, skipped: route.excludeProviderIds },
+        '[serp.free] category routing — skipping low-yield providers',
+      );
+    }
     const maxTier = Math.min(1, tierCapForLead(ctx, 1));
     const free = await this.router.search(query, {
       maxTier,
+      excludeProviderIds: route.excludeProviderIds.length > 0 ? route.excludeProviderIds : undefined,
       meta: { lead_id: ctx.leadId, run_id: ctx.runId, stage: this.name },
     });
 

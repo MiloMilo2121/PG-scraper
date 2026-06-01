@@ -17,15 +17,13 @@ const EnvSchema = z.object({
   COST_CEILING_EUR_PER_LEAD: z.coerce.number().nonnegative().optional(),
   REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
 
-  // Free SERP providers — R14 pruning. Default OFF: the R12 PD full run
-  // (1,492 leads, "agenzie immobiliari") showed these three return ~0 useful
-  // results for Italian real-estate SMB website discovery — dns_mx 0/956,
-  // crtsh 0/956, ddg_lite 1/956 — while adding 2,868 calls of latency.
-  // bing_html (the meaningful free fallback) is always available and is NOT
-  // gated. Re-enable per vertical via env if a category benefits from them.
-  SERP_DNS_MX_ENABLED: z.coerce.boolean().default(false),
-  SERP_CRTSH_ENABLED: z.coerce.boolean().default(false),
-  SERP_DDG_LITE_ENABLED: z.coerce.boolean().default(false),
+  // Free SERP routing — R14. The low-yield free providers (dns_mx, crtsh,
+  // ddg_lite) are SKIPPED for the `italian_real_estate` category profile.
+  // R12 evidence (1,492 leads): the free SERP tier produced 0 final-website
+  // conversions; all 536 websites came from input/guess methods + direct_fetch.
+  // Set true to force the full free SERP set even for that profile (debug or
+  // other-vertical evaluation). See src/providers/provider_policy.ts.
+  SERP_EXPANDED_FREE_ENABLED: z.coerce.boolean().default(false),
 
   // SERP providers
   SERPER_ENABLED: z.coerce.boolean().default(false),

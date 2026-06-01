@@ -129,8 +129,20 @@ pnpm run enrich -- \
   --out    output/run_pd_maps_full_enriched.csv
 ```
 
-No `--enable-paid`. Uses direct_fetch, hyper-guesser, and free SERP providers
-(DDG, Bing HTML, crt.sh, DNS/MX). Cost ledger will show `total_cost_eur=0`.
+No `--enable-paid`. Uses direct_fetch, input-semantic, hyper-guesser, and free
+SERP. Cost ledger will show `total_cost_eur=0`.
+
+**Free SERP routing (R14).** Free SERP providers are selected per category by
+`src/providers/provider_policy.ts`:
+- For Italian real-estate categories (anything matching `/immobil/` — `agenzie
+  immobiliari`, `consulenza immobiliare`, etc.) the free pass runs **`bing_html`
+  only**; `dns_mx`, `crtsh`, `ddg_lite` are skipped. R12 evidence: those three
+  converted **0** final websites on 1,492 leads (see
+  `docs/r14_free_serp_routing_audit.md`).
+- All other categories run the full free SERP set (unchanged).
+- To force the full set for a real-estate run (debug / evaluation), set
+  `SERP_EXPANDED_FREE_ENABLED=true`. A `debug`-level log line records which
+  providers were skipped per lead.
 
 ### 4.4 Paid enrich with caps
 

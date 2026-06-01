@@ -1,6 +1,5 @@
 import * as dns from 'dns';
 import type { SerpProvider, SerpResult } from '../../types/providers';
-import { getEnv } from '../../config/env';
 
 /**
  * Tier 0 SERP via DNS MX lookup. Given a query that contains a domain or
@@ -24,8 +23,9 @@ export class DnsMxProvider implements SerpProvider {
   ) {}
 
   available(): boolean {
-    // R14 — off by default (near-zero yield for IT real-estate; see env.ts).
-    return getEnv().SERP_DNS_MX_ENABLED === true;
+    // Always registered. Per-category routing (R14) decides whether this
+    // low-yield provider is used — see src/providers/provider_policy.ts.
+    return true;
   }
 
   async search(query: string): Promise<SerpResult[]> {
