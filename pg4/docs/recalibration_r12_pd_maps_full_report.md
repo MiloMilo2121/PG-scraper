@@ -184,3 +184,61 @@ Raw dedupe counts (raw_pre_dedupe / raw_post_dedupe / collapsed_by_dedupe) are *
 **The 48% MAPS `category_match: mismatch` rate is not a signal problem** — all mismatch categories are real-estate verticals (compravendita, consulenza, mediatore). Do not use `category_match == 'confirmed'` as a hard exclusion gate; it would discard ~377 valid records. Treat it as a soft quality signal or normalize the 5 Maps category variants into a single canonical label (`agenzie immobiliari`) before any downstream filter.
 
 **Province gap on MAPS-only records** (785 records with no province field) should be resolved via post-processing: since all records are within the PD province scrape, a default `province = 'PD'` fill is safe for PD-scoped comuni, with the exception of 262 records from non-PD border municipalities (VI/TV/RO/VE/VR) which require lookup from the `city` field.
+
+---
+
+## 11. Free Enrich Completion + Validation (post-monitor, R13.1)
+
+The free-only enrich (`--cost-ceiling-eur 0`, run_id `run-1780324061936-6b52`) ran on the full 1,492-lead raw batch and **completed cleanly** — monitored to process exit, lock released cleanly (no fatal/stale). Validated with `validate_output.ts`: **PASS**.
+
+> Operating rule applied this run: **never regenerate a raw output while a live enrich is consuming it as input.** The raw R12 artifact was left untouched throughout; no `--fresh`, no re-scrape.
+
+### Validator result (`--max-cost 0`)
+| Check | Result |
+|-------|--------|
+| ok | `true` |
+| csv_rows == jsonl_rows | 1492 == 1492 ✓ |
+| ledger summaries | 1 ✓ |
+| run_ids | 1 (`run-1780324061936-6b52`) ✓ |
+| total_cost_eur ≤ 0 | 0 ✓ |
+| mojibake | none ✓ |
+| status / reason_code present | yes ✓ |
+| errors | 0 |
+
+### Enrich outcome
+| Metric | Value |
+|--------|-------|
+| Leads processed | 1,492 |
+| Leads with website | 536 (35.9 %) |
+| Leads errored | 0 |
+| Total provider calls | 5,899 |
+| Total cost | €0.00 (free-only) |
+| Cost per lead | €0.00 |
+
+### Website discovery method (536 found)
+| Method | Count |
+|--------|-------|
+| INPUT_SEMANTIC | 352 |
+| HYPER_GUESSER | 154 |
+| PG_PHONE_SOURCE_TRUST | 30 |
+
+### Provider efficiency (free tier)
+| Provider | Calls | Success | Note |
+|----------|-------|---------|------|
+| bing_html | 955 | 100 % | SERP workhorse |
+| direct_fetch | 2,076 | 58.0 % | input-website verification |
+| ddg_lite | 956 | 0.1 % (1) | near-zero yield on this batch |
+| dns_mx | 956 | 0 % | all empty — pure overhead here |
+| crtsh | 956 | 0 % | all empty — pure overhead here |
+
+### Reason-code distribution (no-website tail)
+- `SERP_DIRECTORY_ONLY`: 709 — bulk of misses (SERP returned only aggregators / PagineGialle)
+- `INPUT_WEBSITE_NOT_VERIFIED`: 171
+- `INPUT_WEBSITE_DIRECTORY_OR_SOCIAL`: 40
+- `SERP_REJECTED_BY_VERIFY`: 34
+- `INPUT_WEBSITE_TIMEOUT`: 2
+
+### Final recommendation
+- **R12 free enrich is production-valid**: aligned outputs, €0, zero errors, 35.9 % website yield from Maps+PG raw with no paid tier. This is the canonical R12 free artifact — do not re-run.
+- **Prune dead free providers for this vertical**: `dns_mx` and `crtsh` returned 0/956 each (1,912 wasted calls); `ddg_lite` 1/956. On Italian real-estate they add latency without yield — gate off or demote below `bing_html`.
+- **709 `SERP_DIRECTORY_ONLY`** is the conversion target for a capped paid SERP tier (Exa/Serper) — candidate for a sampled, cost-capped A/B, but only after the output-lock pid-reuse fix lands.
