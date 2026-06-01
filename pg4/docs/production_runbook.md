@@ -296,13 +296,18 @@ TV 96.9 %.
 The output lock lives at `<out-path>.lock`. It stores the PID of the process
 that acquired it.
 
-**IMPORTANT caveat:** the lock's PID-based liveness check (`process.kill(pid, 0)`)
-is unreliable for detecting stale locks. The OS reuses PIDs. A dead scrape or
-enrich process (say, PID 96134) can be replaced by an unrelated process (a shell,
-a pnpm install, anything) that happens to get the same PID. The lock code will
-read the PID as alive and refuse to start.
+**PID-reuse guard (R13.1):** the lock's PID-based liveness check
+(`process.kill(pid, 0)`) is unreliable on its own — the OS reuses PIDs, so a dead
+scrape/enrich PID (say, 96134) can be inherited by an unrelated process (a shell, a
+pnpm install) and read as "alive" forever. The lock now defends against this with a
+**max-age reclaim**: a lock whose PID looks alive but whose `created_at` is older
+than `DEFAULT_MAX_LOCK_AGE_MS` (12h, `src/runtime/output_lock.ts`) is treated as
+stale and reclaimed automatically, with a `[output-lock] stale lock reclaimed by
+age` warning. A malformed/unreadable lock is reclaimed only once its file mtime
+exceeds the same window. So a stuck lock now self-heals within 12h; manual
+intervention is only needed **inside** that window.
 
-**Safe procedure to clear a stale lock:**
+**Safe procedure to clear a stale lock within the 12h window:**
 
 ```bash
 # Read the lock
@@ -380,6 +385,16 @@ If a lock is stale after an interrupted enrich, follow the procedure in §7.1.
 ---
 
 ## 8. What NOT To Do
+
+**Never regenerate a raw output while a live enrich is consuming it as input.**
+A free/paid enrich reads `<raw>.csv` as its `--input` for its entire run (which can
+be 45+ min on a full province). Re-running `scrape --fresh --out <raw>.csv` during
+that window clobbers the file the enrich is actively reading → corrupt enrich output
+and wasted run. Before launching any scrape/`--fresh` on a raw basename, confirm no
+enrich is reading it: `ps aux | grep "enrich.*<raw-basename>"`. This near-miss is
+the reason §7.1's max-age guard exists. (Real incident, 2026-06-01: a 1,492-lead
+free enrich was 89% done when a `--fresh` re-scrape of the same raw was queued;
+caught at preflight.)
 
 **Do not run two writers on the same output basename.**
 The output lock (`<out>.lock`) prevents concurrent corruption, but it does this
