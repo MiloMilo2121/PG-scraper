@@ -83,40 +83,34 @@ describe('OutputLock — hardening', () => {
   });
 
   // ------------------------------------------------------------------ //
-  // 3. PID-reuse caveat — DOCUMENTED LIMITATION
+  // 3. PID-reuse guard — FIXED in R13.1
   //
-  // The created_at field in the lock payload is NEVER consulted.
-  // If the OS recycles a dead process's pid to a live, unrelated process,
-  // isProcessAlive(dead_pid) returns true (or EPERM which is also true)
-  // and the lock is treated as held — acquireOutputLock throws
-  // OutputLockError even though the original owner is gone.
-  //
-  // This test documents the observed behaviour: a lock file with an
-  // "alive-looking" pid (process.pid, which IS alive) but pointing to
-  // a stale path causes an irrecoverable block.
-  //
-  // Recommended fix: add a max-age check (e.g. > 24 h) so truly ancient
-  // locks that also have a recycled pid can still be reclaimed.
+  // Previously the created_at field was never consulted, so a recycled pid
+  // (OS reused a dead owner's pid for an unrelated live process) pinned the
+  // lock forever. acquireOutputLock now reclaims an alive-looking lock once
+  // it exceeds DEFAULT_MAX_LOCK_AGE_MS (12h). This test pins the fix: a 48h
+  // lock whose pid happens to be ours is reclaimed, not blocked.
+  // See output_lock_stale_age.test.ts for the deterministic, injected-clock
+  // coverage of every branch.
   // ------------------------------------------------------------------ //
-  it('[documented limitation] lock with current process pid is NOT reclaimed regardless of created_at age', () => {
+  it('[R13.1 fix] reclaims an alive-looking lock once it exceeds max age (pid-reuse guard)', () => {
     const target = tmpTarget();
     const lockPath = `${target}.lock`;
-    // Simulate a stale lock whose pid happens to be ours (pid-reuse scenario:
-    // the original owner died and the OS reused its pid for this process).
-    // The lock was "created" long ago, but created_at is never checked.
-    const ancientDate = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(); // 48h ago
+    // pid-reuse scenario: original owner died, OS recycled its pid to THIS
+    // process. The lock is ancient (48h > 12h default max age).
+    const ancientDate = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     fs.writeFileSync(
       lockPath,
       JSON.stringify({ pid: process.pid, created_at: ancientDate, target }),
       'utf8',
     );
-    // acquireOutputLock sees the pid is alive (process.kill(process.pid, 0) succeeds)
-    // and throws — even though the timestamp says 48 hours ago.
-    // This is the pid-reuse hazard: the lock is permanently stuck until an
-    // operator manually removes the .lock file.
-    expect(() => acquireOutputLock(target)).toThrow(OutputLockError);
-    // Cleanup
-    fs.unlinkSync(lockPath);
+    const lock = acquireOutputLock(target);
+    try {
+      const payload = JSON.parse(fs.readFileSync(lock.lockPath, 'utf8')) as { pid: number };
+      expect(payload.pid).toBe(process.pid); // reclaimed and re-acquired by us
+    } finally {
+      lock.release();
+    }
   });
 
   // ------------------------------------------------------------------ //

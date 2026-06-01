@@ -242,3 +242,109 @@ The free-only enrich (`--cost-ceiling-eur 0`, run_id `run-1780324061936-6b52`) r
 - **R12 free enrich is production-valid**: aligned outputs, €0, zero errors, 35.9 % website yield from Maps+PG raw with no paid tier. This is the canonical R12 free artifact — do not re-run.
 - **Prune dead free providers for this vertical**: `dns_mx` and `crtsh` returned 0/956 each (1,912 wasted calls); `ddg_lite` 1/956. On Italian real-estate they add latency without yield — gate off or demote below `bing_html`.
 - **709 `SERP_DIRECTORY_ONLY`** is the conversion target for a capped paid SERP tier (Exa/Serper) — candidate for a sampled, cost-capped A/B, but only after the output-lock pid-reuse fix lands.
+
+---
+
+## 12. Appendix — live-log ground truth + lift framing + next step
+
+Sections 1-11 were authored from the artifacts (and the free-enrich
+ledger). This appendix adds the scrape-time metrics from the live
+log that the artifacts don't carry, plus the lift framing in the
+R11 shape and the suggested next concrete step.
+
+### 12.1 Actual command (not inferred)
+
+  npm run scrape -- \
+    --category "agenzie immobiliari" \
+    --province PD \
+    --maps \
+    --coverage full \
+    --fresh \
+    --out output/r12_maps_pd_province_full.csv
+
+Runtime: ~31 minutes (13:55 → 14:26 on the run host).
+Note: pg4 uses `npm`, not `pnpm`. Playwright auto-bumped to
+`chrome-headless-shell` v1223 between R11 and R12; binary wasn't
+pre-downloaded — fix was `npx playwright install chromium`. Worth
+pinning the Playwright version in `package.json`.
+
+### 12.2 Scrape-time metrics not visible in the artifacts
+
+  | metric                | value |
+  | --------------------- | ----: |
+  | total_cards parsed    |  5283 |
+  | raw_pre_dedupe        |  5283 |
+  | raw_post_dedupe       |  1492 |
+  | collapsed_by_dedupe   |  3791 |
+  | dedupe collapse rate  | 71.8 %|
+  | pg_overflow_count     | 12 / 12 |
+  | maps_cap_likely_count | 11 / 60 |
+  | maps_no_feed warn     |  1 / 60 (Limena) |
+  | dropped_at_parse      |     0 |
+  | consent failures      |     0 |
+  | captcha / block loops |     0 |
+  | checkpoint_done       |   179 |
+
+Section 7's "0 cap / 0 no_feed / 0 captcha" reading was correct
+*for the JSONL records* — JSONL doesn't carry those run-level
+markers. The actual run did hit cap_likely on 11 of 60 Maps
+sessions and one no_feed warn on Limena. They were surfaced
+honestly in the run summary, not silent.
+
+12 / 12 PG queries hit overflow → PG alone undercounts on every
+PD comune, including satellites. The 71.8 % collapse rate confirms
+the deduper is the load-bearing component across the PG + 60-Maps
+sweep.
+
+### 12.3 Lift framing in R11 shape
+
+- Implicit PG-only baseline = leads where `sources[]` includes PG
+  = 651 (PG only) + 56 (PG+MAPS merged) = **707 PG-touched leads**
+- Maps-only additions = **785 net new leads**
+- **lift_percent = 785 / 707 = 111.0 %**
+
+Sits right at R11's mini-test (105.5 %) — the lift holds at
+province scale.
+
+### 12.4 R11 → R12 comparison
+
+  | metric                       | R11 (2 comuni) | R12 (PD prov, 12 comuni) |
+  | ---------------------------- | -------------: | -----------------------: |
+  | unique leads                 |            520 |                     1492 |
+  | net-new from Maps            |           +267 |                     +785 |
+  | lift over PG-only            |        105.5 % |                   111.0 %|
+  | with_website (free enrich)   |     229 (44.0%)|              536 (35.9%) |
+  | INPUT_SEMANTIC               |            166 |                      352 |
+  | HYPER_GUESSER                |             46 |                      154 |
+  | PG_PHONE_SOURCE_TRUST        |             17 |                       30 |
+  | maps_cap_likely              |         3 / 10 |                  11 / 60 |
+  | maps_no_feed                 |         1 / 10 |                   1 / 60 |
+  | consent failures             |              0 |                        0 |
+  | captcha / block              |              0 |                        0 |
+
+Per-lead website rate dropped 44.0 % → 35.9 % at province scale —
+satellite comuni include more rural agencies with weaker web
+presence. Absolute count up 2.34× for +10 comuni at €0.
+
+### 12.5 Suggested next step (operator approval required)
+
+Scale the methodology to TV next under the same no-paid free-enrich-
+pair protocol. R10.b TV paid validation (commit `1718ce4`, 96.5 %
+precision) means the enrichment-side gates are already validated
+for TV.
+
+  npm run scrape -- \
+    --category "agenzie immobiliari" \
+    --province TV \
+    --maps \
+    --coverage full \
+    --fresh \
+    --out output/r13_maps_tv_province_full.csv
+
+After R12: not committed (output/ gitignored):
+- output/r12_maps_pd_province_full.csv (1 493 lines)
+- output/r12_maps_pd_province_full.jsonl (1 492 rows)
+- output/r12_maps_pd_province_full_enriched_free.csv (1 493 lines)
+- output/r12_maps_pd_province_full_enriched_free.jsonl (1 492 rows)
+- output/r12_maps_pd_province_full_enriched_free.cost-ledger.jsonl
+  (5 900 events, 1 summary, 1 run_id, total_cost_eur = 0)
