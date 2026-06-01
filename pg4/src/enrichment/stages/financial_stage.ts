@@ -119,5 +119,20 @@ export class FinancialStage implements Stage {
       lead.employees = result.employees;
       lead.employees_is_estimated = result.employees_is_estimated ?? false;
     }
+    // Provenance — written only when we actually produced a signal.
+    if (result.financial_source && result.financial_confidence !== undefined) {
+      lead.financial_source = result.financial_source;
+      lead.financial_confidence = result.financial_confidence;
+    }
+    const notes = buildNotes(result);
+    if (notes && !lead.financial_notes) lead.financial_notes = notes;
   }
+}
+
+/** Flatten the evidence trail + non-fatal errors into a compact note string. */
+function buildNotes(result: FinancialResult): string | undefined {
+  const parts: string[] = [];
+  for (const e of result.evidence) parts.push(`${e.field}:${e.detail ?? e.source}`);
+  if (result.financial_errors) parts.push(...result.financial_errors);
+  return parts.length > 0 ? parts.join('; ') : undefined;
 }

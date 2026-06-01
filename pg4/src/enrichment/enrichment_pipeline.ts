@@ -12,6 +12,7 @@ import { PgDetailStage } from './stages/pg_detail_stage';
 import { HyperGuesserStage } from './stages/hyper_guesser_stage';
 import { SerpStage } from './stages/serp_stage';
 import { RdapBoostStage } from './stages/rdap_stage';
+import { FinancialStage } from './stages/financial_stage';
 import { PgDetailHarvester } from '../discovery/sources/pagine_gialle_detail_harvester';
 
 /**
@@ -49,6 +50,15 @@ export interface PipelineInput {
    * across leads with the same `pg_url`.
    */
   pgHarvester?: PgDetailHarvester;
+  /**
+   * R13.1 — financial enrichment stage. Runs AFTER the website discovery
+   * ladder, UNCONDITIONALLY (it is orthogonal to website success). Defaults
+   * to an enabled, NO-NETWORK instance that only promotes a checksum-valid
+   * input P.IVA to `vat_code_final` and records provenance. Tests inject a
+   * custom / disabled instance. It emits no `reason_code` and never sets
+   * the lead status, so the website-discovery verdict is unaffected.
+   */
+  financialStage?: FinancialStage;
 }
 
 export async function runEnrichmentPipeline(input: PipelineInput): Promise<EnrichmentResult> {
@@ -145,6 +155,30 @@ export async function runEnrichmentPipeline(input: PipelineInput): Promise<Enric
       perLead.costEur = run.ledger.costForLead(perLead.leadId);
       logger.warn({ stage: stage.name, err: (err as Error).message }, '[pipeline] stage threw');
     }
+  }
+
+  // ---- Financial enrichment (R13.1, orthogonal to website discovery) ----
+  // Runs for EVERY lead that reached the ladder, regardless of whether a
+  // website was found. Safe / no-network: it only promotes a checksum-valid
+  // input P.IVA to `vat_code_final` and records provenance. It emits no
+  // reason_code and never sets the lead status, so the website-discovery
+  // verdict computed below is unaffected. Wrapped so a throw can never
+  // break the lead's output row.
+  const financialStage = input.financialStage ?? new FinancialStage({ enabled: true });
+  perLead.layersAttempted.push(financialStage.name);
+  try {
+    const finOutcome = await financialStage.run(perLead, lead, normalized);
+    stageOutcomes[financialStage.name] = finOutcome;
+    // NOTE: deliberately NOT added to providersUsed — the financial source
+    // ('input') is provenance, not a network provider.
+  } catch (err) {
+    stageOutcomes[financialStage.name] = {
+      stage: financialStage.name,
+      status: 'skipped',
+      duration_ms: 0,
+      detail: `financial_stage_threw: ${(err as Error).message}`,
+    };
+    logger.warn({ err: (err as Error).message }, '[pipeline] financial stage threw');
   }
 
   const found = !!lead.official_website;

@@ -149,3 +149,69 @@ All new code is dependency-light: only `cheerio` (already a pg4 dep) for the HTM
 - **R13.4 — registry / SERP / estimate (paid-gated):** only if a free or authorized channel proves stable; otherwise stays excluded.
 
 Each phase gated on: typecheck + unit tests green, no-op-safe behavior preserved, and provenance written for every field.
+
+---
+
+## R13.1 — Safe financial stage wiring (shipped)
+
+R13.1 wires `FinancialStage` into the enrichment pipeline in **enabled but
+no-network** mode, and adds the provenance columns to the enriched output.
+
+### What changed
+
+- **`FinancialStage` runs after the website discovery ladder, unconditionally.**
+  It is *orthogonal* to website discovery: it runs whether or not a website
+  was found (it is placed after the ladder loop, not inside the
+  break-on-success ladder). See `enrichment_pipeline.ts`.
+- **It does pure work only — no network, no paid provider, no VIES, no
+  OpenAI.** The only signal it produces in R13.1 is promoting a
+  checksum-valid input `vat_code` → `vat_code_final` (source `input`,
+  confidence `0.6`). The fatturatoitalia / VIES paths remain deferred and
+  gated (R13.2+).
+- **It cannot change the website verdict.** The stage emits no `reason_code`
+  and never sets the lead `status`; the lead status is derived solely from
+  `official_website`. A financial `success` therefore never flips a
+  `NOT_FOUND` lead to `FOUND`.
+- **It can never break a lead.** The stage catches internally (degrading to
+  `skipped`), and the pipeline wraps the call in a second try/catch. The
+  worst case is a `skipped` financial outcome; the lead row is always
+  produced.
+- **Provenance does not pollute `providers_used`.** The financial source
+  (`input`) is recorded on the stage outcome and on the lead
+  (`financial_source`), but is deliberately NOT added to the network
+  `providers_used` set.
+
+### Schema (append-only)
+
+`ENRICHED_CSV_COLUMNS` gains three columns **appended at the end** (after
+`errors`) — existing columns keep their positions, so position-indexed
+readers are unaffected:
+
+| Column | Type | R13.1 value |
+|---|---|---|
+| `financial_source` | `FinancialSource` | `input` when a VAT was promoted, else empty |
+| `financial_confidence` | `number` 0–1 | `0.6` for checksum-only |
+| `financial_notes` | `string` | compact evidence trail, e.g. `vat_code:italian_piva_checksum_ok` |
+
+The five financial value fields (`vat_code_final`, `revenue`,
+`revenue_year`, `employees`, `employees_is_estimated`) already existed in
+the enriched schema from Phase 1; R13.1 only adds the provenance trio.
+
+### Control surface
+
+`runEnrichmentPipeline` accepts an optional `financialStage?: FinancialStage`.
+Default is `new FinancialStage({ enabled: true })` (pure path on). Inject
+`new FinancialStage({ enabled: false })` to make it a strict no-op.
+
+### Tests (`tests/unit/financial_wiring.test.ts`)
+
+- valid input VAT → `vat_code_final` + provenance, `status` unchanged;
+- invalid checksum → not promoted, financial outcome `not_found`;
+- missing VAT → no error, row still produced;
+- disabled stage → no-op `skipped`, website verdict unchanged;
+- financial `success` never flips the lead to `FOUND`;
+- `ENRICHED_CSV_COLUMNS` is append-only (last 3 = financial trio, prefix
+  still equals `RAW_CSV_COLUMNS`, financials after `errors`);
+- CSV writer emits the new columns in header + row.
+
+Verified: `pnpm run typecheck` + `pnpm test` (585 pass / 1 skipped).

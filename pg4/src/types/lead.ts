@@ -1,4 +1,5 @@
 import type { LeadStatus, ReasonCode, DiscoveryMethod, StageOutcome, LeadError } from './output';
+import type { FinancialSource } from '../enrichment/financial/financial_types';
 
 /**
  * The single canonical Lead shape. Raw fields populated by the scraper;
@@ -86,6 +87,18 @@ export interface Lead {
   employees?: string;
   employees_is_estimated?: boolean;
 
+  /**
+   * R13.1 — financial provenance. Every financial field above is paired
+   * with WHERE it came from and HOW confident we are, so the operator can
+   * audit any number. Populated by `FinancialStage`. In R13.1 safe mode
+   * the only source is `'input'` (a checksum-valid P.IVA promoted to
+   * `vat_code_final`); later phases add `fatturatoitalia` / `vies`.
+   */
+  financial_source?: FinancialSource;
+  financial_confidence?: number; // 0..1
+  /** Compact, human-readable provenance trail (e.g. "vat:italian_piva_checksum_ok"). */
+  financial_notes?: string;
+
   decision_maker_name?: string;
   decision_maker_role?: string;
   decision_maker_linkedin?: string;
@@ -157,6 +170,12 @@ export const ENRICHED_CSV_COLUMNS = [
   'duration_ms',
   'providers_used',
   'errors',
+  // R13.1 — APPENDED ONLY (never reorder the columns above). Financial
+  // provenance trails the existing enriched columns so older readers that
+  // index by position are unaffected.
+  'financial_source',
+  'financial_confidence',
+  'financial_notes',
 ] as const;
 
 export type RawCsvColumn = (typeof RAW_CSV_COLUMNS)[number];
