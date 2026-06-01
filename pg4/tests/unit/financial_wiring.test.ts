@@ -100,10 +100,11 @@ describe('R13.1 — FinancialStage wiring (no network)', () => {
 });
 
 describe('R13.1 — CSV columns are deterministic and append-only', () => {
-  it('appends exactly the 3 financial columns at the end of ENRICHED', () => {
-    expect(ENRICHED_CSV_COLUMNS.slice(-3)).toEqual([
+  it('appends exactly the 4 financial columns at the end of ENRICHED', () => {
+    expect(ENRICHED_CSV_COLUMNS.slice(-4)).toEqual([
       'financial_source',
       'financial_confidence',
+      'financial_evidence_count',
       'financial_notes',
     ]);
   });
@@ -132,7 +133,7 @@ describe('R13.1 — CSV columns are deterministic and append-only', () => {
     });
     await w.close();
     const [header, row] = fs.readFileSync(p, 'utf8').split('\n');
-    expect(header.trim().endsWith('financial_source,financial_confidence,financial_notes')).toBe(true);
+    expect(header.trim().endsWith('financial_source,financial_confidence,financial_evidence_count,financial_notes')).toBe(true);
     expect(row).toContain('input');
     expect(row).toContain('0.6');
     expect(row).toContain('italian_piva_checksum_ok');

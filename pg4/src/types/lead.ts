@@ -96,6 +96,8 @@ export interface Lead {
    */
   financial_source?: FinancialSource;
   financial_confidence?: number; // 0..1
+  /** Number of individual evidence records in the provenance trail. */
+  financial_evidence_count?: number;
   /** Compact, human-readable provenance trail (e.g. "vat:italian_piva_checksum_ok"). */
   financial_notes?: string;
 
@@ -175,6 +177,7 @@ export const ENRICHED_CSV_COLUMNS = [
   // index by position are unaffected.
   'financial_source',
   'financial_confidence',
+  'financial_evidence_count',
   'financial_notes',
 ] as const;
 

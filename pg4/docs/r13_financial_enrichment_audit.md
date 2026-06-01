@@ -215,3 +215,63 @@ Default is `new FinancialStage({ enabled: true })` (pure path on). Inject
 - CSV writer emits the new columns in header + row.
 
 Verified: `pnpm run typecheck` + `pnpm test` (585 pass / 1 skipped).
+
+---
+
+## R13.1 verification (post-wiring audit)
+
+**Date:** 2026-06-01
+**Performed by:** automated post-wiring audit (financial_stage_verify task)
+**Branch:** `pg4/phase-4.4-structure-cleanup`
+
+### Confirmed correct (no changes needed)
+
+- **VAT normalization** (`normalizeVatCode`): strips `IT` prefix (case-insensitive), spaces, and non-digit separators. The stage calls `normalizeVatCode(lead.vat_code_final || lead.vat_code)` before checksum validation — correctly handles both raw and pre-normalized input.
+- **Italian P.IVA checksum** (`validateItalianVatChecksum`): implements the standard Agenzia delle Entrate Luhn-like algorithm. Odd 1-indexed positions (= even 0-indexed) are summed directly; even 1-indexed positions (= odd 0-indexed) are doubled with the `>9 → -9` correction; sum % 10 === 0 is the pass condition. Verified against known public PIVAs (FIAT `00469580013`, Telecom `00488410010`) and against algorithmically derived fixtures.
+- **Invalid PIVA ignored**: checksum-invalid `vat_code` leaves `vat_code_final` undefined; stage returns `not_found`, not `error`.
+- **Missing PIVA no error**: when both `vat_code` and `vat_code_final` are absent, stage returns `not_found`; lead row is always produced.
+- **Existing revenue/employees preserved**: `applyToLead` is guarded with `!lead.revenue` / `!lead.employees` — pre-populated values are never overwritten.
+- **No status mutation**: `FinancialStage` writes no `reason_code` and never assigns `lead.status`; the website-discovery verdict computed in `finalize()` is unaffected.
+- **No-op safety**: `enabled: false` → strict `skipped` outcome; no lead field is touched.
+- **No network**: `FinancialStage` calls only `normalizeVatCode` + `validateItalianVatChecksum` (both pure). VIES, OpenAI, FatturatoItalia, and all paid providers are NOT called.
+- **Pipeline wiring**: `financialStage` runs after the website-discovery ladder loop, unconditionally, wrapped in a `try/catch`; a throw degrades to `skipped` and never breaks the lead row.
+- **`providers_used` not polluted**: the `input` financial source is recorded on `lead.financial_source` but NOT added to `perLead.providersUsed`.
+
+### Gap found and fixed
+
+**`financial_evidence_count` column was absent.**
+
+The task required four financial CSV columns:
+`financial_source`, `financial_confidence`, `financial_evidence_count`, `financial_notes`.
+
+`ENRICHED_CSV_COLUMNS` and the `Lead` type contained only the first, second, and fourth. `financial_evidence_count` was missing from both the type definition and the column list.
+
+Fix applied (append-only, no existing column reordered):
+
+1. `src/types/lead.ts`: added `financial_evidence_count?: number` to the `Lead` interface and appended `'financial_evidence_count'` to `ENRICHED_CSV_COLUMNS` between `financial_confidence` and `financial_notes`.
+2. `src/enrichment/stages/financial_stage.ts`: `applyToLead` now writes `lead.financial_evidence_count = result.evidence.length` when `evidence.length > 0`.
+3. `tests/unit/financial_wiring.test.ts`: updated the pre-existing `slice(-3)` → `slice(-4)` column-order assertion and the CSV header endsWith check to include all four financial columns.
+
+### Tests added
+
+`tests/unit/financial_stage_verify.test.ts` — 17 tests covering:
+
+- Fixture sanity (VALID_PIVA `01234567897` passes checksum; INVALID_PIVA `01234567898` fails; `normalizeVatCode` strips prefixes).
+- Valid PIVA promoted to `vat_code_final` with `source=input`, `confidence=0.6`, `financial_evidence_count ≥ 1`, `financial_notes` present.
+- IT-prefixed `vat_code` normalized before promotion.
+- Pre-existing `vat_code_final` not overwritten.
+- Invalid PIVA: `not_found`, `vat_code_final` undefined, no provenance fields set.
+- Missing PIVA: `not_found` (not `error`), lead produced intact.
+- No-op disabled stage: `skipped`, zero mutation of any lead field, snapshot equality.
+- Pre-existing `revenue`/`employees` preserved when enabled but no VAT signal.
+- CSV columns: all 4 financial cols present; all appear after `errors`; correct relative order; ENRICHED starts with all RAW columns; CSV writer emits all 4 in header and row.
+
+### Verification result
+
+```
+pnpm exec vitest run tests/unit/financial_stage_verify.test.ts
+  17 tests passed
+
+pnpm run typecheck
+  0 errors
+```

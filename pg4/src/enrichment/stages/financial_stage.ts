@@ -124,6 +124,9 @@ export class FinancialStage implements Stage {
       lead.financial_source = result.financial_source;
       lead.financial_confidence = result.financial_confidence;
     }
+    if (result.evidence.length > 0) {
+      lead.financial_evidence_count = result.evidence.length;
+    }
     const notes = buildNotes(result);
     if (notes && !lead.financial_notes) lead.financial_notes = notes;
   }
