@@ -3,6 +3,7 @@ import * as cheerio from 'cheerio';
 import type { SerpProvider, SerpResult } from '../../types/providers';
 import { ProviderBlockError } from '../../types/providers';
 import { DEFAULTS } from '../../config/defaults';
+import { getEnv } from '../../config/env';
 
 /**
  * Tier 1 SERP via DuckDuckGo Lite HTML. No JS, fast, no API key, but
@@ -18,7 +19,8 @@ export class DdgLiteProvider implements SerpProvider {
   readonly costPerCallEur = 0;
 
   available(): boolean {
-    return true;
+    // R14 — off by default (1/956 yield for IT real-estate; see env.ts).
+    return getEnv().SERP_DDG_LITE_ENABLED === true;
   }
 
   async search(query: string, opts: { signal?: AbortSignal; limit?: number } = {}): Promise<SerpResult[]> {
