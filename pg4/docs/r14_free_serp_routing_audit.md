@@ -162,3 +162,33 @@ again (debug / other-vertical evaluation). Default is `false`.
 - Provider unit tests (`dns_mx`, `crtsh`, `ddg_lite`) and paid tests
   (`serp_stage_paid_semantic_veto`, `provider_router_paid_gate`,
   `serp_stage_smart_gate`) unchanged and passing.
+
+---
+
+## 9. Sample A/B verification — EXECUTED (2026-06-01, live, free)
+
+Method: 150-lead immobiliari sample (every 10th row of the R12 raw, spread across
+all PD comuni). Two identical free enrich runs (`--cost-ceiling-eur 0`), differing
+only in `SERP_EXPANDED_FREE_ENABLED`. Artifacts: `output/r14_sample_*` (gitignored).
+
+| Metric (150 leads) | DEFAULT (R14) | EXPANDED-FREE | Δ |
+|--------------------|---------------|---------------|---|
+| Websites found | 61 (40.7 %) | 61 (40.7 %) | **0** |
+| `SERP_COMPANY` (free SERP conversions) | 0 | 0 | 0 |
+| Discovery methods | INPUT_SEMANTIC 41 / HYPER_GUESSER 17 / PG_PHONE 3 | identical | — |
+| Total provider calls | 289 | 556 | **+267** |
+| Wall-clock | **111 s** | **337 s** | **+226 s (≈3×)** |
+
+Expanded-free issued **+267 calls** (`dns_mx`/`crtsh`/`ddg_lite`, 89 each) and
+**+226 s** of wall-clock for **0** additional websites and **0** `SERP_COMPANY`.
+
+**Confirmed (now from live data, not just the R12 ledger):**
+- Pruning the three providers for this vertical has **0 measured recall loss** (61 = 61).
+- **Latency win measured: −67 % wall-clock** (111 s vs 337 s). The hogs are
+  `crtsh`/`ddg_lite` (slow/timeout-prone HTTP), not `dns_mx`.
+- `bing_html` again converted **0** (89 calls) — reinforces §2.2 but the decision to
+  keep it pending the R15 paid A/B is unchanged (single fresh vertical/zone sample;
+  bing may convert elsewhere and is the only legitimate free SERP left).
+
+Confidence on "skip dns_mx/crtsh/ddg_lite for italian_real_estate" is now very high.
+The separate question — drop free `bing_html` too — remains open for R15.
