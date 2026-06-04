@@ -4,3 +4,9 @@
 **/.DS_Store
 pg3/data
 pg3/worker.pid
+
+# Secrets - aggiunto 2026-05-17 dopo audit
+.env
+.env.local
+.env.*.local
+!.env.example

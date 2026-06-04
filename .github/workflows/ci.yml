@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pg4:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pg4/pnpm-lock.yaml
+
+      - name: Install
+        working-directory: pg4
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: pg4
+        run: pnpm run typecheck
+
+      - name: Unit tests
+        working-directory: pg4
+        run: pnpm test
