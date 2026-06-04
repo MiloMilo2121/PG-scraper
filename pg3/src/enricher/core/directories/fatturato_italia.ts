@@ -293,18 +293,12 @@ export class FatturatoItaliaHarvester {
     Logger.info(`[FatturatoItalia] 🔍 Searching: ${query}`);
 
     const {
-
       DDGSearchProvider,
-
       SerperSearchProvider,
-      TavilySearchProvider,
     } = await import('../discovery/search_provider');
 
     const providers = [
       { name: 'Serper', provider: new SerperSearchProvider() },
-
-      { name: 'Tavily', provider: new TavilySearchProvider() },
-
       { name: 'DDG', provider: new DDGSearchProvider() },
     ];
 

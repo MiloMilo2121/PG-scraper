@@ -10,7 +10,7 @@
  */
 
 import { Page, Route, Request } from 'playwright';
-import { GeneticFingerprinter } from './genetic_fingerprinter';
+import { GeneticFingerprinter } from '../../../scraper/core/browser/genetic_fingerprinter';
 import { Logger } from '../../utils/logger';
 
 // ── Tracker blocklist ────────────────────────────────────────────────

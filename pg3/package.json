@@ -20,10 +20,12 @@
     "start:scheduler": "node dist/src/index.js scheduler",
     "start:server": "node dist/src/index.js server",
     "oracle": "source testenv/bin/activate && python ops/oracle/server.py",
+    "mcp": "npx tsx src/mcp_server.ts",
     "benchmark": "npx tsx src/scripts/v8_benchmark.ts",
     "benchmark:wave": "npx tsx src/scripts/v8_benchmark_wave.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/fast-levenshtein": "^0.0.4",

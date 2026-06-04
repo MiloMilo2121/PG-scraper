@@ -40,7 +40,8 @@ export class OracleClient {
      * @param timeoutMs Timeout in milliseconds (default: 60000)
      */
     static async fetchHtmlStealth(url: string, timeoutMs: number = 60000, jsCode?: string | string[], waitFor?: string): Promise<OracleCrawlResponse> {
-        const baseUrl = this.resolveBaseUrl();
+        // [OMEGA AUTO-HEAL] Oracle disabled by user request to save RAM and use Serper/BrightData
+        throw new Error('ORACLE_DISABLED_BY_USER');
 
         try {
             Logger.info(`[OracleClient] Passing ${url} to Python Oracle for stealth extraction...`);

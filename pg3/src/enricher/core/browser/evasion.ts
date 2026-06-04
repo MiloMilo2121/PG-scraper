@@ -17,7 +17,7 @@
  */
 
 import { Page } from 'playwright';
-import { ClientHintsData, SPEECH_VOICES } from './ua_db';
+import { ClientHintsData, SPEECH_VOICES } from '../../../scraper/core/browser/ua_db';
 import { Logger } from '../../utils/logger';
 import axios from 'axios';
 

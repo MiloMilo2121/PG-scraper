@@ -6,6 +6,7 @@ import { CostRouter } from '../shared-runtime/routing/CostRouter';
 interface ContactSignals {
     pec: string | null;
     email: string | null;
+    employees?: string | null;
     source?: string | null;
 }
 
@@ -19,16 +20,8 @@ export class PecHunter {
     private static readonly preferredSubpages = [
         '',
         '/contatti',
-        '/contact',
-        '/contacts',
-        '/chi-siamo',
-        '/azienda',
-        '/about',
-        '/about-us',
-        '/company',
         '/privacy',
-        '/legal',
-        '/impressum',
+        '/chi-siamo',
     ];
     private static readonly roleWeights: Record<string, number> = {
         agenzia: 6,
@@ -86,6 +79,7 @@ export class PecHunter {
         let source: string | null = null;
         const seen = new Set<string>();
 
+        let enrichment_employees: string | null = null;
         try {
             for (const pageUrl of PecHunter.buildCandidateUrls(discoveredUrl)) {
                 if (seen.has(pageUrl)) {
@@ -100,10 +94,13 @@ export class PecHunter {
                 if (pageRes.email) {
                     email = PecHunter.prioritizeEmails([email, pageRes.email].filter(Boolean) as string[], discoveredUrl).email;
                 }
+                if (pageRes.employees && !enrichment_employees) {
+                    enrichment_employees = pageRes.employees;
+                }
                 if ((pageRes.pec || pageRes.email) && pageRes.source) {
                     source = pageRes.source;
                 }
-                if (pec && email) {
+                if (pec && email && enrichment_employees) {
                     break;
                 }
             }
@@ -134,7 +131,7 @@ export class PecHunter {
             if (!pec && !email) {
                 Logger.warn(`[PecHunter] ❌ No Contacts found for ${input.company_name}.`);
             }
-            return { pec, email, source };
+            return { pec, email, employees: enrichment_employees, source };
 
         } catch (e: any) {
             Logger.warn(`[PecHunter] Error hunting Contacts for ${input.company_name}: ${e.message}`);
@@ -153,8 +150,16 @@ export class PecHunter {
                 pec = preferred.pec;
                 email = preferred.email;
 
+                // Stage 4 integration: Opportunistic extraction
+                const { OpportunisticExtractor } = require('./OpportunisticExtractor');
+                const opportunistic = OpportunisticExtractor.extract(nav.html, url);
+                const pageEmployees = opportunistic.dipendenti;
+
                 if (pec) Logger.info(`[PecHunter] ✅ FOUND PEC on ${url}: ${pec}`);
                 if (email) Logger.info(`[PecHunter] ✅ FOUND EMAIL on ${url}: ${email}`);
+                if (pageEmployees) Logger.info(`[PecHunter] ✅ FOUND EMPLOYEES on ${url}: ${pageEmployees}`);
+
+                return { pec, email, employees: pageEmployees, source: pec || email ? 'website_contact_scan' : null };
             }
         } catch (e) {
             // Silence sub-page loading errors (e.g., 404s on /contatti)

@@ -7,15 +7,12 @@
 //   Serper/Exa/Tavily are high-reliability fallbacks for when Oracle is rate-limited.
 export const SERP_PROVIDER_ORDER = [
     'DNS-MX-MINING-0',      // Free: DNS/MX record mining
-    'CRTSH-API-1',           // Free: Certificate Transparency logs
-    'DDG-LITE-1',            // Free: DuckDuckGo HTML scraping
-    'BING-HTML-1',           // Free: Bing HTML scraping via proxy
-    'SEARXNG-NET-1',         // Free: SearXNG via Tor
-    'ORACLE-SERP-1',         // 🆓 FREE: Python Oracle → Google IT via Crawl4AI (stealth)
-    'SERPER-API-1',          // 💰 PAID: Serper (reliable fallback)
-    'EXA-API-2',             // 💰 PAID: Exa (semantic search fallback)
-    'TAVILY-API-2',          // 💰 PAID: Tavily (research fallback)
-    'PERPLEXITY-API-4',      // 💰 PAID: Perplexity (last resort)
+    'CRTSH-API-1',          // Free: Certificate Transparency logs
+    'SERPER-API-1',         // 💰 PAID: Serper (Rock-solid primary SERP)
+    'DDG-LITE-1',           // Free: DuckDuckGo HTML scraping (Fallback)
+    'BING-HTML-1',          // Free: Bing HTML scraping via proxy (Fallback)
+    'EXA-API-2',            // 💰 PAID: Exa (semantic search fallback)
+    'PERPLEXITY-API-4',     // 💰 PAID: Perplexity (last resort)
 ] as const;
 
 export const HTTP_PROVIDER_ORDER = [

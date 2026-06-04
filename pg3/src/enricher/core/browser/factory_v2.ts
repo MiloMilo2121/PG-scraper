@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 import { ResourceManager, PhaseType } from '../../utils/resource_manager';
-import { GeneticFingerprinter } from './genetic_fingerprinter';
+import { GeneticFingerprinter } from '../../../scraper/core/browser/genetic_fingerprinter';
 // Task 8 & 9: Human Behavior
 import { ProxyManager } from './proxy_manager';
 import { Logger } from '../../utils/logger';

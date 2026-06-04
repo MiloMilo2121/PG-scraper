@@ -7,12 +7,12 @@ import * as cheerio from 'cheerio';
 
 const OUTPUT_DIR = path.join(__dirname, '../../output/campaigns');
 const EXCLUDED_BRANDS = [
-    'remax', 're/max', 'tecnocasa', 'gabetti', 'tempocasa', 'professionecasa', 
+    'remax', 're/max', 'tecnocasa', 'gabetti', 'tempocasa', 'professionecasa',
     'toscano', 'engel & volkers', 'engel & völkers', 'solo affitti', 'kiron', 'pirelli re'
 ];
 
 const BLACKLIST_DOMAINS = [
-    'immobiliare.it', 'idealista.it', 'casa.it', 'paginegialle.it', 'facebook.com', 
+    'immobiliare.it', 'idealista.it', 'casa.it', 'paginegialle.it', 'facebook.com',
     'instagram.com', 'linkedin.com', 'google.com', 'infoimprese.it', 'registroimprese.it',
     'trustpilot.com', 'wikipedia.org', 'tripadvisor.it', 'tuttocitta.it', 'prontoimprese.it',
     'infobel.com', 'icitta.it', 'paginebianche.it', 'cylex.it', 'misterimprese.it',
@@ -23,13 +23,13 @@ class IPRoyalDDGProvider {
     async search(query: string) {
         const proxyUrl = process.env.PROXY_RESIDENTIAL_URL || 'http://vfHrjaXd8Cn6x0h1:ZwNw3AK4mhv2hHPq@geo.iproyal.com:12321';
         const dispatcher = new ProxyAgent({
-          uri: proxyUrl,
-          connect: { rejectUnauthorized: false }
+            uri: proxyUrl,
+            connect: { rejectUnauthorized: false }
         });
-        
+
         const rng = Math.random().toString(36).substring(7);
         const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}&_t=${Date.now()}_${rng}`;
-        
+
         const response = await fetch(url, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -38,27 +38,27 @@ class IPRoyalDDGProvider {
             },
             dispatcher
         });
-        
+
         const html = await response.text();
-        
+
         if (html.includes('bots use duckduckgo too') || html.includes('403 Forbidden')) {
             throw new Error('BLOCK');
         }
-        
+
         const results: any[] = [];
         const $ = cheerio.load(html);
         $('.result__body').each((_, el) => {
             const link = $(el).find('.result__url').attr('href');
             let realUrl = link;
             if (link && link.includes('uddg=')) {
-               realUrl = decodeURIComponent(link.split('uddg=')[1].split('&')[0]);
+                realUrl = decodeURIComponent(link.split('uddg=')[1].split('&')[0]);
             }
             const title = $(el).find('.result__title').text().trim();
             if (realUrl && realUrl.startsWith('http')) {
                 results.push({ url: realUrl, title });
             }
         });
-        
+
         return results;
     }
 }
@@ -98,7 +98,7 @@ async function delay(ms: number) {
 async function main() {
     console.log('🚀 AVVIO DOMAIN DISCOVERY (NO-WEBSITE RECOVERY)');
     const targetFile = findLatestNoWebsiteCsv();
-    
+
     if (!targetFile) {
         console.error('❌ Nessun file _NO_WEBSITE.csv trovato!');
         process.exit(1);
@@ -121,7 +121,7 @@ async function main() {
     const provider = new IPRoyalDDGProvider(); // Usiamo proxy residenziali IPRoyal
     const recoveredRows: any[] = [];
     const failedRows: any[] = [];
-    
+
     const outPath = targetFile.replace('_NO_WEBSITE.csv', '_RECOVERED.csv');
     const headers = Object.keys(rows[0]).map(k => ({ id: k, title: k }));
     // Aggiungiamo anche lo status se serve
@@ -134,9 +134,9 @@ async function main() {
     });
 
     console.log(`💾 Scriverò i risultati man mano su: ${path.basename(outPath)}`);
-    
+
     let recoveredCount = 0;
-    
+
     // Per loggare e non riempire la console
     let checkInterval = setInterval(() => {
         console.log(`⏳ Status: Processate ${recoveredRows.length + failedRows.length}/${eligibleRows.length}. Recuperate: ${recoveredCount}`);
@@ -145,34 +145,34 @@ async function main() {
     for (let i = 0; i < eligibleRows.length; i++) {
         const row = eligibleRows[i];
         const query = `"${row.company_name}" ${row.city || ''} agenzia immobiliare sito web`;
-        
+
         try {
             // Aggiungo jitter delay per non essere bloccati da DDG
-            await delay(3000 + Math.random() * 3000); 
+            await delay(3000 + Math.random() * 3000);
             const results = await provider.search(query);
-            
+
             // Cerco il primo risultato che non è blacklistato
             const validResult = results.find(r => isValidDomain(r.url));
-            
+
             if (validResult) {
                 row.website = validResult.url;
                 row.discovery_status = 'RECOVERED';
                 recoveredCount++;
                 recoveredRows.push(row);
-                console.log(`   ✅ [${i+1}/${eligibleRows.length}] ${row.company_name} -> ${row.website}`);
+                console.log(`   ✅ [${i + 1}/${eligibleRows.length}] ${row.company_name} -> ${row.website}`);
             } else {
                 row.discovery_status = 'NOT_FOUND';
                 failedRows.push(row);
                 // console.log(`   ❌ [${i+1}/${eligibleRows.length}] ${row.company_name} -> Nessun sito trovato`);
             }
-            
+
             // Salva ogni 10 record
             if ((i + 1) % 10 === 0 || i === eligibleRows.length - 1) {
                 // Riscrive tutto il file (non efficientissimo ma sicuro in caso di crash se usassimo append, o meglio qui facciamo l'append di quelli nuovi)
             }
             // Scriviamo riga per riga
             await createObjectCsvWriter({ path: outPath, header: headers, append: fs.existsSync(outPath) }).writeRecords([row]);
-            
+
         } catch (error: any) {
             console.error(`   ⚠️ Errore su ${row.company_name}: ${error.message}`);
             // Se blocca, fermiamo un po'
@@ -187,9 +187,9 @@ async function main() {
             }
         }
     }
-    
+
     clearInterval(checkInterval);
-    
+
     console.log(`\n🎉 DISCOVERY COMPLETATA!`);
     console.log(`   Totale eligibili: ${eligibleRows.length}`);
     console.log(`   Recuperate con successo: ${recoveredCount}`);
