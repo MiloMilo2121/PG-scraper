@@ -18,7 +18,7 @@ import { parseGoogleMapsResults } from '../../src/discovery/sources/google_maps_
  * for edge cases and stay unchanged.
  *
  * If the real DOM evolves and these snapshots get stale, re-run:
- *   npx tsx scripts/capture_fixtures.ts all
+ *   pnpm exec tsx scripts/capture_fixtures.ts all
  * Synthetic tests will keep passing meanwhile, so a parser change has to
  * survive both surfaces.
  */
@@ -154,7 +154,7 @@ describe.runIf(exists(MAPS_FELTRE))('REAL — Maps Feltre feed', () => {
 });
 
 describe.skipIf(exists(PG_BELLUNO) && exists(PG_MILANO) && exists(MAPS_FELTRE))(
-  'REAL fixtures missing — run `npx tsx scripts/capture_fixtures.ts all` to capture',
+  'REAL fixtures missing — run `pnpm exec tsx scripts/capture_fixtures.ts all` to capture',
   () => {
     it('placeholder', () => expect(true).toBe(true));
   }

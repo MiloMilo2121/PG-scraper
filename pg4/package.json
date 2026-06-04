@@ -4,6 +4,7 @@
   "description": "pg4 — clean lead generation & enrichment pipeline (Italian SMBs)",
   "private": true,
   "type": "commonjs",
+  "packageManager": "pnpm@10.33.2",
   "engines": {
     "node": ">=22.0.0"
   },
@@ -12,18 +13,18 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run tests/unit --reporter=dot",
     "test:smoke": "RUN_SMOKE=1 vitest run tests/smoke --reporter=dot",
-    "test:all": "npm run test && npm run test:smoke",
+    "test:all": "pnpm run test && pnpm run test:smoke",
     "scrape": "tsx src/cli/scrape.ts",
     "enrich": "tsx src/cli/enrich.ts",
     "run": "tsx src/cli/run.ts",
-    "benchmark": "tsx src/cli/benchmark.ts"
+    "benchmark": "tsx src/cli/benchmark.ts",
+    "validate:output": "tsx src/scripts/validate_output.ts"
   },
   "dependencies": {
     "cheerio": "^1.0.0",
     "csv-parse": "^5.5.6",
     "csv-stringify": "^6.5.2",
     "dotenv": "^16.4.5",
-    "openai": "^4.67.0",
     "pino": "^9.5.0",
     "pino-pretty": "^11.3.0",
     "playwright": "^1.48.0",

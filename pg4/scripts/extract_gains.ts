@@ -10,7 +10,7 @@ import readline from 'node:readline';
  *   - the verify evidence (read from stage_outcomes[*].detail)
  *
  * Usage:
- *   npx tsx pg4/scripts/extract_gains.ts <baseline.jsonl> <recal.jsonl>
+ *   pnpm exec tsx pg4/scripts/extract_gains.ts <baseline.jsonl> <recal.jsonl>
  */
 
 interface Row {

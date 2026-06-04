@@ -13,7 +13,7 @@ import type { NormalizedLead } from '../src/types/discovery';
  * an enriched JSONL through the new PaidEvidenceGate. Free
  * (direct_fetch only), no Serper.
  *
- *   npx tsx pg4/scripts/simulate_paid_gate.ts <enriched.jsonl> [groundTruth.json]
+ *   pnpm exec tsx pg4/scripts/simulate_paid_gate.ts <enriched.jsonl> [groundTruth.json]
  *
  * `groundTruth.json` (optional): { "<company_name>": "TP" | "FP" }.
  * Without it, the simulator only reports gate decisions (not

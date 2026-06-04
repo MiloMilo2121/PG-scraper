@@ -1,5 +1,5 @@
 /**
- * Minimal arg parser. Supports `--key=value`, `--key value`, and `--flag`.
+ * Minimal arg parser. Supports `--name=value`, `--name value`, and `--flag`.
  * Avoids pulling a dependency for the few CLI entries pg4 has.
  */
 export interface ParsedArgs {
@@ -12,6 +12,10 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
   const flags: Record<string, string | boolean> = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    if (a === '-h') {
+      flags.help = true;
+      continue;
+    }
     if (!a.startsWith('--')) {
       positional.push(a);
       continue;
@@ -31,6 +35,10 @@ export function parseArgs(argv: string[] = process.argv.slice(2)): ParsedArgs {
     }
   }
   return { positional, flags };
+}
+
+export function hasHelp(args: ParsedArgs): boolean {
+  return args.flags.help === true;
 }
 
 export function reqString(args: ParsedArgs, key: string, hint = ''): string {

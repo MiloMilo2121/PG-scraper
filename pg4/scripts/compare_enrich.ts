@@ -13,7 +13,7 @@ import readline from 'node:readline';
  *   - per-lead diff: leads that GAINED a website + leads that LOST one
  *
  * Run:
- *   npx tsx pg4/scripts/compare_enrich.ts \
+ *   pnpm exec tsx pg4/scripts/compare_enrich.ts \
  *     <baseline.jsonl> <recalibrated.jsonl>
  *
  * Both inputs must have one JSON object per line with at least

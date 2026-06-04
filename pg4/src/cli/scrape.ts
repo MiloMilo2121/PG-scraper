@@ -1,4 +1,4 @@
-import { parseArgs, reqString, optString } from './_args';
+import { parseArgs, reqString, optString, hasHelp } from './_args';
 import { logger } from '../runtime/logger';
 import { runFixtureMode, runLiveMode } from '../discovery/scrape_pipeline';
 import { acquireOutputLock } from '../runtime/output_lock';
@@ -13,12 +13,12 @@ import { acquireOutputLock } from '../runtime/output_lock';
  *
  * Two coexisting modes:
  *   1) FIXTURE (offline, deterministic):
- *        npm run scrape -- --fixture pg=path1.html,maps=path2.html \
+ *        pnpm run scrape -- --fixture pg=path1.html,maps=path2.html \
  *           --category "agenzie immobiliari" --out output/raw.csv
  *
  *   2) LIVE (Playwright):
- *        npm run scrape -- --category "..." --province BL --out output/raw.csv
- *        npm run scrape -- --category "..." --comuni "C1,C2,C3" --out output/raw.csv
+ *        pnpm run scrape -- --category "..." --province BL --out output/raw.csv
+ *        pnpm run scrape -- --category "..." --comuni "C1,C2,C3" --out output/raw.csv
  *
  * Live mode skips Maps unless `--maps` is passed (PG-only by default,
  * because Maps' Cloudflare/consent surface needs more hardening).
@@ -26,6 +26,10 @@ import { acquireOutputLock } from '../runtime/output_lock';
 
 async function main() {
   const args = parseArgs();
+  if (hasHelp(args)) {
+    printUsage();
+    return;
+  }
   const out = reqString(args, 'out', 'e.g. output/raw.csv');
   const category = optString(args, 'category');
   const fixtureFlag = optString(args, 'fixture');
@@ -81,6 +85,26 @@ async function main() {
   } finally {
     outputLock.release();
   }
+}
+
+function printUsage(): void {
+  process.stdout.write(`Usage:
+  pnpm run scrape -- --fixture pg=<pg.html>,maps=<maps.html> --category "<category>" --out output/raw.csv
+  pnpm run scrape -- --category "<category>" --province BL --out output/raw.csv
+
+Modes:
+  --fixture <spec>          Offline parser mode. Use pg=path,maps=path or a single path plus --source.
+  --source <pg|maps>        Source type when --fixture is a single path.
+  --category <text>         Business category to scrape.
+  --province <CC>           Live mode province code.
+  --comuni "A,B,C"          Live mode explicit municipality list.
+  --maps                    Also scrape Google Maps in live mode.
+  --max-pages <n>           Per-municipality PG page cap.
+  --checkpoint <path>       Resume checkpoint path.
+  --fresh                   Clear previous output/checkpoint for this target.
+  --headless false          Show browser in live mode.
+  --out <path>              Required raw CSV output path.
+`);
 }
 
 function parseIntOrUndefined(v: string | undefined): number | undefined {

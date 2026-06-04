@@ -1,213 +1,212 @@
 # pg4
 
-Clean lead-generation & enrichment pipeline for Italian SMBs.
+pg4 is a Node 22 + TypeScript lead discovery and website-verification pipeline for technical B2B teams working on Italian SMB data.
 
-Two-step pipeline:
+## Why pg4
 
-1. **Scrape** — collect raw leads from PagineGialle + Google Maps
-2. **Enrich** — discover official website + extract PEC/email/revenue/employees/decision-maker
+pg4 is the third generation of the PG Scraper workstream.
 
-pg4 is the third generation; pg1 (legacy resolver) and pg3 (current sprawling runtime) live alongside as references and are not removed.
+pg1 is kept as the legacy resolver reference. pg3 became the active runtime, but its April 2026 refactor notes show why a cleaner generation was needed: the production surface had BullMQ/Redis, crawler sidecars, monolithic orchestration, browser evasion concerns, and cost controls that were hard to reason about as one system. The pg3 benchmark logs also show operational symptoms: Redis degradation, Oracle sidecar failures, crt.sh 5xx/429 storms, SERP empty results treated as provider failures, and paid-provider pressure triggering stop-the-bleeding behavior.
 
----
+pg4 keeps the useful lessons and removes the operational sprawl:
 
-## Requirements
+- One canonical `Lead` type and stable CSV/JSONL outputs.
+- Explicit module boundaries for scrape, enrichment, providers, runtime, and IO.
+- Free-first provider routing, paid providers default-denied by flag and API key.
+- Structured Pino logs plus JSONL cost ledger instead of ad hoc stdout.
+- Unit tests run offline by default; real-network smoke tests require `RUN_SMOKE=1`.
 
-- Node ≥ 22
-- npm
-- (Optional) Playwright Chromium for the scraper / enrichment fallback: `npx playwright install chromium`
+## Architecture
 
-## Install
+```text
+input category/geography
+        |
+        v
+  scrape command
+  discovery/sources/*
+  - PagineGialle parser/live source
+  - Google Maps parser/live source
+        |
+        v
+  raw Lead CSV + JSONL
+        |
+        v
+  enrich command
+  enrichment/stages/*
+  - input website verification
+  - PG detail backfill
+  - hyper-guesser
+  - SERP fallback
+  - RDAP boost
+        |
+        v
+  enriched CSV + JSONL + cost ledger
+```
+
+Module boundaries:
+
+```text
+src/cli/          command argument parsing and dispatch only
+src/config/       Zod-validated env and defaults
+src/types/        canonical Lead, provider, and output contracts
+src/runtime/      logger, cost ledger, cache, checkpoint, locks, breakers
+src/discovery/    scraper pipeline, parsers, dedupe, website evidence
+src/enrichment/   stage orchestration and per-lead result policy
+src/providers/    free/paid provider registry behind the router
+src/io/           CSV and JSONL readers/writers
+```
+
+## Quick Start
 
 ```bash
-cd pg4
-npm install
+git clone https://github.com/MiloMilo2121/PG-scraper.git
+cd PG-scraper/pg4
+pnpm install
 cp .env.example .env
-# fill in only the API keys you actually have — missing keys are silently dropped
 ```
+
+Run the offline example first. It uses a mock HTTP fixture, so it does not need API keys, browser access, or network access.
+
+```bash
+pnpm run enrich -- \
+  --input examples/input_companies.csv \
+  --out output/examples/enriched.csv \
+  --mock-http examples/mock_http_pages.json
+```
+
+Expected result:
+
+```text
+[enrich] using offline mock HTTP fixture
+[CostLedger] run summary total_calls=5 total_cost_eur=0
+[enrich] done total=5 with_website=5 errors=0
+```
+
+The generated CSV should match the status/reason/website shape shown in `examples/expected_enriched.sample.csv`. Dynamic fields such as `duration_ms` are intentionally not exact.
 
 ## Commands
 
-```bash
-# 1. Discovery — scrape raw leads
-npm run scrape -- --category "agenzie immobiliari" --province MI --out output/raw.csv
+### scrape
 
-# 2. Enrichment — enrich the raw CSV
-npm run enrich -- --input output/raw.csv --out output/enriched.csv
-
-# 3. End-to-end (scrape + enrich)
-npm run run -- --category "agenzie immobiliari" --province MI --out output/campaign
-
-# Benchmark vs pg3 (best effort — falls back to baseline JSONL if pg3 unavailable)
-npm run benchmark -- --input tests/fixtures/sample_companies.csv
-
-# Quality gates
-npm run typecheck
-npm test                    # unit (zero network)
-npm run test:smoke          # smoke (real network, gated by RUN_SMOKE=1)
-```
-
-## Directory layout
-
-```
-src/
-  config/       env + defaults (zod-validated)
-  types/        Lead, providers, output (canonical shapes)
-  runtime/      logger, cost ledger, cache, backpressure, errors
-  browser/      Playwright pool (enrichment) + factory (scraping)
-  discovery/    sources/ (PG, Maps) + website/ (candidate, hyper_guesser, RDAP)
-  enrichment/   pipeline + financial/contact/dm/employee enrichers
-  providers/    serp/ http/ llm/ + cost-tiered router
-  io/           CSV + JSONL readers & writers
-  cli/          scrape, enrich, run, benchmark
-tests/
-  unit/         zero-network mock-based
-  smoke/        real-network, RUN_SMOKE=1
-  fixtures/     sample CSVs + saved HTML for parser tests
-```
-
-## Quality rules (enforced)
-
-1. **Zero silent drops** — every input row produces an output row with `status` + `reason_code`
-2. **Free-first routing** — DNS/crt.sh/DDG before paid Serper/Exa/Perplexity
-3. **Browser as last resort** — direct HTTP first
-4. **Cost control** — every provider declares cost; per-lead ceiling triggers degraded mode
-5. **One logger, one Lead type, deterministic CSV columns**
-
-## Cost discipline (Phase 4.2)
-
-pg3 logs showed 16K+ `SERP_EMPTY_RESULT` per batch (mistakenly logged as ERROR), 89 crt.sh 5xx storms, and `CLOUDFLARE_TURNSTILE on bing.com` loops. pg4 codifies the discipline that prevents these from costing you anything:
-
-- **Paid providers OFF by default.** Every paid SERP / HTTP / LLM provider is gated by an env feature flag AND requires its API key. Missing → silently dropped from the registry. Boot logs print the exact capability surface.
-- **Free-first by default.** SerpStage in the enrichment pipeline runs at `maxTier: 1` — only DNS-MX, crt.sh, DDG, Bing-HTML are dialled. Paid providers stay off until the operator explicitly opts in.
-- **`SERP_EMPTY_RESULT` is not punitive.** Empty SERP results increment the ledger as `kind: 'empty'` but do NOT count toward circuit-breaker trips. Pg3 used to lock down free providers because of this.
-- **Block / rate-limit / transport hits ARE punitive.** Bing's Cloudflare-Turnstile pages throw `ProviderBlockError`; the router classifies it (`kind: 'blocked'`), counts it toward the breaker, and routes around the provider for a cooldown window. Same for `429` (`rate_limit`) and `5xx`/`ENOTFOUND`/`fetch failed` (`transport`).
-- **Per-lead cost ceiling** *(enrich-only flag — `scrape` does not accept it because the scraper only hits free PG/Maps endpoints)*. `npm run enrich -- --cost-ceiling-eur 0.10` caps the EUR spent on a single lead. Once hit, `tierCapForLead()` forces subsequent stages to `maxTier: 1` (free SERP only) for the remainder of that lead. The pipeline exposes this via `PerLeadContext.budgetExhausted`.
-- **Cost is sourced from the ledger, not from stage counters** (Phase 4.2.1). After every stage and at finalize, the pipeline does `perLead.costEur = run.ledger.costForLead(perLead.leadId)`. Stages don't have to remember to populate `StageOutcome.cost_eur` — every router call (`.search`/`.fetch`/`.complete`) is tagged with `meta.lead_id` and the ledger is the single source of truth. `lead.cost_eur` in the final CSV is what was actually billable.
-- **JSONL ledger** *(enrich-only flag)*. `npm run enrich -- --ledger-path <path>` (default `<out>.cost-ledger.jsonl`) appends one structured line per provider call, plus a final `kind: 'summary'` line with totals, per-provider breakdown, success rates, kind breakdown, breaker state. Mid-run cost is observable; post-mortem is `jq`-friendly.
-
-Run summary example (the enrich JSONL ledger's last line):
-```json
-{
-  "run_id": "run-1778006247004-3d94",
-  "total_calls": 72,
-  "total_cost_eur": 0,
-  "success_rate": 0.43,
-  "leads_processed": 10,
-  "leads_with_website": 1,
-  "cost_per_lead_eur": 0,
-  "cost_ceiling_eur": 0.10,
-  "by_provider": {
-    "direct_fetch": { "calls": 44, "cost_eur": 0, "success_rate": 0.54, "by_kind": {"success":24,"transport":12,"timeout":7,"other":1} },
-    "dns_mx":      { "calls": 7,  "cost_eur": 0, "success_rate": 0,    "by_kind": {"empty":7} },
-    "crtsh":       { "calls": 7,  "cost_eur": 0, "success_rate": 0,    "by_kind": {"empty":7} }
-  },
-  "breaker": [],
-  "kind": "summary"
-}
-```
-
-See `IMPLEMENTATION_NOTES.md` for the full Phase 0 audit and architecture decisions.
-
-## Status
-
-| Phase | Description | Status |
-|---|---|---|
-| 0 | Audit + IMPLEMENTATION_NOTES | ✅ done |
-| 1 | Scaffold (types, config, IO, CLI stubs, typecheck green) | ✅ done |
-| 2 | Vertical slice (CSV → normalize → website-input check → enriched CSV) | ✅ done |
-| 3 | Discovery ladder (free SERP providers, SerpDeduplicator, HyperGuesser, RDAP) | ✅ done |
-| 3.5 | Scraper parser fixtures (PG + Maps pure parsers, raw deduper, dry-run) | ✅ done |
-| 3.6 | Real-fixture parser gate (live HTML for PG + Maps) | ✅ done |
-| 3.7 | Legacy failure mining → guardrails (`docs/legacy_failure_taxonomy.md`) | ✅ done |
-| 4 | Live scraper: `BrowserFactory`, `consent_handler`, PG live nav with overflow detection, Maps grid scroll with `cap_likely` flag, file-backed checkpoint, CLI fixture + live coexisting *(auto-split on overflow / cap_likely is Phase 4.x)* | ✅ done |
-| 4.1 | Resume safety: live mode re-hydrates the deduper + lead set from the prior JSONL when the checkpoint marks pages as done. `--fresh` flag wipes prior artifacts. | ✅ done |
-| 4.2 | Cost guardrails: JSONL-persistent CostLedger, ProviderBlockError + classified failure kinds (blocked/rate_limit/transport/timeout/other), per-lead cost gate (`tierCapForLead`), `--cost-ceiling-eur` + `--ledger-path` CLI flags, structured run summary. | ✅ done |
-| 4.2.1 | Safety patches before any province-wide live run: (a) resume HARD-STOPS when checkpoint shows done pages but JSONL is missing — operator must pass `--fresh` or `--allow-missing-jsonl`; (b) `lead.cost_eur` and `perLead.costEur` are now sourced from the canonical `CostLedger.costForLead(leadId)` after each stage, so paid providers can be enabled later without trusting stages to populate `StageOutcome.cost_eur`. | ✅ done |
-| 4.3 | PG live canary (Belluno, 1 comune, 2 pages): 47 unique leads, checkpoint resume verified, no breaker trips. Maps off. | ✅ canary passed |
-| 4.4 | Structure cleanup (no behavior change): thin `cli/scrape.ts`, orchestration in `discovery/scrape_pipeline.ts`, enrichment stages split into `enrichment/stages/*.ts`, `runtime/resume.ts` → `discovery/resume_prior_run.ts`, mojibake `discovery/text_cleanup.ts`, `docs/architecture.md`. **256 unit tests, all green.** | ✅ done |
-
----
-
-## Live scrape — Phase 4
-
-**Two CLI modes coexist behind `npm run scrape`:**
+Offline fixture mode, used for deterministic parser work:
 
 ```bash
-# FIXTURE mode (offline, deterministic — used in CI and dev loops)
-npm run scrape -- \
+pnpm run scrape -- \
   --fixture pg=tests/fixtures/scraper/pg_belluno_normal.html,maps=tests/fixtures/scraper/maps_feltre_feed.html \
   --category "agenzie immobiliari" \
   --out output/raw.csv
-
-# LIVE mode (Playwright headless Chromium)
-npm run scrape -- --category "agenzie immobiliari" --province BL --out output/raw.csv
-npm run scrape -- --category "agenzie immobiliari" --comuni "Belluno,Feltre,Sedico" --out output/raw.csv
-npm run scrape -- --category "agenzie immobiliari" --province BL --maps --out output/raw.csv  # opt-in to Maps
 ```
 
-**Live-mode flags:**
-| Flag | Default | Purpose |
-|---|---|---|
-| `--province <CC>` | — | curated comuni list per province (`BL`, `MI`, `TO`, …) |
-| `--comuni "C1,C2,..."` | — | explicit override list of comuni |
-| `--maps` | off | also run Maps feed scrape per comune |
-| `--max-pages <N>` | 30 | per-comune PG page cap |
-| `--inter-delay-ms <N>` | 3000 | pause between PG pages (anti-WAF) |
-| `--restart-every <N>` | 5 | proactive browser restart cadence |
-| `--checkpoint <path>` | `output/.scrape-checkpoint-<cat>.json` | resumable checkpoint location |
-| `--fresh` | off | wipe prior CSV/JSONL/checkpoint at `--out` before running |
-| `--allow-missing-jsonl` | off | acknowledge data loss when checkpoint reports done pages but the JSONL is missing (default: HARD-STOP) |
-| `--headless false` | true | run with a visible browser (debug) |
+Example output from the checked-in fixtures:
 
-**Safety notes:**
-- **Real network calls.** Live mode opens a Chromium session. Don't ship to CI without a network-access flag.
-- **Cookie/state persistence.** Browser session lives under `pg4/.browser-state/<id>.json`. Delete the directory to reset consent state.
-- **Checkpoint resumability.** Each `(provider, category, location, page)` outcome is JSON-persisted; re-runs skip done entries. **On resume the CLI rehydrates the deduper and lead set from the prior JSONL**, so the final CSV is complete even if every page was already scraped before. If the JSONL is missing but the checkpoint shows done entries, the run **HARD-STOPS** — pass `--fresh` to clear all prior artifacts and start clean, or `--allow-missing-jsonl` to acknowledge the data loss and proceed anyway.
-- **Overflow / cap signals are surfaced, not auto-split.** PG `overflow=true` and Maps `cap_likely=true` are logged + counted in the run summary so the operator can drill down by passing a finer `--comuni` list. Auto-split per geo grid is a Phase 4.x follow-up — this README does NOT promise it today.
-- **Maps is OFF by default in live mode.** PG is more reliable; Maps requires further consent/captcha hardening before being on by default.
-| 5 | Benchmark vs pg3 | ⏳ pending |
+```text
+[scrape] fixture mode done fixtures=2 raw=8 out=output/raw.csv
+```
 
-**Sanity check (vertical slice + scrape dry-run):**
+Live mode uses Playwright Chromium and real PG/Maps pages:
+
 ```bash
-cd pg4 && npm install
-npm run typecheck          # green
-npm test                   # 256/256 passing, zero network
-npm run enrich -- --input tests/fixtures/sample_companies.csv --out output/enriched.csv
-# → 10/10 rows produced; every row has status + reason_code
-
-npm run scrape -- \
-  --fixture pg=tests/fixtures/scraper/pg_belluno_normal.html,maps=tests/fixtures/scraper/maps_feltre_feed.html \
-  --category "agenzie immobiliari" \
-  --out output/raw.csv
-# → 9 cards → 8 records (1 dropped at parse: empty name); deterministic CSV columns
+pnpm run scrape -- --category "agenzie immobiliari" --province BL --out output/raw.csv
 ```
 
-**Live PG (Phase 4.3 canary, single comune):**
+### enrich
+
+Default mode verifies candidate websites from raw CSV input and writes enriched CSV, JSONL, and cost ledger files:
+
 ```bash
-npm run scrape -- \
-  --category "agenzie immobiliari" \
-  --comuni "Belluno" \
-  --max-pages 2 \
-  --fresh \
-  --out output/p43_smoke.csv
-# Reference run (verified): 47 unique leads, checkpoint resumes correctly,
-# Maps off, no breaker trips, browser stable. Re-running without --fresh
-# rehydrates the lead set from the prior JSONL.
+pnpm run enrich -- --input output/raw.csv --out output/enriched.csv
 ```
 
-**Next safe ramp (3 comuni BL):**
+Offline mock mode:
+
 ```bash
-npm run scrape -- \
-  --category "agenzie immobiliari" \
-  --comuni "Belluno,Feltre,Sedico" \
-  --max-pages 3 \
-  --fresh \
-  --out output/p43_3comuni.csv
-# Expect ~90-150 unique leads, 6 checkpoint entries (3 comuni × 2 pages),
-# 0 errors, no overflow on small comuni.
+pnpm run enrich -- \
+  --input examples/input_companies.csv \
+  --out output/examples/enriched.csv \
+  --mock-http examples/mock_http_pages.json
 ```
 
-> Live mode is opt-in. Maps stays OFF unless you pass `--maps`. Paid
-> providers stay OFF until explicitly enabled via env feature flags AND
-> their API keys.
+Example output from the mock fixture:
+
+```text
+total=5 with_website=5 errors=0 total_cost_eur=0
+```
+
+### run
+
+```bash
+pnpm run run -- --category "agenzie immobiliari" --province BL --out output/campaign
+```
+
+Current status: this command is reserved for the end-to-end scrape -> enrich workflow and currently logs the intended campaign. Use `scrape` and `enrich` separately for production runs until it is wired.
+
+### benchmark
+
+```bash
+pnpm run benchmark -- --input tests/fixtures/sample_companies.csv
+```
+
+Current status: code-level Phase 5 placeholder. The available pg3 evidence and pg4 measurement gaps are documented in `BENCHMARK.md`.
+
+All commands expose usage:
+
+```bash
+pnpm run scrape -- --help
+pnpm run enrich -- --help
+pnpm run run -- --help
+pnpm run benchmark -- --help
+```
+
+## Quality Gates
+
+Default gates are offline and deterministic:
+
+```bash
+pnpm run typecheck
+pnpm test
+```
+
+Smoke tests are intentionally gated because they touch real network/browser surfaces:
+
+```bash
+RUN_SMOKE=1 pnpm run test:smoke
+```
+
+Benchmark policy:
+
+- pg3 comparison data comes from checked-in pg3 `benchmark_*.log` files.
+- pg4 benchmark cells remain `TBD - to be measured` until a comparable real run exists.
+- Never infer accuracy from a found-count alone; use `TBD` unless there is a validated truth set.
+
+CI runs `pnpm install --frozen-lockfile`, `pnpm run typecheck`, and `pnpm test`. Smoke tests and secrets are excluded from CI.
+
+## Project Layout
+
+```text
+repo root/
+  .github/workflows/ci.yml      GitHub Actions unit gate for pg4
+
+pg4/
+  examples/                     offline CSV + mock HTTP example
+  docs/                         audit notes and recalibration reports
+  scripts/                      local audit/report helpers, not CI entrypoints
+  src/
+    browser/                    Playwright factory and consent handling
+    cli/                        scrape, enrich, run, benchmark
+    config/                     env schema and defaults
+    discovery/                  scraping, parsing, dedupe, website evidence
+    enrichment/                 enrichment stages and result policy
+    io/                         CSV/JSONL IO
+    providers/                  provider catalog and router
+    runtime/                    logging, ledgers, circuit breakers, locks
+    types/                      canonical data contracts
+  tests/
+    fixtures/                   saved parser fixtures and small CSVs
+    smoke/                      RUN_SMOKE=1 live checks
+    unit/                       offline unit coverage
+```
+
+## Roadmap
+
+- Wire `run` into the existing scrape -> enrich components without changing the CLI contract.
+- Produce a real pg4 benchmark on the same target class as the pg3 wave benchmark and update `BENCHMARK.md`.

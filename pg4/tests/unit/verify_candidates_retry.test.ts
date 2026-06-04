@@ -2,6 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { verifyCandidates } from '../../src/enrichment/stages/verify_candidates';
 import { normalizeLead } from '../../src/discovery/input_normalizer';
 import type { Lead } from '../../src/types/lead';
+import { ProviderRouter } from '../../src/providers/provider_router';
+import type { RouteOptions } from '../../src/providers/provider_router';
+import { CostLedger } from '../../src/runtime/cost_ledger';
+import type { HttpFetchResult } from '../../src/types/providers';
 
 /**
  * Phase D.2 — single retry on transport flap (pianon.eu / ECONNREFUSED).
@@ -18,19 +22,34 @@ import type { Lead } from '../../src/types/lead';
  *   4. Retry budget cap: cumulative delay never exceeds the budget.
  */
 
-function fakeRouter(plan: Array<{ status: number; html?: string; error?: string }>) {
-  let i = 0;
-  const seenOpts: Array<{ url: string; bypassBreakerRecord?: boolean }> = [];
-  return {
-    fetch: async (url: string, opts: any) => {
-      seenOpts.push({ url, bypassBreakerRecord: opts?.bypassBreakerRecord });
-      const next = plan[Math.min(i, plan.length - 1)];
-      i++;
-      return { provider: 'direct_fetch', duration_ms: 5, cost_eur: 0, ...next };
-    },
-    fetchCalls: () => i,
-    seenOpts: () => seenOpts,
-  } as any;
+type PlannedFetch = Pick<HttpFetchResult, 'status'> & Partial<Omit<HttpFetchResult, 'status' | 'duration_ms' | 'cost_eur' | 'provider'>>;
+
+class FakeRouter extends ProviderRouter {
+  private calls = 0;
+  private readonly seen: Array<{ url: string; bypassBreakerRecord?: boolean }> = [];
+
+  constructor(private readonly plan: PlannedFetch[]) {
+    super([], [], [], new CostLedger());
+  }
+
+  override async fetch(url: string, opts: RouteOptions & { timeoutMs?: number } = {}): Promise<HttpFetchResult> {
+    this.seen.push({ url, bypassBreakerRecord: opts.bypassBreakerRecord });
+    const next = this.plan[Math.min(this.calls, this.plan.length - 1)];
+    this.calls++;
+    return { provider: 'direct_fetch', duration_ms: 5, cost_eur: 0, ...next };
+  }
+
+  fetchCalls(): number {
+    return this.calls;
+  }
+
+  seenOpts(): Array<{ url: string; bypassBreakerRecord?: boolean }> {
+    return this.seen;
+  }
+}
+
+function fakeRouter(plan: PlannedFetch[]): FakeRouter {
+  return new FakeRouter(plan);
 }
 
 const realEstateBody =

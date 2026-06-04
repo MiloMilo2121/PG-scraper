@@ -6,10 +6,10 @@
  * DOM snapshots. Synthetic fixtures (Phase 3.5) are kept untouched.
  *
  * Usage:
- *   npx tsx scripts/capture_fixtures.ts pg-belluno
- *   npx tsx scripts/capture_fixtures.ts pg-milano
- *   npx tsx scripts/capture_fixtures.ts maps-feltre
- *   npx tsx scripts/capture_fixtures.ts all
+ *   pnpm exec tsx scripts/capture_fixtures.ts pg-belluno
+ *   pnpm exec tsx scripts/capture_fixtures.ts pg-milano
+ *   pnpm exec tsx scripts/capture_fixtures.ts maps-feltre
+ *   pnpm exec tsx scripts/capture_fixtures.ts all
  *
  * The script writes ONLY the container (`.search-results` for PG and
  * `div[role="feed"]` for Maps) wrapped in a minimal `<html><body>` shell.
