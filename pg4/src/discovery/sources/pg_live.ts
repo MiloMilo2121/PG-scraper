@@ -47,7 +47,7 @@ export interface PgLiveResult {
   overflow: boolean;
 }
 
-const PG_RESULTS_SELECTOR = '.search-itm';
+export const PG_RESULTS_SELECTOR = '.search-itm';
 const PG_CONTAINER_SELECTORS = ['.search-results', '.search-itm-list', 'main'];
 
 export async function scrapePgLocation(

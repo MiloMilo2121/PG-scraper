@@ -35,7 +35,7 @@ export interface MapsLiveResult {
   scroll_attempts: number;
 }
 
-const FEED_SELECTOR = 'div[role="feed"]';
+export const FEED_SELECTOR = 'div[role="feed"]';
 const END_MARKERS = '.m6QErb span.HlvSq, .Q2vNVc';
 
 export async function scrapeMapsLocation(

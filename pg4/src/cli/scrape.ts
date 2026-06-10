@@ -1,15 +1,21 @@
+import crypto from 'crypto';
+import path from 'path';
 import { parseArgs, reqString, optString, hasHelp } from './_args';
-import { logger } from '../runtime/logger';
+import { logger, bindRunLogFile } from '../runtime/logger';
 import { runFixtureMode, runLiveMode } from '../discovery/scrape_pipeline';
 import { acquireOutputLock } from '../runtime/output_lock';
+import { RunRecorder, EXIT, installInterruptHandler, readRunHistory, runsFilePath, assessYield } from '../runtime/run_record';
+import { getNotifier } from '../runtime/notifier';
+import { PreflightError } from '../discovery/preflight';
 
 /**
  * scrape — Phase 4 CLI (thin wrapper).
  *
- * Argument parsing + flag validation + dispatch only. All orchestration
- * (fixture mode + live mode + comuni resolution + dedupe + output)
- * lives in `src/discovery/scrape_pipeline.ts` so it can be exercised
- * by tests without touching the CLI.
+ * Argument parsing + flag validation + lifecycle (run record, signals,
+ * exit codes) + dispatch. All orchestration (fixture mode + live mode +
+ * comuni resolution + dedupe + output) lives in
+ * `src/discovery/scrape_pipeline.ts` so it can be exercised by tests
+ * without touching the CLI.
  *
  * Two coexisting modes:
  *   1) FIXTURE (offline, deterministic):
@@ -22,17 +28,23 @@ import { acquireOutputLock } from '../runtime/output_lock';
  *
  * Live mode skips Maps unless `--maps` is passed (PG-only by default,
  * because Maps' Cloudflare/consent surface needs more hardening).
+ *
+ * Exit codes (Phase B.3): 0 ok · 2 fatal · 3 preflight failed ·
+ * 130 interrupted. Never prompts — safe for cron/launchd as-is.
  */
 
-async function main() {
+async function main(): Promise<number> {
   const args = parseArgs();
   if (hasHelp(args)) {
     printUsage();
-    return;
+    return EXIT.OK;
   }
   const out = reqString(args, 'out', 'e.g. output/raw.csv');
   const category = optString(args, 'category');
   const fixtureFlag = optString(args, 'fixture');
+
+  // Phase A.1 — per-run log file alongside outputs (LOG_FILE env overrides).
+  const logFile = bindRunLogFile(out.replace(/\.csv$/i, '') + '.log.jsonl');
 
   if (fixtureFlag) {
     const outputLock = acquireOutputLock(out, { command: 'scrape', mode: 'fixture', fixture: fixtureFlag });
@@ -43,7 +55,7 @@ async function main() {
         fixture: fixtureFlag,
         sourceFlag: optString(args, 'source'),
       });
-      return;
+      return EXIT.OK;
     } finally {
       outputLock.release();
     }
@@ -64,9 +76,23 @@ async function main() {
     }
     mapsCoverage = coverageRaw;
   }
+
+  const runId = optString(args, 'run-id') ?? `run-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+  const abort = new AbortController();
+  const recorder = new RunRecorder({ runId, command: 'scrape', outCsv: out, category, logFile });
+  installInterruptHandler({
+    // The live loop checks the signal between comuni; checkpoint is synced
+    // after every page so the natural drain emits partial outputs and the
+    // next run resumes cleanly.
+    onSignal: () => abort.abort(),
+    onForceExit: () => {
+      recorder.finish('interrupted', EXIT.INTERRUPTED, { error: 'force-exit: graceful drain did not complete' });
+    },
+  });
+
   const outputLock = acquireOutputLock(out, { command: 'scrape', mode: 'live', category });
   try {
-    await runLiveMode({
+    const summary = await runLiveMode({
       out,
       category,
       province: optString(args, 'province'),
@@ -81,7 +107,70 @@ async function main() {
       restartEvery: parseIntOrUndefined(optString(args, 'restart-every')),
       fresh: !!args.flags['fresh'],
       allowMissingJsonl: !!args.flags['allow-missing-jsonl'],
+      skipPreflight: !!args.flags['skip-preflight'],
+      abortSignal: abort.signal,
     });
+
+    // Phase A.4 — yield anomaly check against run history (advisory only).
+    // History is read BEFORE this run's record is appended, so the baseline
+    // never includes the run being assessed.
+    const history = readRunHistory(runsFilePath(out));
+    const yieldCheck = assessYield(history, { category, comuniYield: summary.comuni_yield });
+    if (yieldCheck.suspect) {
+      logger.warn(
+        { suspect_comuni: yieldCheck.suspectComuni, detail: yieldCheck.detail },
+        '[scrape] ⚠ YIELD ANOMALY — one or more comuni yielded <30% of their historical average. ' +
+          'Possible markup drift, consent regression, or IP throttling. Inspect before trusting this output.'
+      );
+      getNotifier().notify({
+        kind: 'yield_anomaly',
+        title: 'Scrape yield anomaly',
+        body: `Comuni below 30% of historical average: ${yieldCheck.suspectComuni.join(', ')}.`,
+        meta: { run_id: runId, out_csv: out },
+      });
+    }
+
+    recorder.update({
+      leads_out: summary.leads,
+      comuni_yield: summary.comuni_yield,
+      suspect: yieldCheck.suspect || undefined,
+      suspect_comuni: yieldCheck.suspect ? yieldCheck.suspectComuni : undefined,
+    });
+
+    if (summary.interrupted) {
+      recorder.finish('interrupted', EXIT.INTERRUPTED);
+      getNotifier().notify({
+        kind: 'run_interrupted',
+        title: 'Scrape interrupted',
+        body: `Partial outputs on disk (${summary.leads} leads); checkpoint is resume-ready.`,
+        meta: { run_id: runId },
+      });
+      return EXIT.INTERRUPTED;
+    }
+
+    recorder.finish('ok', EXIT.OK);
+    getNotifier().notify({
+      kind: 'run_complete',
+      title: 'Scrape complete',
+      body: `${summary.leads} unique leads from ${summary.total_cards} cards (${summary.comuni_count} comuni)${yieldCheck.suspect ? ' — YIELD SUSPECT' : ''}.`,
+      meta: { run_id: runId, out_csv: out },
+    });
+    return EXIT.OK;
+  } catch (err) {
+    if (err instanceof PreflightError) {
+      recorder.finish('preflight_failed', EXIT.PREFLIGHT_FAILED, { error: err.message });
+      getNotifier().notify({
+        kind: 'preflight_failed',
+        title: `Preflight failed (${err.source.toUpperCase()})`,
+        body: err.message,
+        meta: { run_id: runId },
+      });
+      logger.error({ source: err.source, selector: err.selector }, `[scrape] ${err.message}`);
+      return EXIT.PREFLIGHT_FAILED;
+    }
+    recorder.finish('fatal', EXIT.FATAL, { error: (err as Error).message });
+    getNotifier().notify({ kind: 'run_failed', title: 'Scrape failed', body: (err as Error).message, meta: { run_id: runId } });
+    throw err;
   } finally {
     outputLock.release();
   }
@@ -103,7 +192,16 @@ Modes:
   --checkpoint <path>       Resume checkpoint path.
   --fresh                   Clear previous output/checkpoint for this target.
   --headless false          Show browser in live mode.
+  --skip-preflight          Skip the selector health check (Phase A.3).
+  --run-id <id>             Externally supplied run id (used by the run command).
   --out <path>              Required raw CSV output path.
+
+Observability (Phase A):
+  LOG_FILE env              Per-run JSONL log. Default: <out>.log.jsonl. LOG_FILE=off disables.
+  NOTIFY env                local (default) | off. Completion/anomaly events.
+  Run history               One record per run appended to <outdir>/_runs.jsonl.
+
+Exit codes: 0 ok | 2 fatal | 3 preflight failed | 130 interrupted.
 `);
 }
 
@@ -113,7 +211,9 @@ function parseIntOrUndefined(v: string | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-main().catch((err) => {
-  logger.error({ err: err.message, stack: err.stack }, '[scrape] failed');
-  process.exit(1);
-});
+main()
+  .then((code) => process.exit(code))
+  .catch((err) => {
+    logger.error({ err: err.message, stack: err.stack }, '[scrape] failed');
+    process.exit(EXIT.FATAL);
+  });

@@ -1,135 +1,112 @@
+import crypto from 'crypto';
 import path from 'path';
 import { parseArgs, reqString, optString, hasHelp } from './_args';
-import { logger } from '../runtime/logger';
-import { readCsvAsLeads } from '../io/csv_reader';
-import { OutputManager } from '../io/output_manager';
-import { createRun, createPerLeadContext } from '../runtime/run_context';
-import { buildProviderCatalog } from '../providers/provider_catalog';
-import { runEnrichmentPipeline } from '../enrichment/enrichment_pipeline';
-import { PgDetailHarvester } from '../discovery/sources/pagine_gialle_detail_harvester';
-import { acquireOutputLock } from '../runtime/output_lock';
-import { buildMockHttpRouter, buildNoopPgDetailHarvester } from './mock_http';
+import { logger, bindRunLogFile } from '../runtime/logger';
+import { RunRecorder, EXIT, installInterruptHandler } from '../runtime/run_record';
+import { getNotifier } from '../runtime/notifier';
+import { runEnrichCommand } from './enrich_command';
 
 /**
  * `pnpm run enrich -- --input output/raw.csv --out output/enriched.csv`
  *
- * Phase 2 vertical slice: read CSV → normalize → dedupe → check input website
- * via direct_fetch → write CSV+JSONL with status + reason_code on every row.
+ * Thin wrapper: arg parsing + run-record lifecycle + signal handling +
+ * exit codes. The pipeline itself lives in `enrich_command.ts` so the
+ * `run` command and tests can reuse it.
+ *
+ * Exit codes (Phase B.3): 0 ok · 1 partial (row errors) · 2 fatal ·
+ * 130 interrupted. Never prompts — safe for cron/launchd as-is.
  */
-async function main() {
+async function main(): Promise<number> {
   const args = parseArgs();
   if (hasHelp(args)) {
     printUsage();
-    return;
+    return EXIT.OK;
   }
   const input = reqString(args, 'input', 'path to raw CSV');
   const csvOut = reqString(args, 'out', 'path to enriched CSV');
-  const jsonlOut = csvOut.replace(/\.csv$/i, '') + '.jsonl';
-  const mockHttpPath = optString(args, 'mock-http');
 
-  const ledgerPath = optString(args, 'ledger-path') ?? csvOut.replace(/\.csv$/i, '') + '.cost-ledger.jsonl';
-  const outputLock = acquireOutputLock(csvOut, { input, jsonlOut, ledgerPath, command: 'enrich' });
+  // Phase A.1 — per-run log file alongside outputs (LOG_FILE env overrides).
+  const logFile = bindRunLogFile(csvOut.replace(/\.csv$/i, '') + '.log.jsonl');
+
+  const ceilingArg = optString(args, 'cost-ceiling-eur');
+  const runCeilingArg = optString(args, 'run-cost-ceiling-eur');
+
+  const runId = optString(args, 'run-id') ?? `run-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+  const abort = new AbortController();
+  const recorder = new RunRecorder({ runId, command: 'enrich', outCsv: csvOut, logFile });
+  installInterruptHandler({
+    // Fast path: signal the drain. The command notices the abort between
+    // rows, finishes in-flight leads, flushes outputs + ledger summary,
+    // releases the lock — then main() returns interrupted and exits 130.
+    onSignal: () => abort.abort(),
+    // Last resort (drain wedged / second Ctrl-C): persist what we know.
+    onForceExit: () => {
+      recorder.finish('interrupted', EXIT.INTERRUPTED, { error: 'force-exit: graceful drain did not complete' });
+    },
+  });
+
   try {
-    const ceilingArg = optString(args, 'cost-ceiling-eur');
-    const costCeiling = ceilingArg ? Number(ceilingArg) : undefined;
-    // Phase G — paid providers gate. Default DENY: paid is off unless
-    // `--enable-paid` is passed. The cost-ceiling-eur=0 path also
-    // forces paid off as an extra safety, so an operator can run
-    // "free regression" by setting the ceiling to 0 even if they
-    // forgot to drop --enable-paid.
-    const enablePaid = !!args.flags['enable-paid'];
-    const runCeilingArg = optString(args, 'run-cost-ceiling-eur');
-    const runCostCeilingEur = runCeilingArg ? Number(runCeilingArg) : undefined;
-    const paidEnabled = enablePaid && (costCeiling === undefined || costCeiling > 0);
-    if (enablePaid && !paidEnabled) {
-      logger.warn(
-        { costCeiling },
-        '[enrich] --enable-paid is ignored because --cost-ceiling-eur is 0; force-OFF paid for this run',
-      );
-    }
-    const run = createRun({
-      ledgerJsonlPath: ledgerPath,
-      costCeilingEur: costCeiling,
-      paidEnabled,
-      runCostCeilingEur,
+    const result = await runEnrichCommand({
+      input,
+      csvOut,
+      mockHttpPath: optString(args, 'mock-http'),
+      ledgerPath: optString(args, 'ledger-path'),
+      costCeilingEur: ceilingArg ? Number(ceilingArg) : undefined,
+      runCostCeilingEur: runCeilingArg ? Number(runCeilingArg) : undefined,
+      enablePaid: !!args.flags['enable-paid'],
+      runId,
+      abortSignal: abort.signal,
     });
-    const router = mockHttpPath ? buildMockHttpRouter(run.ledger, mockHttpPath) : buildProviderCatalog(run.ledger);
-    const dnsResolver = mockHttpPath ? async (_host: string): Promise<string[]> => [] : undefined;
-    // R1 — shared harvester so duplicate `pg_url`s across leads only
-    // hit the network once per run.
-    const pgHarvester = mockHttpPath ? buildNoopPgDetailHarvester() : new PgDetailHarvester();
 
-    const output = new OutputManager(csvOut, jsonlOut, 'enriched');
-    logger.info(
-      { runId: run.ctx.runId, input, csvOut, paidEnabled, costCeilingEur: costCeiling, runCostCeilingEur },
-      '[enrich] starting',
-    );
-    if (mockHttpPath) {
-      logger.info({ mockHttpPath }, '[enrich] using offline mock HTTP fixture');
-    }
-
-    let total = 0;
-    let withWebsite = 0;
-    let errors = 0;
-    const inFlight: Promise<void>[] = [];
-    const concurrency = run.cfg.pipeline.concurrency;
-
-    for await (const item of readCsvAsLeads(input)) {
-      total += 1;
-      const task = (async () => {
-        const perLead = createPerLeadContext(run);
-        try {
-          const result = await runEnrichmentPipeline({
-            run,
-            perLead,
-            router,
-            lead: item.lead,
-            ingestError: item.ingestError,
-            dnsResolver,
-            pgHarvester,
-          });
-          if (result.lead.official_website) withWebsite += 1;
-          await output.write(result.lead, { stage_outcomes: result.stage_outcomes });
-        } catch (err) {
-          errors += 1;
-          logger.error({ line: item.lineNumber, err: (err as Error).message }, '[enrich] row failed');
-          await output.write({ ...item.lead, status: 'ERROR', reason_code: 'ERROR_INTERNAL', errors: [{ stage: 'pipeline', message: (err as Error).message }] });
-        }
-      })().finally(() => {
-        const idx = inFlight.indexOf(task);
-        if (idx >= 0) inFlight.splice(idx, 1);
-      });
-      inFlight.push(task);
-      if (inFlight.length >= concurrency) {
-        await Promise.race(inFlight);
-      }
-    }
-
-    await Promise.all(inFlight);
-    await output.close();
-    run.ledger.flushSummary({
-      leads_processed: total,
-      leads_with_website: withWebsite,
-      leads_errored: errors,
-      cost_per_lead_eur: total > 0 ? run.ledger.getTotal() / total : 0,
-      cost_ceiling_eur: run.ctx.costCeilingEur,
-      breaker: router.describeBreaker(),
+    recorder.update({
+      leads_in: result.total,
+      leads_out: result.total,
+      with_website: result.withWebsite,
+      row_errors: result.errors,
+      total_cost_eur: result.totalCostEur,
     });
 
     logger.info(
       {
-        total,
-        with_website: withWebsite,
-        errors,
+        total: result.total,
+        with_website: result.withWebsite,
+        errors: result.errors,
+        budget_exhausted_leads: result.budgetExhaustedLeads,
         output_csv: path.resolve(csvOut),
-        output_jsonl: path.resolve(jsonlOut),
-        ledger_jsonl: path.resolve(ledgerPath),
-        duration_ms: Date.now() - run.ctx.startedAt,
+        output_jsonl: path.resolve(result.jsonlOut),
+        ledger_jsonl: path.resolve(result.ledgerPath),
       },
       '[enrich] done'
     );
-  } finally {
-    outputLock.release();
+
+    if (result.interrupted) {
+      recorder.finish('interrupted', EXIT.INTERRUPTED);
+      getNotifier().notify({
+        kind: 'run_interrupted',
+        title: 'Enrich interrupted',
+        body: `Run on ${path.basename(csvOut)} interrupted; ${result.total} leads processed before stop, outputs are consistent.`,
+        meta: { run_id: result.runId },
+      });
+      return EXIT.INTERRUPTED;
+    }
+    const status = result.errors > 0 ? 'partial' : 'ok';
+    const code = result.errors > 0 ? EXIT.PARTIAL : EXIT.OK;
+    recorder.finish(status, code);
+    getNotifier().notify({
+      kind: 'run_complete',
+      title: 'Enrich complete',
+      body: `${result.total} leads, ${result.withWebsite} with website, ${result.errors} errors, €${result.totalCostEur.toFixed(4)}.`,
+      meta: { run_id: result.runId, status },
+    });
+    return code;
+  } catch (err) {
+    recorder.finish('fatal', EXIT.FATAL, { error: (err as Error).message });
+    getNotifier().notify({
+      kind: 'run_failed',
+      title: 'Enrich failed',
+      body: (err as Error).message,
+    });
+    throw err;
   }
 }
 
@@ -146,10 +123,20 @@ Flags:
   --run-cost-ceiling-eur <n>    Aggregate run ceiling for paid providers.
   --ledger-path <path>          Cost ledger JSONL path. Default: <out>.cost-ledger.jsonl.
   --enable-paid                 Opt in to paid providers already enabled by env and API key.
+  --run-id <id>                 Externally supplied run id (used by the run command).
+
+Observability (Phase A):
+  LOG_FILE env                  Per-run JSONL log. Default: <out>.log.jsonl. LOG_FILE=off disables.
+  NOTIFY env                    local (default) | off. Cost/completion events.
+  Run history                   One record per run appended to <outdir>/_runs.jsonl.
+
+Exit codes: 0 ok | 1 partial (row errors) | 2 fatal | 130 interrupted.
 `);
 }
 
-main().catch((err) => {
-  logger.error({ err: err.message, stack: err.stack }, '[enrich] fatal');
-  process.exit(1);
-});
+main()
+  .then((code) => process.exit(code))
+  .catch((err) => {
+    logger.error({ err: err.message, stack: err.stack }, '[enrich] fatal');
+    process.exit(EXIT.FATAL);
+  });

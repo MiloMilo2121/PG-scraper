@@ -104,6 +104,15 @@ export class ProviderRouter {
    * counter closes.
    */
   private reservedEur = 0;
+  /**
+   * Phase A.5 — one-shot run-ceiling listener. Fired the FIRST time a
+   * paid provider is dropped because the run cost ceiling would be
+   * exceeded. Before this, hitting the cap was a silent `continue` —
+   * the operator only discovered the run degraded to free-only by
+   * reading per-provider counts in the ledger after the fact.
+   */
+  private onRunCeilingHit?: (info: { ledgerTotalEur: number; ceilingEur: number }) => void;
+  private runCeilingFired = false;
 
   constructor(
     private readonly serps: SerpProvider[],
@@ -220,6 +229,23 @@ export class ProviderRouter {
     return null;
   }
 
+  /**
+   * Phase A.5 — register the run-ceiling listener (latched: fires once
+   * per router lifetime). Call sites stay untouched; the CLI wires the
+   * notifier here.
+   */
+  setRunCeilingListener(fn: (info: { ledgerTotalEur: number; ceilingEur: number }) => void): void {
+    this.onRunCeilingHit = fn;
+  }
+
+  private fireRunCeiling(ceilingEur: number): void {
+    if (this.runCeilingFired) return;
+    this.runCeilingFired = true;
+    const info = { ledgerTotalEur: this.ledger.getTotal(), ceilingEur };
+    logger.warn(info, '[Router] run cost ceiling reached — paid providers disabled for the rest of the run');
+    this.onRunCeilingHit?.(info);
+  }
+
   /** Allow the catalog to tune circuit-breaker thresholds per provider. */
   configureBreaker(providerId: string, cfg: Parameters<CircuitBreaker['configure']>[1]): void {
     this.breaker.configure(providerId, cfg);
@@ -273,7 +299,9 @@ export class ProviderRouter {
       .filter((p) => {
         if (p.costPerCallEur === 0) return true;
         if (opts.runCostCeilingEur === undefined) return true;
-        return this.ledger.getTotal() + this.reservedEur + p.costPerCallEur <= opts.runCostCeilingEur;
+        const fits = this.ledger.getTotal() + this.reservedEur + p.costPerCallEur <= opts.runCostCeilingEur;
+        if (!fits) this.fireRunCeiling(opts.runCostCeilingEur);
+        return fits;
       })
       // Phase G — explicit allowlist when caller targets specific ids.
       .filter((p) => !opts.includeProviderIds || opts.includeProviderIds.includes(p.id))

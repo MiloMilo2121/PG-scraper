@@ -21,6 +21,17 @@ export interface RunOptions {
   paidEnabled?: boolean;
   /** Phase G — run-level cost cap. `undefined` = no aggregate cap. */
   runCostCeilingEur?: number;
+  /**
+   * Phase B.1 — externally supplied run id. The `run` command generates
+   * one id and threads it through scrape + enrich so the run record,
+   * ledger, and log file all correlate. Default: generated.
+   */
+  runId?: string;
+  /**
+   * Phase B.5 — externally supplied abort signal (SIGINT/SIGTERM →
+   * graceful drain). Default: a never-aborting signal.
+   */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -38,7 +49,7 @@ export interface Run {
 
 export function createRun(opts: RunOptions = {}): Run {
   const cfg = getConfig();
-  const runId = `run-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
+  const runId = opts.runId ?? `run-${Date.now()}-${crypto.randomBytes(2).toString('hex')}`;
   const ledger = new CostLedger({ jsonlPath: opts.ledgerJsonlPath, runId });
   const cache = new MemoryCache({ maxEntries: 10_000 });
   const backpressure = new Backpressure({
@@ -50,7 +61,7 @@ export function createRun(opts: RunOptions = {}): Run {
     runId,
     startedAt: Date.now(),
     costCeilingEur: opts.costCeilingEur ?? cfg.pipeline.costCeilingEurPerLead,
-    abort: new AbortController().signal,
+    abort: opts.abortSignal ?? new AbortController().signal,
     paidEnabled: opts.paidEnabled === true,
     runCostCeilingEur: opts.runCostCeilingEur,
   };

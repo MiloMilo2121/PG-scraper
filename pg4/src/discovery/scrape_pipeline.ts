@@ -136,9 +136,38 @@ export interface LiveModeInput {
    * passes `--allow-missing-jsonl` to acknowledge the data loss.
    */
   allowMissingJsonl?: boolean;
+  /**
+   * Phase A.3 — skip the selector health check. Default: preflight runs
+   * before any live scraping and aborts loudly when PG/Maps markup no
+   * longer matches the known-good canary query.
+   */
+  skipPreflight?: boolean;
+  /**
+   * Phase B.5 — cooperative cancellation. When the signal aborts, the
+   * comuni loop stops at the next iteration boundary, partial outputs
+   * are still emitted, and the summary reports `interrupted: true`.
+   * The checkpoint is already synced after every page/comune, so a
+   * subsequent run resumes cleanly.
+   */
+  abortSignal?: AbortSignal;
 }
 
-export async function runLiveMode(a: LiveModeInput): Promise<void> {
+export interface LiveModeSummary {
+  leads: number;
+  raw_pre_dedupe: number;
+  total_cards: number;
+  dropped_at_parse: number;
+  pg_overflow_count: number;
+  maps_cap_likely_count: number;
+  comuni_count: number;
+  /** Per-comune pre-dedupe parsed-lead counts (PG + Maps combined). */
+  comuni_yield: Record<string, number>;
+  interrupted: boolean;
+  output_csv: string;
+  output_jsonl: string;
+}
+
+export async function runLiveMode(a: LiveModeInput): Promise<LiveModeSummary> {
   // Lazy-load the live navigator + browser modules so fixture mode +
   // typecheck never have to spin up Playwright.
   const { BrowserFactory } = await import('../browser/factory');
@@ -189,6 +218,10 @@ export async function runLiveMode(a: LiveModeInput): Promise<void> {
   let dropped = 0;
   let comuniWithOverflow = 0;
   let comuniWithCapLikely = 0;
+  let interrupted = false;
+  // Phase A.4 — per-comune pre-dedupe yields. Feeds the run record so the
+  // yield-anomaly check can compare against historical averages.
+  const comuniYield: Record<string, number> = {};
   // Phase 4.4 log fix: count parsed leads BEFORE the deduper so the
   // run summary reports `collapsed_by_dedupe` honestly. The previous
   // version sourced `raw_pre_dedupe` from `allLeads.length` (already
@@ -199,10 +232,25 @@ export async function runLiveMode(a: LiveModeInput): Promise<void> {
   // `collapsed_by_dedupe: 0`. Output files were always correct; only
   // the metric was wrong.
   let parsedLeadsBeforeDedupe = resumed;
+  const aborted = () => a.abortSignal?.aborted === true;
 
   try {
+    // Phase A.3 — selector health check before any real scraping. A
+    // PreflightError propagates out of runLiveMode (the finally below
+    // still closes the browser) and maps to exit code 3 in the CLI.
+    if (!a.skipPreflight) {
+      const { runScrapePreflight } = await import('./preflight');
+      await runScrapePreflight(factory, { checkMaps: !!a.runMaps });
+    } else {
+      logger.warn('[scrape] preflight skipped by operator (--skip-preflight)');
+    }
+
     // Stage 1: PG run for each comune in the curated list.
     for (const comune of comuni) {
+      if (aborted()) {
+        interrupted = true;
+        break;
+      }
       const r = await scrapePgLocation(factory, {
         category: a.category,
         location: comune,
@@ -214,6 +262,7 @@ export async function runLiveMode(a: LiveModeInput): Promise<void> {
       dropped += r.dropped;
       if (r.overflow) comuniWithOverflow += 1;
       parsedLeadsBeforeDedupe += r.results.length;
+      comuniYield[comune] = (comuniYield[comune] ?? 0) + r.results.length;
       ingestBatch(allLeads, dedup, r.results);
       // Save state after each comune so an interrupted run resumes cleanly.
       await factory.saveSessionState();
@@ -222,7 +271,7 @@ export async function runLiveMode(a: LiveModeInput): Promise<void> {
     // R5 — when `mapsCoverage='full'`, expand the category to multiple
     // sector-keyword variants and run each as its own scroll session.
     // The Deduplicator collapses cross-variant overlap.
-    if (a.runMaps) {
+    if (a.runMaps && !interrupted) {
       const { expandMapsQueryVariants, hasFullCoverageVariants } = await import('./sources/maps_coverage');
       const coverage = a.mapsCoverage ?? 'default';
       const queryVariants = expandMapsQueryVariants(a.category, coverage);
@@ -232,8 +281,12 @@ export async function runLiveMode(a: LiveModeInput): Promise<void> {
           '[scrape] --coverage=full requested but no variants curated for this category; falling back to default single query',
         );
       }
-      for (const comune of comuni) {
+      outer: for (const comune of comuni) {
         for (const queryCategory of queryVariants) {
+          if (aborted()) {
+            interrupted = true;
+            break outer;
+          }
           const r = await scrapeMapsLocation(factory, {
             category: queryCategory,
             location: comune,
@@ -243,10 +296,17 @@ export async function runLiveMode(a: LiveModeInput): Promise<void> {
           dropped += r.dropped;
           if (r.cap_likely) comuniWithCapLikely += 1;
           parsedLeadsBeforeDedupe += r.results.length;
+          comuniYield[comune] = (comuniYield[comune] ?? 0) + r.results.length;
           ingestBatch(allLeads, dedup, r.results);
           await factory.saveSessionState();
         }
       }
+    }
+    if (interrupted) {
+      logger.warn(
+        { comuni_done: Object.keys(comuniYield).length, comuni_total: comuni.length },
+        '[scrape] aborted by signal — emitting partial outputs (checkpoint is resume-ready)'
+      );
     }
   } finally {
     logConsentSummary();
@@ -265,8 +325,23 @@ export async function runLiveMode(a: LiveModeInput): Promise<void> {
     raw_pre_dedupe: parsedLeadsBeforeDedupe,
     checkpoint_done: checkpoint.countDone(),
     resumed_from_prior_jsonl: resumed,
+    interrupted,
     factory: factory.describe(),
   });
+
+  return {
+    leads: allLeads.length,
+    raw_pre_dedupe: parsedLeadsBeforeDedupe,
+    total_cards: totalCards,
+    dropped_at_parse: dropped,
+    pg_overflow_count: comuniWithOverflow,
+    maps_cap_likely_count: comuniWithCapLikely,
+    comuni_count: comuni.length,
+    comuni_yield: comuniYield,
+    interrupted,
+    output_csv: path.resolve(a.out),
+    output_jsonl: path.resolve(jsonlOut),
+  };
 }
 
 export function resolveComuniList(
