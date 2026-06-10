@@ -150,3 +150,31 @@ are irreversible; all are config- or flag-gated.
   parser Maps; enrich li scrive come SKIPPED/SKIPPED_PERMANENTLY_CLOSED
   senza bruciare provider call. `--include-closed` per processarli.
 - Solo dati già presenti nelle pagine caricate — nessuna navigazione extra.
+
+## D.1 — Suppression list
+
+- **Default:** risoluzione flag > env SUPPRESSION_LIST > `suppression.csv`
+  auto-scoperto accanto all'output > disattivata. Lead corrispondenti
+  DROPPATI (non scritti come SKIPPED): un soggetto do-not-contact non deve
+  continuare ad apparire nei file consegnati. Un path ESPLICITO illeggibile
+  è hard error (l'operatore ha chiesto una protezione che non sta avendo).
+
+## D.2 — Retention
+
+- **Default:** OFF (mai cancellare nulla senza opt-in). `--retention-days N`
+  / env RETENTION_DAYS. Protetti sempre: `_runs.jsonl` (registro Art. 30),
+  `suppression.csv`, `*.lock`.
+- **OPERATOR DECISION PENDING:** il periodo N (decisione GDPR).
+
+## D.3 — Lookup (right-to-access/deletion)
+
+- **Default:** `pnpm run lookup` è un READER: riporta file+riga, la
+  cancellazione resta manuale. Riscrivere automaticamente artifact già
+  consegnati li desincronizzerebbe dalle copie presso i clienti.
+
+## D.4 — GDPR
+
+- Posture documentata in `docs/gdpr_posture.md`: implementato vs pendente.
+- **OPERATOR DECISIONS PENDING:** base giuridica + balancing test, periodo
+  retention, DPIA sì/no, DPA Serper (query paid trasmettono nomi a
+  processor extra-UE), informativa Art. 14, verifica RPO se telemarketing.

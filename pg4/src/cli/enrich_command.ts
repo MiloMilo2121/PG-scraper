@@ -37,6 +37,11 @@ export interface EnrichCommandOptions {
    * burning provider calls on them.
    */
   includeClosed?: boolean;
+  /**
+   * Phase D.1 — do-not-contact suppression. Matching leads are dropped
+   * from the outputs entirely (counted in the summary + run record).
+   */
+  suppression?: import('../compliance/suppression').SuppressionList;
 }
 
 export interface EnrichCommandResult {
@@ -46,6 +51,8 @@ export interface EnrichCommandResult {
   errors: number;
   /** Phase C.4 — leads skipped because Maps marked them permanently closed. */
   skippedClosed: number;
+  /** Phase D.1 — leads dropped by the suppression list. */
+  suppressed: number;
   totalCostEur: number;
   /** Leads whose per-lead paid budget was exhausted mid-pipeline. */
   budgetExhaustedLeads: number;
@@ -122,6 +129,7 @@ export async function runEnrichCommand(o: EnrichCommandOptions): Promise<EnrichC
     let withWebsite = 0;
     let errors = 0;
     let skippedClosed = 0;
+    let suppressed = 0;
     let budgetExhaustedLeads = 0;
     let firstBudgetNotified = false;
     let interrupted = false;
@@ -137,6 +145,12 @@ export async function runEnrichCommand(o: EnrichCommandOptions): Promise<EnrichC
         break;
       }
       total += 1;
+      // Phase D.1 — suppression: a do-not-contact subject is dropped from
+      // the output entirely, before any provider call.
+      if (o.suppression?.matches(item.lead)) {
+        suppressed += 1;
+        continue;
+      }
       // Phase C.4 — Maps flagged this business permanently closed: write
       // it as SKIPPED (row parity preserved) without burning provider
       // calls. CSV roundtrip stores booleans as the string "true".
@@ -198,11 +212,15 @@ export async function runEnrichCommand(o: EnrichCommandOptions): Promise<EnrichC
 
     await Promise.all(inFlight);
     await output.close();
+    if (suppressed > 0) {
+      logger.warn({ suppressed, list: o.suppression?.sourcePath }, '[enrich] leads dropped by suppression list');
+    }
     run.ledger.flushSummary({
       leads_processed: total,
       leads_with_website: withWebsite,
       leads_errored: errors,
       leads_skipped_closed: skippedClosed,
+      leads_suppressed: suppressed,
       leads_budget_exhausted: budgetExhaustedLeads,
       interrupted,
       cost_per_lead_eur: total > 0 ? run.ledger.getTotal() / total : 0,
@@ -216,6 +234,7 @@ export async function runEnrichCommand(o: EnrichCommandOptions): Promise<EnrichC
       withWebsite,
       errors,
       skippedClosed,
+      suppressed,
       totalCostEur: run.ledger.getTotal(),
       budgetExhaustedLeads,
       jsonlOut,

@@ -9,6 +9,8 @@ import { getNotifier } from '../runtime/notifier';
 import { PreflightError } from '../discovery/preflight';
 import { runEnrichCommand } from './enrich_command';
 import { postRunValidate } from './_post_run';
+import { SuppressionList } from '../compliance/suppression';
+import { enforceRetention, resolveRetentionDays } from '../compliance/retention';
 
 /**
  * `pnpm run run -- --category "X" --province PD --out output/campaign`
@@ -62,6 +64,14 @@ async function main(): Promise<number> {
   const runCeilingArg = optString(args, 'run-cost-ceiling-eur');
 
   try {
+    // Phase D.2 — retention sweep (only when the operator opted in).
+    const retentionDays = resolveRetentionDays(optString(args, 'retention-days'));
+    if (retentionDays !== undefined) {
+      enforceRetention({ outCsv: enrichedCsv, retentionDays });
+    }
+    // Phase D.1 — one suppression list for both stages.
+    const suppression = SuppressionList.resolve({ flagPath: optString(args, 'suppression-list'), outCsv: enrichedCsv });
+
     // ---- Stage 1: scrape ----
     logger.info({ runId, category, province, comuniCsv, rawCsv }, '[run] stage 1/2 — scrape');
     const scrapeLock = acquireOutputLock(rawCsv, { command: 'run', stage: 'scrape', category });
@@ -81,6 +91,7 @@ async function main(): Promise<number> {
         allowMissingJsonl: !!args.flags['allow-missing-jsonl'],
         skipPreflight: !!args.flags['skip-preflight'],
         abortSignal: abort.signal,
+        suppression,
       });
     } finally {
       scrapeLock.release();
@@ -117,15 +128,18 @@ async function main(): Promise<number> {
       costCeilingEur: ceilingArg ? Number(ceilingArg) : undefined,
       runCostCeilingEur: runCeilingArg ? Number(runCeilingArg) : undefined,
       enablePaid: !!args.flags['enable-paid'],
+      includeClosed: !!args.flags['include-closed'],
+      suppression,
       runId,
       abortSignal: abort.signal,
     });
 
     recorder.update({
       leads_in: scrapeSummary.leads,
-      leads_out: result.total,
+      leads_out: result.total - result.suppressed,
       with_website: result.withWebsite,
       row_errors: result.errors,
+      suppressed: (scrapeSummary.suppressed + result.suppressed) || undefined,
       total_cost_eur: result.totalCostEur,
     });
     await postRunValidate({

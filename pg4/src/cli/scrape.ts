@@ -8,6 +8,8 @@ import { RunRecorder, EXIT, installInterruptHandler, readRunHistory, runsFilePat
 import { getNotifier } from '../runtime/notifier';
 import { PreflightError } from '../discovery/preflight';
 import { postRunValidate } from './_post_run';
+import { SuppressionList } from '../compliance/suppression';
+import { enforceRetention, resolveRetentionDays } from '../compliance/retention';
 
 /**
  * scrape — Phase 4 CLI (thin wrapper).
@@ -91,6 +93,14 @@ async function main(): Promise<number> {
     },
   });
 
+  // Phase D.2 — retention sweep (only when the operator opted in).
+  const retentionDays = resolveRetentionDays(optString(args, 'retention-days'));
+  if (retentionDays !== undefined) {
+    enforceRetention({ outCsv: out, retentionDays });
+  }
+  // Phase D.1 — suppression list (flag > env > auto-discovered suppression.csv).
+  const suppression = SuppressionList.resolve({ flagPath: optString(args, 'suppression-list'), outCsv: out });
+
   const outputLock = acquireOutputLock(out, { command: 'scrape', mode: 'live', category });
   try {
     const summary = await runLiveMode({
@@ -110,6 +120,7 @@ async function main(): Promise<number> {
       allowMissingJsonl: !!args.flags['allow-missing-jsonl'],
       skipPreflight: !!args.flags['skip-preflight'],
       abortSignal: abort.signal,
+      suppression,
     });
 
     // Phase A.4 — yield anomaly check against run history (advisory only).
@@ -133,6 +144,7 @@ async function main(): Promise<number> {
 
     recorder.update({
       leads_out: summary.leads,
+      suppressed: summary.suppressed || undefined,
       comuni_yield: summary.comuni_yield,
       suspect: yieldCheck.suspect || undefined,
       suspect_comuni: yieldCheck.suspect ? yieldCheck.suspectComuni : undefined,
@@ -203,6 +215,9 @@ Modes:
   --headless false          Show browser in live mode.
   --skip-preflight          Skip the selector health check (Phase A.3).
   --run-id <id>             Externally supplied run id (used by the run command).
+  --suppression-list <csv>  Do-not-contact list (phone,vat,reason,date). Also: SUPPRESSION_LIST env
+                            or auto-discovered suppression.csv next to the output.
+  --retention-days <n>      Delete output artifacts older than n days at run start (default: off).
   --out <path>              Required raw CSV output path.
 
 Observability (Phase A):

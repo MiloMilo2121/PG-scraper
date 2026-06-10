@@ -154,6 +154,11 @@ export interface LiveModeInput {
    * subsequent run resumes cleanly.
    */
   abortSignal?: AbortSignal;
+  /**
+   * Phase D.1 — do-not-contact suppression. Matching leads are dropped
+   * from the outputs entirely (counted in the summary).
+   */
+  suppression?: import('../compliance/suppression').SuppressionList;
 }
 
 export interface LiveModeSummary {
@@ -166,6 +171,8 @@ export interface LiveModeSummary {
   comuni_count: number;
   /** Per-comune pre-dedupe parsed-lead counts (PG + Maps combined). */
   comuni_yield: Record<string, number>;
+  /** Phase D.1 — leads dropped by the suppression list. */
+  suppressed: number;
   interrupted: boolean;
   output_csv: string;
   output_jsonl: string;
@@ -317,7 +324,22 @@ export async function runLiveMode(a: LiveModeInput): Promise<LiveModeSummary> {
     await factory.close();
   }
 
-  await emitCsvJsonl(a.out, allLeads, {
+  // Phase D.1 — suppression at output time. Matching leads are dropped
+  // entirely (a do-not-contact subject must not appear in delivered files).
+  let emitLeads = allLeads;
+  let suppressed = 0;
+  if (a.suppression?.active) {
+    emitLeads = allLeads.filter((l) => {
+      const hit = a.suppression!.matches(l);
+      if (hit) suppressed += 1;
+      return !hit;
+    });
+    if (suppressed > 0) {
+      logger.warn({ suppressed, list: a.suppression.sourcePath }, '[scrape] leads dropped by suppression list');
+    }
+  }
+
+  await emitCsvJsonl(a.out, emitLeads, {
     mode: 'live',
     province: a.province,
     region: a.region,
@@ -327,6 +349,7 @@ export async function runLiveMode(a: LiveModeInput): Promise<LiveModeSummary> {
     total_cards: totalCards,
     dropped_at_parse: dropped,
     raw_pre_dedupe: parsedLeadsBeforeDedupe,
+    suppressed,
     checkpoint_done: checkpoint.countDone(),
     resumed_from_prior_jsonl: resumed,
     interrupted,
@@ -346,7 +369,7 @@ export async function runLiveMode(a: LiveModeInput): Promise<LiveModeSummary> {
   }
 
   return {
-    leads: allLeads.length,
+    leads: emitLeads.length,
     raw_pre_dedupe: parsedLeadsBeforeDedupe,
     total_cards: totalCards,
     dropped_at_parse: dropped,
@@ -354,6 +377,7 @@ export async function runLiveMode(a: LiveModeInput): Promise<LiveModeSummary> {
     maps_cap_likely_count: comuniWithCapLikely,
     comuni_count: comuni.length,
     comuni_yield: comuniYield,
+    suppressed,
     interrupted,
     output_csv: path.resolve(a.out),
     output_jsonl: path.resolve(jsonlOut),

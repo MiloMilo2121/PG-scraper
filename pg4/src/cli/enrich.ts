@@ -6,6 +6,8 @@ import { RunRecorder, EXIT, installInterruptHandler } from '../runtime/run_recor
 import { getNotifier } from '../runtime/notifier';
 import { runEnrichCommand } from './enrich_command';
 import { postRunValidate } from './_post_run';
+import { SuppressionList } from '../compliance/suppression';
+import { enforceRetention, resolveRetentionDays } from '../compliance/retention';
 
 /**
  * `pnpm run enrich -- --input output/raw.csv --out output/enriched.csv`
@@ -47,6 +49,14 @@ async function main(): Promise<number> {
   });
 
   try {
+    // Phase D.2 — retention sweep (only when the operator opted in).
+    const retentionDays = resolveRetentionDays(optString(args, 'retention-days'));
+    if (retentionDays !== undefined) {
+      enforceRetention({ outCsv: csvOut, retentionDays });
+    }
+    // Phase D.1 — suppression list (flag > env > auto-discovered suppression.csv).
+    const suppression = SuppressionList.resolve({ flagPath: optString(args, 'suppression-list'), outCsv: csvOut });
+
     const result = await runEnrichCommand({
       input,
       csvOut,
@@ -56,15 +66,17 @@ async function main(): Promise<number> {
       runCostCeilingEur: runCeilingArg ? Number(runCeilingArg) : undefined,
       enablePaid: !!args.flags['enable-paid'],
       includeClosed: !!args.flags['include-closed'],
+      suppression,
       runId,
       abortSignal: abort.signal,
     });
 
     recorder.update({
       leads_in: result.total,
-      leads_out: result.total,
+      leads_out: result.total - result.suppressed,
       with_website: result.withWebsite,
       row_errors: result.errors,
+      suppressed: result.suppressed || undefined,
       total_cost_eur: result.totalCostEur,
     });
 
@@ -136,6 +148,9 @@ Flags:
   --enable-paid                 Opt in to paid providers already enabled by env and API key.
   --run-id <id>                 Externally supplied run id (used by the run command).
   --include-closed              Also enrich leads Maps marked "Chiuso definitivamente" (default: skipped).
+  --suppression-list <csv>      Do-not-contact list (phone,vat,reason,date). Also: SUPPRESSION_LIST env
+                                or auto-discovered suppression.csv next to the output.
+  --retention-days <n>          Delete output artifacts older than n days at run start (default: off).
 
 Observability (Phase A):
   LOG_FILE env                  Per-run JSONL log. Default: <out>.log.jsonl. LOG_FILE=off disables.
