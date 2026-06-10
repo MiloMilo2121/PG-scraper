@@ -106,7 +106,6 @@ async function acceptConsent(page: Page, source: 'pg' | 'maps'): Promise<void> {
 async function captureOne(target: Target, ctx: BrowserContext): Promise<{ ok: boolean; bytes: number; reason?: string }> {
   const page = await ctx.newPage();
   try {
-    // eslint-disable-next-line no-console
     console.log(`[capture] → ${target.id}: ${target.url}`);
     await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(800);
@@ -174,7 +173,6 @@ async function main() {
   const which = argv.length === 0 ? ['all'] : argv;
   const selected = which.includes('all') ? TARGETS : TARGETS.filter((t) => which.includes(t.id));
   if (selected.length === 0) {
-    // eslint-disable-next-line no-console
     console.error('Unknown target. Use one of:', TARGETS.map((t) => t.id).join(', '), 'or "all".');
     process.exit(2);
   }
@@ -191,21 +189,18 @@ async function main() {
   for (const t of selected) {
     const r = await captureOne(t, ctx);
     summary.push({ id: t.id, ...r });
-    // eslint-disable-next-line no-console
     console.log(`[capture] ${t.id}: ok=${r.ok} bytes=${r.bytes}${r.reason ? ` reason=${r.reason}` : ''}`);
   }
 
   await ctx.close();
   await browser.close();
 
-  // eslint-disable-next-line no-console
   console.table(summary);
   const failures = summary.filter((s) => !s.ok);
   if (failures.length === selected.length) process.exit(1);
 }
 
 main().catch((err) => {
-  // eslint-disable-next-line no-console
   console.error('[capture] fatal:', err);
   process.exit(1);
 });

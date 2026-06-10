@@ -33,6 +33,10 @@ jobs:
         working-directory: pg4
         run: pnpm run typecheck
 
-      - name: Unit tests
+      - name: Lint
         working-directory: pg4
-        run: pnpm test
+        run: pnpm run lint
+
+      - name: Unit tests (with coverage baseline)
+        working-directory: pg4
+        run: pnpm run test:coverage

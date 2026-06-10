@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import fs from 'node:fs';
 import readline from 'node:readline';
 

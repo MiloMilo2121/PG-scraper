@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 import fs from 'node:fs';
 import readline from 'node:readline';
 import { request } from 'undici';
@@ -61,7 +60,7 @@ async function fetchHtml(url: string): Promise<{ status: number; html?: string }
       return { status: res.statusCode };
     }
     return { status: res.statusCode, html: await res.body.text() };
-  } catch (err) {
+  } catch {
     return { status: 0 };
   }
 }

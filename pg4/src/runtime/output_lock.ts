@@ -145,7 +145,6 @@ export function acquireOutputLock(
       if (!existing) {
         const age = mtimeAgeMs(lockPath, now());
         if (age > maxAgeMs) {
-          // eslint-disable-next-line no-console
           console.warn(
             `[output-lock] stale lock reclaimed by age: malformed/unreadable lock ${lockPath} is ${Math.round(age)}ms old (> ${maxAgeMs}ms)`
           );
@@ -170,7 +169,6 @@ export function acquireOutputLock(
       // pid was recycled — reclaim it.
       const age = lockAgeMs(existing, lockPath, now());
       if (age > maxAgeMs) {
-        // eslint-disable-next-line no-console
         console.warn(
           `[output-lock] stale lock reclaimed by age: ${lockPath} is ${Math.round(age)}ms old (> ${maxAgeMs}ms); ` +
             `pid ${existing.pid} appears alive but is assumed recycled (OS pid reuse)`

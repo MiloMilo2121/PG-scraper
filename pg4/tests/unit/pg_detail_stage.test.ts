@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { PgDetailStage } from '../../src/enrichment/stages/pg_detail_stage';
 import { PgDetailHarvester } from '../../src/discovery/sources/pagine_gialle_detail_harvester';
 import { ProviderRouter } from '../../src/providers/provider_router';
-import { CostLedger } from '../../src/runtime/cost_ledger';
 import { createPerLeadContext, createRun } from '../../src/runtime/run_context';
 import type { Lead } from '../../src/types/lead';
 import type { HttpProvider, HttpFetchResult } from '../../src/types/providers';

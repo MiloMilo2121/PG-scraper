@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import path from 'path';
 import { parseArgs, reqString, optString, hasHelp } from './_args';
 import { logger, bindRunLogFile } from '../runtime/logger';
 import { runFixtureMode, runLiveMode } from '../discovery/scrape_pipeline';

@@ -108,7 +108,7 @@ async function validateCsv(csvPath: string, flavor: OutputFlavor = 'enriched'): 
     return { rows: 0, headerColumns: [], errors: [`CSV not found: ${csvPath}`], foundWebsite: 0, methods, reasonCodes };
   }
 
-  await new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolve) => {
     const stream = fs.createReadStream(csvPath);
     const parser = parse({
       columns: (header: string[]) => {

@@ -178,3 +178,27 @@ are irreversible; all are config- or flag-gated.
 - **OPERATOR DECISIONS PENDING:** base giuridica + balancing test, periodo
   retention, DPIA sì/no, DPA Serper (query paid trasmettono nomi a
   processor extra-UE), informativa Art. 14, verifica RPO se telemarketing.
+
+## E.1 — Coverage
+
+- **Baseline (2026-06-10):** 70.44% lines · 83.76% branches · 81.79%
+  functions (vitest --coverage, v8 provider; CLI wrapper entrypoint e
+  src/types esclusi). NESSUNA soglia di gate impostata — il numero è la
+  baseline; la soglia è una decisione di team successiva.
+
+## E.3 — ESLint
+
+- **Default:** typescript-eslint recommended, zero regole di formatting.
+  `no-explicit-any` a warn (gli `any` ai boundary error/meta sono
+  deliberati; tsconfig strict previene già gli impliciti). 0 errori,
+  0 warning a fine pass.
+
+## E.4 — Dependency audit
+
+- **Trovate 3 vulnerabilità, tutte nella catena dev-tooling
+  vitest→vite→esbuild** (1 critical vitest<3.2.6 UI-server file read;
+  2 moderate vite/esbuild dev-server). Exploit richiede un dev/UI server
+  in ascolto — pg4 usa SOLO `vitest run` one-shot, nessun server mai
+  avviato. Nessuna vulnerabilità nelle dipendenze di produzione.
+- **MAJOR BUMP DEFERRED (operator/next pass):** vitest 2→3 risolve tutte
+  e tre. Non eseguito in questo pass per la regola "patch-level only".

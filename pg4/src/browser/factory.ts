@@ -114,7 +114,7 @@ export class BrowserFactory {
     // Lazy-load playwright/patchright so the import doesn't slow down
     // unrelated CLI commands (typecheck, fixture parse, etc).
     const driver = env.PATCHRIGHT_ENABLED
-      ? // eslint-disable-next-line @typescript-eslint/no-require-imports
+      ?  
         await dynamicImport('patchright').catch(() => null)
       : await dynamicImport('playwright');
     if (!driver) throw new Error('BrowserFactory: playwright driver not loadable');
@@ -155,7 +155,6 @@ export class BrowserFactory {
 
 /** Avoids the require-vs-import friction with playwright/patchright. */
 async function dynamicImport(name: string): Promise<unknown> {
-  // eslint-disable-next-line no-new-func
   const importer = new Function('s', 'return import(s)') as (s: string) => Promise<unknown>;
   return importer(name);
 }

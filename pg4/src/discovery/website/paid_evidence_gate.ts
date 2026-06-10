@@ -93,19 +93,6 @@ const SECTOR_REGEX = new RegExp(
  */
 const MIN_SECTOR_DENSITY = 3;
 
-/** Italian descriptors / legal forms that must NOT count as
- *  distinctive firm tokens for the title-corroboration rule. */
-const TITLE_NOISE = new Set([
-  'srl', 's.r.l.', 's.r.l', 'sas', 's.a.s.', 's.a.s', 'snc', 's.n.c.', 's.n.c',
-  'spa', 's.p.a.', 's.p.a', 'scarl', 'srls',
-  'di', 'e', 'il', 'la', 'le', 'i', 'un', 'una', 'da', 'per', 'con', 'su', '&',
-  // descriptors that ALSO appear in agency-site titles for legit reasons
-  // ("Agenzia Immobiliare X") — counting them as distinctive would over-
-  // accept aggregator titles. Match the sector layer instead.
-  'agenzia', 'agenzie', 'immobiliare', 'immobiliari', 'studio', 'gruppo',
-  'casa', 'case', 'home', 'real', 'estate',
-]);
-
 /** True when the body has ≥`min` DISTINCT vat-shaped numbers. The lead's
  *  own P.IVA is one of them, so the cutoff is the lead's vat + N other
  *  vats = 1 + N. Default min=4 (lead + 3 others) — observed sufficient
@@ -116,24 +103,19 @@ function distinctVatCount(html: string): number {
   return new Set(matches).size;
 }
 
-/** Strip legal forms and connectives; return tokens ≥4 chars that are
- *  not in TITLE_NOISE. These are the candidate "firm-distinctive"
- *  tokens we check in title/H1. */
-function distinctiveFirmTokens(name: string): string[] {
-  if (!name) return [];
-  const tokens = name
-    .toLowerCase()
-    .replace(/[\(\)\[\]\{\}\<\>\|\&\!\^\~\*\?\:\/\\.,;]/g, ' ')
-    .split(/\s+/)
-    .map((t) => t.replace(/[^a-z0-9]/g, ''))
-    .filter((t) => t.length >= 4 && !TITLE_NOISE.has(t));
-  return Array.from(new Set(tokens));
-}
+// (An earlier gate revision matched firm-distinctive name tokens against
+// title/H1 — superseded by the R9 semantic-evidence integration. The dead
+// helper was removed in the Phase E lint pass; see git history for the
+// original implementation if the rule ever comes back.)
 
 export function evaluatePaidEvidence(
   html: string,
-  normalized: NormalizedLead,
-  lead: Lead,
+  // Arity preserved for the existing call sites; the gate's current rules
+  // are content-only (vat density, sector density, parked detection) and
+  // do not consult the lead. The semantic name-match lives in
+  // semantic_evidence.ts.
+  _normalized: NormalizedLead,
+  _lead: Lead,
 ): PaidEvidenceVerdict {
   const reasons: string[] = [];
 
@@ -144,9 +126,6 @@ export function evaluatePaidEvidence(
 
   const $ = cheerio.load(html);
   const bodyText = $('body').text().toLowerCase();
-  const titleText = $('title').text().toLowerCase();
-  const h1Text = $('h1').first().text().toLowerCase();
-  const titleH1 = `${titleText} ${h1Text}`;
 
   // ---- Rule 1: aggregator detection (hard veto) -------------------------
   const vatCount = distinctVatCount(html);
