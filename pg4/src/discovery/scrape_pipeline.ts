@@ -268,6 +268,7 @@ export async function runLiveMode(a: LiveModeInput): Promise<LiveModeSummary> {
         maxPages: a.maxPages,
         checkpoint,
         interPageDelayMs: a.interDelayMs,
+        abortSignal: a.abortSignal,
       });
       totalCards += r.total_cards;
       dropped += r.dropped;

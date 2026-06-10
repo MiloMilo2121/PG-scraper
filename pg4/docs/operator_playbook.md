@@ -708,3 +708,139 @@ ENRICHED_CSV_COLUMNS è **superset strict di RAW** (append-only, nessun reorder 
 
 Questo playbook è denso e diretto. Per ogni operazione, segui esatto comando + verifiche post-run + failure recovery. Se pattern non coperto qui o error mai visto, contatta Marco con comando + log + context.
 
+
+---
+
+# APPENDICE — Production-readiness pass (2026-06-10)
+
+Il pass di hardening ha aggiunto comandi, flag e file. Tutto quello che
+segue è ADDITIVO: i 9 scenari sopra restano validi; cambiano i dettagli
+segnalati qui.
+
+## 10. Voglio scrape+enrich in un comando solo
+
+```bash
+pnpm run run -- \
+  --category "agenzie immobiliari" \
+  --province PD \
+  --maps --coverage full --fresh \
+  --out output/campagna_pd
+```
+
+- **Output:** `<out>_raw.csv/.jsonl`, `<out>_enriched.csv/.jsonl(+ledger)`,
+  `<out>.log.jsonl`. Un run_id condiviso tra i due stage, un record unico
+  in `_runs.jsonl` (command: "run").
+- **Paid:** identico a enrich — serve `--enable-paid` + ceiling espliciti.
+- **Tempo atteso:** scrape ~30 min provincia + enrich ~1 ora free.
+- **Verifica post-run:** la validazione gira da sola a fine stage
+  (warn-only); controlla il log per `[validate]`.
+
+## 11. Exit code deterministici (per scheduler e script)
+
+| code | significato | azione |
+|-----:|---|---|
+| 0 | ok | nulla |
+| 1 | partial — enrich con row errors | controlla `_runs.jsonl` + log |
+| 2 | fatal | leggi l'errore nel log |
+| 3 | preflight fallito — markup PG/Maps cambiato o IP bloccato | NON riprovare in loop; ispeziona manualmente. `--skip-preflight` solo se sai cosa stai facendo |
+| 130 | interrotto (Ctrl-C / SIGTERM) | checkpoint resume-ready; rilancia senza `--fresh` |
+
+Primo Ctrl-C = drain pulito (i lead in corso finiscono, output coerenti,
+lock rilasciato). Secondo Ctrl-C = uscita forzata immediata.
+
+## 12. Preflight (selector health check)
+
+Ogni scrape live ora fa un canary fetch su PG (e Maps se `--maps`) PRIMA
+di scrapare: query nota "agenzie immobiliari / Padova". Se i selettori
+non matchano nulla → exit 3 con messaggio esplicito. Costo: ~5-10 s.
+Skippabile con `--skip-preflight`.
+
+## 13. Log file per-run e storico run
+
+- Ogni run scrive `<out>.log.jsonl` (log strutturato completo). Override:
+  env `LOG_FILE=<path>`, disattiva: `LOG_FILE=off`.
+- Ogni run appende UN record a `<outdir>/_runs.jsonl`: run_id, comando,
+  conteggi, costo, esito, yields per comune. Mai cancellato da pg4.
+- "Cosa è girato la settimana scorsa?" → `cat output/_runs.jsonl | tail`.
+
+## 14. Yield anomaly
+
+Dopo ogni scrape, la resa per comune è confrontata con la media storica
+(stessa categoria, da `_runs.jsonl`). Sotto il 30% → warn prominente +
+`suspect: true` nel record + notifica. Il run NON fallisce — sei tu a
+decidere se fidarti dell'output.
+
+## 15. Notifiche
+
+`NOTIFY=local` (default): log line + notifica macOS a fine run, su
+cost-cap hit, preflight fail, yield anomaly. `NOTIFY=off` per spegnerle.
+Slack/Telegram: interfaccia pronta, implementazione futura.
+
+## 16. Suppression list (do-not-contact / GDPR)
+
+File CSV `phone,vat,reason,date`:
+
+```csv
+phone,vat,reason,date
++390422591177,,richiesta_interessato,2026-06-01
+,01234567897,gdpr_deletion,2026-05-20
+```
+
+Risoluzione: `--suppression-list <path>` → env `SUPPRESSION_LIST` →
+`suppression.csv` accanto all'output (auto). I lead corrispondenti sono
+ELIMINATI dagli output (non SKIPPED) e contati nel run record. Il match
+sui telefoni è format-tolerant (+39/0039/spazi).
+
+## 17. Richiesta di cancellazione dati (GDPR)
+
+```bash
+pnpm run lookup -- --phone "+39 0422 591177"
+pnpm run lookup -- --piva 01234567897
+```
+
+Riporta ogni file:riga dove il soggetto appare. Poi: rimuovi le righe a
+mano (o rigenera), aggiungi il soggetto a `suppression.csv`, avvisa i
+clienti che hanno copie. Dettagli: `docs/gdpr_posture.md`.
+
+## 18. Retention automatica
+
+`--retention-days 90` (o env `RETENTION_DAYS=90`): a inizio run elimina
+gli artifact più vecchi di 90 giorni nella dir di output. Default: OFF.
+Mai toccati: `_runs.jsonl`, `suppression.csv`, `*.lock`.
+
+## 19. Business chiusi (Maps)
+
+Il parser cattura "Chiuso definitivamente" → colonna `permanently_closed`.
+Enrich li salta di default (status SKIPPED, reason
+SKIPPED_PERMANENTLY_CLOSED, zero provider call). `--include-closed` per
+processarli comunque.
+
+## 20. Schema v1 + telefoni E.164
+
+- Ogni output ha `_schema_version=1` come ULTIMA colonna (+ campo JSONL).
+  Il validator la pretende.
+- `phone` è normalizzato E.164 (`+390422591177`); l'originale è in
+  `phone_raw`. Non parseabile → resta com'era, `phone_raw` vuoto.
+- Nuove colonne (entrambi i flavor, in coda): `phone_raw`,
+  `permanently_closed`, `_schema_version`.
+
+## 21. Near-duplicate review
+
+Nomi con stesse parole in ordine diverso nello stesso comune ("Immobiliare
+Rossi" vs "Rossi Immobiliare") finiscono in `<out>.dedup-review.jsonl`
+per revisione manuale. MAI mergiati automaticamente.
+
+## 22. Nuovi comandi utility
+
+| comando | scopo |
+|---|---|
+| `pnpm run lint` | ESLint (0 errori richiesti, gira in CI) |
+| `pnpm run test:coverage` | suite + coverage (baseline 70% lines) |
+| `pnpm run lookup -- --piva X` | ricerca data subject negli output |
+| `pnpm run validate:output -- --csv X --jsonl Y [--flavor raw]` | validazione manuale |
+
+## 23. Scheduling
+
+I CLI sono cron-safe (nessun prompt, exit code stabili). Esempi pronti
+launchd/cron/GH-Actions in `docs/scheduling_examples.md`. Nessuno
+scheduler è attivo di default.

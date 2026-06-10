@@ -2,6 +2,7 @@ import type { AnyProvider, HttpProvider, LLMProvider, SerpProvider } from '../ty
 import { ProviderBlockError, classifyHttpFailure } from '../types/providers';
 import type { CostLedger } from '../runtime/cost_ledger';
 import { CircuitBreaker } from '../runtime/circuit_breaker';
+import type { RateLimiter } from '../runtime/rate_limiter';
 import { logger } from '../runtime/logger';
 
 export interface RouteOptions {
@@ -119,7 +120,18 @@ export class ProviderRouter {
     private readonly https: HttpProvider[],
     private readonly llms: LLMProvider[],
     private readonly ledger: CostLedger,
-    breaker?: CircuitBreaker
+    breaker?: CircuitBreaker,
+    /**
+     * Phase F finding — per-provider token bucket. The RateLimiter had
+     * existed on the Run since Phase 1 but acquire() had ZERO call
+     * sites: a lead set with no input websites degenerated the enrich
+     * stage into a raw SERP burst (~3.7 req/s to Bing in the Phase F
+     * smoke vs ~0.27 req/s in validated R12), and Bing soft-blocked
+     * with 185/185 empty responses — a silent failure. Unconfigured
+     * keys remain unlimited, so behavior is unchanged for providers
+     * without an explicit rate.
+     */
+    private readonly rate?: RateLimiter
   ) {
     this.breaker = breaker ?? new CircuitBreaker();
   }
@@ -127,6 +139,8 @@ export class ProviderRouter {
   async search(query: string, opts: RouteOptions = {}) {
     const candidates = this.filter(this.serps, opts);
     for (const p of candidates) {
+      // Phase F — space out calls per provider (no-op for unconfigured keys).
+      if (this.rate) await this.rate.acquire(p.id);
       // Phase G.1 — atomic budget reservation. The sync filter check
       // already passed, but a concurrent caller may have reserved
       // since. Re-check sync right before reserving so we never

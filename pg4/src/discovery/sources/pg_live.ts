@@ -32,6 +32,13 @@ export interface PgLiveOptions {
   checkpoint?: Checkpoint;
   /** Inter-page delay override; defaults to scraper.interPageDelayMs. */
   interPageDelayMs?: number;
+  /**
+   * Phase F — page-granular cooperative abort. The comune-level check in
+   * the pipeline is too coarse for graceful shutdown: a dense comune
+   * (Padova ≈ 15 pages) outlives the 45s drain watchdog and forces a
+   * hard exit. Checking between pages bounds the drain to one page.
+   */
+  abortSignal?: AbortSignal;
 }
 
 export interface PgLiveResult {
@@ -66,6 +73,10 @@ export async function scrapePgLocation(
   let consecutiveEmpty = 0;
 
   for (let page = 1; page <= maxPages; page++) {
+    if (opts.abortSignal?.aborted) {
+      logger.info({ location: opts.location, page }, '[pg_live] abort signal — stopping before next page');
+      break;
+    }
     const cpKey = Checkpoint.buildKey({ provider: 'pg', category: opts.category, location: opts.location, page });
     if (cp?.isDone(cpKey)) {
       pagesVisited += 1;

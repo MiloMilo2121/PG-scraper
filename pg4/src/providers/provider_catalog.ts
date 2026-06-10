@@ -2,6 +2,7 @@ import type { HttpProvider, LLMProvider, SerpProvider } from '../types/providers
 import { ProviderRouter } from './provider_router';
 import type { CostLedger } from '../runtime/cost_ledger';
 import { CircuitBreaker } from '../runtime/circuit_breaker';
+import { RateLimiter } from '../runtime/rate_limiter';
 import { getEnv } from '../config/env';
 import { logger } from '../runtime/logger';
 
@@ -65,7 +66,21 @@ export function buildProviderCatalog(ledger: CostLedger): ProviderRouter {
     cooldownMs: 30_000,
   });
 
-  const router = new ProviderRouter(serps, https, llms, ledger, breaker);
+  // Phase F finding — SERP pacing. The Phase F smoke surfaced that the
+  // RateLimiter was instantiated but never wired: with no input websites
+  // to verify, the enrich stage fired ~3.7 Bing requests/s and Bing
+  // soft-blocked the whole run (185/185 empty) — silently. Validated
+  // R12 cadence was ~0.27 req/s; 0.5/s keeps a 2x headroom over that
+  // while halving worst-case burst exposure. ddg_lite gets the same
+  // treatment for when a category profile re-enables it. Unconfigured
+  // providers (dns_mx, crtsh, serper, direct_fetch) stay unlimited —
+  // dns/crt are gated off by default and Serper is account-limited
+  // upstream.
+  const rate = new RateLimiter();
+  rate.configure('bing_html', 0.5, 2);
+  rate.configure('ddg_lite', 0.5, 2);
+
+  const router = new ProviderRouter(serps, https, llms, ledger, breaker, rate);
 
   if (env.NODE_ENV !== 'test') {
     logger.info({ providers: router.describe() }, '[ProviderCatalog] capability surface at boot');

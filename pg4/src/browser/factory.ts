@@ -120,7 +120,19 @@ export class BrowserFactory {
     if (!driver) throw new Error('BrowserFactory: playwright driver not loadable');
     const chromium = (driver as { chromium: typeof import('playwright').chromium }).chromium;
 
-    this.browser = await chromium.launch({ headless: this.opts.headless });
+    // Phase F finding — Playwright's default SIGINT handler closes the
+    // browser and calls process.exit(130), pre-empting pg4's graceful
+    // drain (partial outputs were never emitted, the lock was left on
+    // disk). pg4's lifecycle owns shutdown: the interrupt handler aborts
+    // the comuni/page loops, the pipeline emits partial outputs, releases
+    // the lock and exits 130 itself. handleSIGTERM is disabled for the
+    // same reason; SIGHUP keeps Playwright's default (terminal close is
+    // not a graceful-drain scenario).
+    this.browser = await chromium.launch({
+      headless: this.opts.headless,
+      handleSIGINT: false,
+      handleSIGTERM: false,
+    });
     const sessionStatePath = path.join(this.opts.stateDir, `${this.opts.id}.json`);
     const storageState = fs.existsSync(sessionStatePath) ? sessionStatePath : undefined;
     this.context = await this.browser.newContext({

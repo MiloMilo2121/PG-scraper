@@ -202,3 +202,16 @@ are irreversible; all are config- or flag-gated.
   avviato. Nessuna vulnerabilità nelle dipendenze di produzione.
 - **MAJOR BUMP DEFERRED (operator/next pass):** vitest 2→3 risolve tutte
   e tre. Non eseguito in questo pass per la regola "patch-level only".
+
+## F — Bug reali trovati dalla verifica live (e fix)
+
+1. **RateLimiter mai cablato** (dal Phase 1): acquire() senza call site →
+   burst SERP ~3.7 req/s → Bing soft-block 185/185 empty, silenzioso.
+   Fix: pacing per-provider nel router; bing_html/ddg_lite 0.5 req/s
+   capacity 2; non configurati = invariati. Verificato live: 0%→100%
+   success, yield 0→17.8% (baseline R11: 20.9%).
+2. **Playwright handleSIGINT default** pre-emptava il graceful drain
+   (exit(130) suo prima del nostro): handleSIGINT/handleSIGTERM:false al
+   launch + abort check per-PAGINA in pg_live (un comune denso superava
+   il watchdog). Verificato live: drain naturale in 1.7 s con output
+   parziali, lock rilasciato, checkpoint resume-ready.
