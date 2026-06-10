@@ -81,6 +81,25 @@ differ.
   (don't auto-merge). Quick win.
 - **Impact:** HIGH — directly affects deliverable quality + per-lead billing.
 
+### Q11 — Maps scrape is non-deterministic (6× swing). Is lead-count trustworthy?
+**MEASURED.** Two identical back-to-back Limena Maps-full scrapes:
+200 vs 277 leads, Maps component 15 vs 92 (6×), 71.5% company-set overlap.
+PG was stable (~96%); Maps was not. Google Maps returns a different
+partially-overlapping feed per scroll session.
+- **Why it matters:** (a) "diff last week vs this week" is NOT viable on
+  Maps-heavy runs — a 28% delta can be pure variance. (b) The R11/R12
+  lift numbers (+105%/+111%) are point estimates of a wide variance band,
+  not stable values. (c) Lead-count as a deliverable KPI is shaky for Maps.
+- **To answer:** run the same scope 3-5× and measure the variance band;
+  decide if pg4 needs multi-run union (scrape N times, dedupe-merge) to
+  stabilize Maps coverage before counts are quoted to clients.
+- **Recommended default:** for client deliverables, run Maps scopes 2-3×
+  and union the results (the deduper already merges cross-run); quote PG
+  counts as stable, Maps counts as "≥ N". Don't quote a single Maps run as
+  a census.
+- **Impact:** HIGH — directly affects whether lead-count is a sellable
+  number and whether week-over-week reporting means anything.
+
 ### Q4 — Which provinces are actually precision-validated, and on what sample?
 **CLAIMED vs READ.** Docs claim "4 validated provinces (BL/PD/VR/TV) @
 91.8-96.5% paid precision." The category-coupling agent found: PD free

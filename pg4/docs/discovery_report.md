@@ -321,5 +321,38 @@ genuinely systemic waste went unnamed until this pass.
 - `precision_spotcheck.txt` — §3.3
 - forensics scripts: `/tmp/pg4_task1_blast_radius.py`,
   `/tmp/pg4_task23_fillrate_garbage.py`, `/tmp/pg4_task3_fixed_aggregators.py`
-- (R1/R4 Maps determinism pair: `disc_r1_maps.*`, `disc_r4_maps.*` —
-  appended below on completion)
+- R1/R4 Maps determinism pair: `disc_r1_maps.*`, `disc_r4_maps.*`
+
+---
+
+## §3.5 SCRAPE DETERMINISM — added on R1/R4 completion (MEASURED)
+
+Two identical back-to-back live scrapes (Limena, `--maps --coverage full`,
+`--fresh`):
+
+| | leads | PG | MAPS | PG+MAPS merged | cap_likely | pg_overflow |
+|---|---|---|---|---|---|---|
+| R1 | 200 | 183 | 15 | 2 | 0 | 1 |
+| R4 | 277 | 176 | 92 | 9 | 1 | 1 |
+
+Company-name set overlap: **196 shared, 1 only-R1, 77 only-R4 → 71.5%
+identical**. PG was stable (183 vs 176); **Maps swung 6× (15 → 92 leads)**
+run-to-run, and R4 hit cap_likely where R1 did not.
+
+**Verdict — the SCRAPE path is NOT deterministic, driven almost entirely
+by Maps.** Google Maps returns a different, partially-overlapping result
+set on each scroll session (feed ordering, lazy-load depth, cap timing).
+Consequences:
+- The enrich path IS deterministic (§3.1: 53 = 53 on identical input).
+- "Diff last week vs this week" reporting is **NOT viable on Maps-heavy
+  runs** — a 28% week-over-week delta could be pure Maps variance, not
+  real market change. It would be roughly viable on PG-only runs (~96%
+  stable here).
+- Lead-count as a KPI is unstable for Maps runs; the operator should treat
+  a single Maps run as a sample, not a census (the readiness report's R11/
+  R12 lift numbers are therefore ± a sizeable Maps-variance band, not point
+  values).
+
+This becomes **Q11 (HIGH)** in the questions ledger: is Maps variance
+acceptable for the intended use, or does pg4 need multi-run union /
+averaging to stabilize Maps coverage before lead-count is trustworthy?
