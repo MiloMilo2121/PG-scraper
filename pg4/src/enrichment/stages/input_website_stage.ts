@@ -37,6 +37,7 @@ export class InputWebsiteStage implements Stage {
     if (verdict.matched) {
       lead.website_discovery_method = verdict.method === 'piva' ? DiscoveryMethod.INPUT_PIVA_MATCH : DiscoveryMethod.INPUT_SEMANTIC;
       lead.website_confidence = verdict.confidence;
+      if (verdict.body) ctx.verifiedBody = verdict.body; // Phase 1 free-gold seam
       return { stage: this.name, status: 'success', duration_ms: Date.now() - start, provider: verdict.provider, detail: verdict.detail };
     }
     return {

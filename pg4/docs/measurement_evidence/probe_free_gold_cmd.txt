@@ -1,0 +1,1 @@
+CMD: pnpm exec tsx src/scripts/probe_free_gold.ts --input output/r12_maps_pd_province_full_enriched_free.jsonl --n 120

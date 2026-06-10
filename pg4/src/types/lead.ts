@@ -92,6 +92,14 @@ export interface Lead {
   email_inferred?: string;
   email_type?: 'pec' | 'business' | 'public' | 'unknown';
 
+  /**
+   * Phase 1 (free-gold, schema v2) — social profile URLs mined from the
+   * firm's already-fetched website footer at zero marginal cost.
+   */
+  instagram?: string;
+  facebook?: string;
+  linkedin?: string;
+
   revenue?: string;
   revenue_year?: string;
   employees?: string;
@@ -137,8 +145,9 @@ export interface Lead {
  * Version history:
  *   1 — adds _schema_version itself, phone_raw, permanently_closed
  *       (everything before v1 is the unversioned pre-June-2026 layout).
+ *   2 — adds instagram, facebook, linkedin (Phase 1 free-gold body mining).
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * The original (pre-versioning) raw column set. Frozen — appending here
@@ -216,18 +225,35 @@ const APPENDED_COLUMNS_V1 = [
 ] as const;
 
 /**
+ * Phase 1 (schema v2) — social columns appended AFTER the v1 appendix on
+ * the enriched flavor only (they are enrichment output, never raw scrape).
+ * Trailing position keeps positional readers of v1 outputs unaffected.
+ */
+const APPENDED_COLUMNS_V2 = [
+  'instagram',
+  'facebook',
+  'linkedin',
+] as const;
+
+/**
  * Stable column order for the RAW CSV emitted by the scraper.
  * Phase 3.7 extended with `query_location`, `business_city`, and
  * `category_match` for cross-query dedupe and off-category flagging.
+ * (No v2 social columns here — they are enrichment-only.)
  */
 export const RAW_CSV_COLUMNS = [...RAW_BASE_COLUMNS, ...APPENDED_COLUMNS_V1] as const;
 
 /**
  * Stable column order for the ENRICHED CSV emitted by the enricher.
- * Includes all RAW base columns plus enriched fields plus the v1 appendix.
- * Locked from Phase 1; append-only via APPENDED_COLUMNS_V*.
+ * Includes all RAW base columns plus enriched fields plus the v1 + v2
+ * appendices. Locked from Phase 1; append-only via APPENDED_COLUMNS_V*.
  */
-export const ENRICHED_CSV_COLUMNS = [...RAW_BASE_COLUMNS, ...ENRICHED_BASE_COLUMNS, ...APPENDED_COLUMNS_V1] as const;
+export const ENRICHED_CSV_COLUMNS = [
+  ...RAW_BASE_COLUMNS,
+  ...ENRICHED_BASE_COLUMNS,
+  ...APPENDED_COLUMNS_V1,
+  ...APPENDED_COLUMNS_V2,
+] as const;
 
 export type RawCsvColumn = (typeof RAW_CSV_COLUMNS)[number];
 export type EnrichedCsvColumn = (typeof ENRICHED_CSV_COLUMNS)[number];

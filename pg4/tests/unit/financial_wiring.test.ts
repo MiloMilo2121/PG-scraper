@@ -101,26 +101,29 @@ describe('R13.1 — FinancialStage wiring (no network)', () => {
 
 describe('R13.1 — CSV columns are deterministic and append-only', () => {
   // Schema v1 (Phase C.1) appended phone_raw/permanently_closed/_schema_version
-  // AFTER the financial block; the financial columns are therefore the last
-  // four columns BEFORE the v1 appendix. The append-only guarantee (no
-  // pre-existing column moved) is asserted by the base-prefix test below.
+  // after the financial block; v2 (Phase 1 free-gold) appended instagram/
+  // facebook/linkedin after THAT, on the enriched flavor only. So on ENRICHED
+  // the financial block is the last four columns before the v1+v2 appendices.
+  // The append-only guarantee (no pre-existing column moved) holds.
   const V1_APPENDIX = ['phone_raw', 'permanently_closed', '_schema_version'];
+  const V2_APPENDIX = ['instagram', 'facebook', 'linkedin'];
+  const ENRICHED_APPENDIX = [...V1_APPENDIX, ...V2_APPENDIX];
 
-  it('keeps the 4 financial columns contiguous, right before the v1 appendix', () => {
-    const beforeAppendix = ENRICHED_CSV_COLUMNS.slice(0, -V1_APPENDIX.length);
+  it('keeps the 4 financial columns contiguous, right before the v1+v2 appendix', () => {
+    const beforeAppendix = ENRICHED_CSV_COLUMNS.slice(0, -ENRICHED_APPENDIX.length);
     expect(beforeAppendix.slice(-4)).toEqual([
       'financial_source',
       'financial_confidence',
       'financial_evidence_count',
       'financial_notes',
     ]);
-    expect(ENRICHED_CSV_COLUMNS.slice(-V1_APPENDIX.length)).toEqual(V1_APPENDIX);
+    expect(ENRICHED_CSV_COLUMNS.slice(-ENRICHED_APPENDIX.length)).toEqual(ENRICHED_APPENDIX);
   });
 
   it('keeps ENRICHED a strict superset that starts with the RAW base columns', () => {
     const rawBase = RAW_CSV_COLUMNS.slice(0, -V1_APPENDIX.length);
     expect(ENRICHED_CSV_COLUMNS.slice(0, rawBase.length)).toEqual([...rawBase]);
-    // Both flavors carry the SAME appendix at the very end.
+    // RAW carries only the v1 appendix at its end (v2 is enrichment-only).
     expect(RAW_CSV_COLUMNS.slice(-V1_APPENDIX.length)).toEqual(V1_APPENDIX);
   });
 
@@ -147,7 +150,7 @@ describe('R13.1 — CSV columns are deterministic and append-only', () => {
     expect(
       header
         .trim()
-        .endsWith('financial_source,financial_confidence,financial_evidence_count,financial_notes,phone_raw,permanently_closed,_schema_version')
+        .endsWith('financial_source,financial_confidence,financial_evidence_count,financial_notes,phone_raw,permanently_closed,_schema_version,instagram,facebook,linkedin')
     ).toBe(true);
     expect(row).toContain('input');
     expect(row).toContain('0.6');

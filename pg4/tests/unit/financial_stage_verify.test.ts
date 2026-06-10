@@ -249,20 +249,22 @@ describe('ENRICHED_CSV_COLUMNS — append-only contract', () => {
   });
 
   it('ENRICHED_CSV_COLUMNS starts with the RAW base columns (original cols unaffected)', () => {
-    // Schema v1 (Phase C.1): both flavors share the same FROZEN base prefix
-    // and the same V1 appendix at the very end. The enriched CSV therefore
-    // starts with raw-minus-appendix, not the full raw array — positional
-    // readers of pre-v1 files are still unaffected (no column moved).
+    // Schema v1 (Phase C.1) + v2 (Phase 1 free-gold): RAW = RAW_BASE + V1
+    // appendix; ENRICHED = RAW_BASE + ENRICHED_BASE + V1 + V2 (instagram/
+    // facebook/linkedin). The enriched CSV starts with raw-minus-V1-appendix;
+    // no pre-existing column ever moved (append-only).
     const raw = RAW_CSV_COLUMNS as readonly string[];
     const enriched = ENRICHED_CSV_COLUMNS as readonly string[];
-    const appendixLen = 3; // phone_raw, permanently_closed, _schema_version
-    const rawBase = raw.slice(0, raw.length - appendixLen);
+    const rawAppendixLen = 3; // V1: phone_raw, permanently_closed, _schema_version
+    const rawBase = raw.slice(0, raw.length - rawAppendixLen);
     for (let i = 0; i < rawBase.length; i++) {
       expect(enriched[i]).toBe(rawBase[i]);
     }
-    // And both flavors end with the SAME v1 appendix in the same order.
-    expect(raw.slice(-appendixLen)).toEqual(enriched.slice(-appendixLen));
-    expect(raw.slice(-1)[0]).toBe('_schema_version');
+    // RAW still ends with the V1 appendix (no v2 on the raw flavor).
+    expect(raw.slice(-rawAppendixLen)).toEqual(['phone_raw', 'permanently_closed', '_schema_version']);
+    // ENRICHED ends with the V2 appendix; the V1 appendix sits just before it.
+    expect(enriched.slice(-3)).toEqual(['instagram', 'facebook', 'linkedin']);
+    expect(enriched.slice(-6, -3)).toEqual(['phone_raw', 'permanently_closed', '_schema_version']);
   });
 
   it('CSV writer emits all 4 financial columns in the header', async () => {

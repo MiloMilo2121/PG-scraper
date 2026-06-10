@@ -73,6 +73,14 @@ export interface PerLeadContext {
    * Memory bounded by candidates-per-lead × leads-in-flight.
    */
   httpFetchCache: Map<string, HttpFetchResult>;
+  /**
+   * Phase 1 (free-gold) — the HTML body of the firm's OWN website, captured
+   * the moment a stage accepts a strong (piva/phone) website match. Set by
+   * the website-discovery stages from `VerifyVerdict.body`; consumed once by
+   * `applyFreeGoldExtraction` after the ladder to mine email/PEC/social/VAT
+   * at zero marginal HTTP cost. Undefined when no strong match occurred.
+   */
+  verifiedBody?: string;
 }
 
 /**

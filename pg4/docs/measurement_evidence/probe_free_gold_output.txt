@@ -1,0 +1,22 @@
+{
+  "input": "output/r12_maps_pd_province_full_enriched_free.jsonl",
+  "sampled": 120,
+  "fetched": 114,
+  "fetch_failed": 6,
+  "hit_rates": {
+    "email": "54.4%",
+    "pec": "5.3%",
+    "any_social": "60.5%",
+    "instagram": "41.2%",
+    "facebook": "53.5%",
+    "linkedin": "27.2%",
+    "vat_from_body": "67.5%",
+    "extra_phone": "90.4%"
+  },
+  "cost_eur": 0,
+  "thesis_pass": {
+    "email_ge_40": true,
+    "any_social_ge_50": true,
+    "vat_from_body_ge_30": true
+  }
+}

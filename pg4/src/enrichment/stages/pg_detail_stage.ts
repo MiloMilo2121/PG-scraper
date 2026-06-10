@@ -111,6 +111,7 @@ export class PgDetailStage implements Stage {
     if (isStrongVerdict) {
       lead.website_discovery_method = DiscoveryMethod.PG_PHONE_SOURCE_TRUST;
       lead.website_confidence = verdict.confidence;
+      if (verdict.body) ctx.verifiedBody = verdict.body; // Phase 1 free-gold seam
       return {
         stage: this.name,
         status: 'success',

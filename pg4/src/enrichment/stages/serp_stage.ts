@@ -88,6 +88,7 @@ export class SerpStage implements Stage {
         if (verdict.matched) {
           lead.website_discovery_method = DiscoveryMethod.SERP_COMPANY;
           lead.website_confidence = verdict.confidence;
+          if (verdict.body) ctx.verifiedBody = verdict.body; // Phase 1 free-gold seam
           return {
             stage: this.name,
             status: 'success',
@@ -224,6 +225,7 @@ export class SerpStage implements Stage {
     if (isStrongVerdict && gateOk.allow) {
       lead.website_discovery_method = DiscoveryMethod.SERP_PAID;
       lead.website_confidence = verdict.confidence;
+      if (verdict.body) ctx.verifiedBody = verdict.body; // Phase 1 free-gold seam
       // Phase G.1 — providers_used must record the PAID SERP that
       // produced the candidate, not just the HTTP fetcher used to
       // verify it. Without this every SERP_PAID lead reports only

@@ -13,6 +13,7 @@ import { HyperGuesserStage } from './stages/hyper_guesser_stage';
 import { SerpStage } from './stages/serp_stage';
 import { RdapBoostStage } from './stages/rdap_stage';
 import { FinancialStage } from './stages/financial_stage';
+import { applyFreeGoldExtraction } from './extract/apply_free_gold';
 import { PgDetailHarvester } from '../discovery/sources/pagine_gialle_detail_harvester';
 
 /**
@@ -179,6 +180,26 @@ export async function runEnrichmentPipeline(input: PipelineInput): Promise<Enric
       detail: `financial_stage_threw: ${(err as Error).message}`,
     };
     logger.warn({ err: (err as Error).message }, '[pipeline] financial stage threw');
+  }
+
+  // ---- Free-gold extraction (Phase 1, orthogonal, ZERO network cost) ----
+  // When a stage above accepted a strong website match, it stashed the
+  // firm's own page body on `perLead.verifiedBody`. Mine it for email /
+  // PEC / social / VAT — €0 marginal cost (the body was already fetched
+  // for verification). Wrapped so a throw can never break the output row;
+  // makes no provider calls, so `lead.cost_eur` and budgets are untouched.
+  try {
+    const fg = applyFreeGoldExtraction(lead, perLead.verifiedBody);
+    if (fg.applied) {
+      stageOutcomes['free_gold'] = {
+        stage: 'free_gold',
+        status: 'success',
+        duration_ms: 0,
+        detail: `filled=${fg.filled.join(',')}`,
+      };
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, '[pipeline] free-gold extraction threw');
   }
 
   const found = !!lead.official_website;
