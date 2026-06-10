@@ -55,6 +55,7 @@ async function main(): Promise<number> {
       costCeilingEur: ceilingArg ? Number(ceilingArg) : undefined,
       runCostCeilingEur: runCeilingArg ? Number(runCeilingArg) : undefined,
       enablePaid: !!args.flags['enable-paid'],
+      includeClosed: !!args.flags['include-closed'],
       runId,
       abortSignal: abort.signal,
     });
@@ -134,6 +135,7 @@ Flags:
   --ledger-path <path>          Cost ledger JSONL path. Default: <out>.cost-ledger.jsonl.
   --enable-paid                 Opt in to paid providers already enabled by env and API key.
   --run-id <id>                 Externally supplied run id (used by the run command).
+  --include-closed              Also enrich leads Maps marked "Chiuso definitivamente" (default: skipped).
 
 Observability (Phase A):
   LOG_FILE env                  Per-run JSONL log. Default: <out>.log.jsonl. LOG_FILE=off disables.

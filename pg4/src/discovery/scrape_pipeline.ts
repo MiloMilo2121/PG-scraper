@@ -8,6 +8,8 @@ import { parseGoogleMapsResults } from './sources/google_maps_parser';
 import { dedupeLeads, Deduplicator } from './deduper';
 import { rehydrateFromPriorRun } from './resume_prior_run';
 import type { Lead } from '../types/lead';
+import { SCHEMA_VERSION } from '../types/lead';
+import { normalizeLeadPhone } from './phone';
 
 /**
  * Scrape pipeline (Phase 4.4 cleanup): all orchestration logic lives here,
@@ -74,6 +76,8 @@ export async function runFixtureMode(input: FixtureModeInput): Promise<void> {
       all.push(...r.results);
     }
   }
+  // Phase C.2 — same normalization the live path applies in ingestBatch.
+  for (const lead of all) normalizeLeadPhone(lead);
   await emitCsvJsonl(input.out, dedupeLeads(all), {
     fixtures: sources.length,
     total_cards: totalCards,
@@ -329,6 +333,18 @@ export async function runLiveMode(a: LiveModeInput): Promise<LiveModeSummary> {
     factory: factory.describe(),
   });
 
+  // Phase C.3 — near-duplicate candidates for operator review (never
+  // auto-merged). Written only when the run produced any.
+  const reviewCandidates = dedup.getReviewCandidates();
+  if (reviewCandidates.length > 0) {
+    const reviewPath = a.out.replace(/\.csv$/i, '') + '.dedup-review.jsonl';
+    fs.writeFileSync(reviewPath, reviewCandidates.map((c) => JSON.stringify(c)).join('\n') + '\n', 'utf8');
+    logger.warn(
+      { candidates: reviewCandidates.length, reviewPath },
+      '[scrape] near-duplicate candidates flagged for manual review (NOT merged)'
+    );
+  }
+
   return {
     leads: allLeads.length,
     raw_pre_dedupe: parsedLeadsBeforeDedupe,
@@ -360,6 +376,10 @@ export function resolveComuniList(
 
 function ingestBatch(allLeads: Lead[], dedup: Deduplicator, batch: Lead[]): void {
   for (const lead of batch) {
+    // Phase C.2 — normalize phones to E.164 BEFORE dedupe so the output is
+    // consistent regardless of which source format arrived first. The
+    // deduper's own phone key is format-tolerant either way.
+    normalizeLeadPhone(lead);
     const existing = dedup.find(lead);
     if (existing) {
       dedup.merge(existing, lead);
@@ -383,6 +403,8 @@ export async function emitCsvJsonl(
   const csv = new CsvWriter(outCsv, 'raw');
   const jsonl = new JsonlWriter(jsonlOut);
   for (const lead of leads) {
+    // Phase C.1 — stamp the schema version on every emitted row.
+    lead._schema_version ??= SCHEMA_VERSION;
     await csv.write(lead);
     await jsonl.write(lead);
   }

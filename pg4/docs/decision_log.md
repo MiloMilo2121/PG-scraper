@@ -120,3 +120,33 @@ are irreversible; all are config- or flag-gated.
   `.env` mai committato. Nessun finding CRITICAL.
 - **OPERATOR DECISION PENDING:** upgrade a secrets manager (1Password /
   SOPS / Doppler) per uso multi-operatore.
+
+## C.1 — Schema versioning
+
+- **Default:** `_schema_version=1` come ULTIMA colonna di entrambi i flavor
+  + campo JSONL. Le colonne base sono CONGELATE (RAW_BASE / ENRICHED_BASE);
+  ogni aggiunta futura va in un appendix APPENDED_COLUMNS_V*.
+- **Motivo strutturale:** appendere a RAW_CSV_COLUMNS direttamente avrebbe
+  INSERITO colonne a metà dell'enriched CSV (che spread-a raw per primo) —
+  rompendo i reader posizionali. Da qui le basi congelate.
+- Il validator richiede la colonna col valore atteso; file pre-v1 falliscono
+  la validazione in modo esplicito ("pre-v1 output?").
+
+## C.2 — E.164
+
+- **Default:** normalizzazione conservativa solo per numeri plausibilmente
+  italiani; l'originale è preservato in `phone_raw`. Numeri non parseabili
+  restano invariati (meglio nessuna normalizzazione che una sbagliata).
+
+## C.3 — Near-duplicate review
+
+- **Default:** indice token-sorted name+city ausiliario; collisioni
+  FLAGGED in `<out>.dedup-review.jsonl`, MAI auto-merged ("Studio Casa" vs
+  "Casa Studio" possono essere ditte registrate distinte).
+
+## C.4 — Closed businesses
+
+- **Default:** "Chiuso definitivamente"/"Permanently closed" catturato dal
+  parser Maps; enrich li scrive come SKIPPED/SKIPPED_PERMANENTLY_CLOSED
+  senza bruciare provider call. `--include-closed` per processarli.
+- Solo dati già presenti nelle pagine caricate — nessuna navigazione extra.

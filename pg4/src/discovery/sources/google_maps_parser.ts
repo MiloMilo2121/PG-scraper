@@ -115,6 +115,7 @@ function parseCard($card: CheerioCard, opts: { category?: string; cityHint?: str
   // by text and strip the leading bullet before classification.
   let address: string | undefined;
   let phone: string | undefined;
+  let permanentlyClosed = false;
   let typeTag: string | undefined; // first non-noise span — usually the category tag
   const seenSpanText = new Set<string>();
   $card.find('.W4Efsd span').each((_i, el) => {
@@ -123,6 +124,13 @@ function parseCard($card: CheerioCard, opts: { category?: string; cityHint?: str
     const cleaned = raw.replace(BULLET_PREFIX_RE, '').trim();
     if (!cleaned || cleaned === '·' || seenSpanText.has(cleaned)) return;
     seenSpanText.add(cleaned);
+    // Phase C.4 — "Chiuso definitivamente" is the status span Maps renders
+    // on dead businesses (en: "Permanently closed"). Distinct from the
+    // daily-hours "Chiuso"/"Chiude alle…" statuses, which stay ignored.
+    if (/^(Chiuso definitivamente|Permanently closed)/i.test(cleaned)) {
+      permanentlyClosed = true;
+      return;
+    }
     if (!address && ADDRESS_PREFIX_RE.test(cleaned)) {
       address = cleaned;
       return;
@@ -189,6 +197,7 @@ function parseCard($card: CheerioCard, opts: { category?: string; cityHint?: str
   if (opts.cityHint) lead.query_location = opts.cityHint;
   if (city && opts.cityHint && city !== opts.cityHint) lead.business_city = city;
   if (opts.category) lead.category_match = classifyCategoryMatch(opts.category, typeTag);
+  if (permanentlyClosed) lead.permanently_closed = true;
   // Phase 4.4: same conservative mojibake strip as PG. Maps' DOM is
   // usually clean UTF-8 but occasional listing pages mirror PG's bad
   // bytes via review imports.

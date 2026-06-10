@@ -19,6 +19,7 @@ import fs from 'fs';
 import readline from 'readline';
 import { parse } from 'csv-parse';
 import { parseArgs, reqString, optString } from '../cli/_args';
+import { SCHEMA_VERSION } from '../types/lead';
 
 // ─── Known source values (derived from codebase, not guessed) ────────────────
 // src/types/lead.ts: 'PG' | 'MAPS' | 'INPUT_CSV' | 'IMMOBILIARE'
@@ -187,6 +188,16 @@ async function validateCsv(csvPath: string, flavor: OutputFlavor = 'enriched'): 
               errors.push(`Row ${rowIdx}: unknown source token "${token}" in source "${src}"`);
             }
           }
+        }
+
+        // Phase C.1 — schema version stamp. Every current output must carry
+        // the column with the expected value; legacy (pre-v1) files fail
+        // loudly so the operator knows the file predates versioning.
+        const sv = record['_schema_version'];
+        if (sv === undefined) {
+          if (rowIdx === 1) errors.push(`Missing _schema_version column (pre-v${SCHEMA_VERSION} output?)`);
+        } else if (sv.trim() !== String(SCHEMA_VERSION)) {
+          errors.push(`Row ${rowIdx}: _schema_version is "${sv}", expected "${SCHEMA_VERSION}"`);
         }
       }
     });

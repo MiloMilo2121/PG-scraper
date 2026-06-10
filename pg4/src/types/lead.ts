@@ -22,6 +22,8 @@ export interface Lead {
 
   // ---- Contact (raw, may be enriched) ----
   phone?: string;
+  /** Phase C.2 — the phone exactly as scraped, before E.164 normalization. */
+  phone_raw?: string;
   email?: string;
   website?: string;
   vat_code?: string; // P.IVA (11 digits)
@@ -67,6 +69,14 @@ export interface Lead {
    *                  category (kept, not silently dropped, but flagged)
    */
   category_match?: 'confirmed' | 'unknown' | 'mismatch';
+  /**
+   * Phase C.4 — Maps marks businesses as "Chiuso definitivamente" in the
+   * card status span. Captured at parse time; enrich skips these leads by
+   * default (`--include-closed` overrides).
+   */
+  permanently_closed?: boolean;
+  /** Phase C.1 — stamped on every output row. */
+  _schema_version?: number;
 
   // ---- Enrichment fields (all optional) ----
   status?: LeadStatus;
@@ -119,11 +129,23 @@ export interface Lead {
 }
 
 /**
- * Stable column order for the RAW CSV emitted by the scraper.
- * Phase 3.7 extended with `query_location`, `business_city`, and
- * `category_match` for cross-query dedupe and off-category flagging.
+ * Phase C.1 — output schema version, stamped as the LAST column of every
+ * CSV row and as `_schema_version` in every JSONL line. Bump when columns
+ * are appended so downstream consumers can detect capability without
+ * sniffing headers.
+ *
+ * Version history:
+ *   1 — adds _schema_version itself, phone_raw, permanently_closed
+ *       (everything before v1 is the unversioned pre-June-2026 layout).
  */
-export const RAW_CSV_COLUMNS = [
+export const SCHEMA_VERSION = 1;
+
+/**
+ * The original (pre-versioning) raw column set. Frozen — appending here
+ * would INSERT columns in the middle of the enriched CSV (which spreads
+ * this array first). New raw-side columns go in APPENDED_COLUMNS_V1.
+ */
+const RAW_BASE_COLUMNS = [
   'company_name',
   'category',
   'city',
@@ -145,12 +167,10 @@ export const RAW_CSV_COLUMNS = [
 ] as const;
 
 /**
- * Stable column order for the ENRICHED CSV emitted by the enricher.
- * Includes all RAW columns plus enriched fields.
- * Locked from Phase 1.
+ * The original enriched-only column set (Phase 1 + R13.1). Frozen for the
+ * same reason as RAW_BASE_COLUMNS.
  */
-export const ENRICHED_CSV_COLUMNS = [
-  ...RAW_CSV_COLUMNS,
+const ENRICHED_BASE_COLUMNS = [
   'status',
   'reason_code',
   'official_website',
@@ -180,6 +200,34 @@ export const ENRICHED_CSV_COLUMNS = [
   'financial_evidence_count',
   'financial_notes',
 ] as const;
+
+/**
+ * Phase C — columns appended in schema v1. They trail BOTH flavors so
+ * positional readers of either CSV are unaffected:
+ *   raw      = RAW_BASE + V1
+ *   enriched = RAW_BASE + ENRICHED_BASE + V1
+ * (Appending to RAW_BASE directly would shift every enriched column —
+ * that is why the bases are frozen and additions live here.)
+ */
+const APPENDED_COLUMNS_V1 = [
+  'phone_raw',
+  'permanently_closed',
+  '_schema_version',
+] as const;
+
+/**
+ * Stable column order for the RAW CSV emitted by the scraper.
+ * Phase 3.7 extended with `query_location`, `business_city`, and
+ * `category_match` for cross-query dedupe and off-category flagging.
+ */
+export const RAW_CSV_COLUMNS = [...RAW_BASE_COLUMNS, ...APPENDED_COLUMNS_V1] as const;
+
+/**
+ * Stable column order for the ENRICHED CSV emitted by the enricher.
+ * Includes all RAW base columns plus enriched fields plus the v1 appendix.
+ * Locked from Phase 1; append-only via APPENDED_COLUMNS_V*.
+ */
+export const ENRICHED_CSV_COLUMNS = [...RAW_BASE_COLUMNS, ...ENRICHED_BASE_COLUMNS, ...APPENDED_COLUMNS_V1] as const;
 
 export type RawCsvColumn = (typeof RAW_CSV_COLUMNS)[number];
 export type EnrichedCsvColumn = (typeof ENRICHED_CSV_COLUMNS)[number];

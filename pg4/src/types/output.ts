@@ -68,6 +68,16 @@ export const ReasonCode = {
   SEMANTIC_REJECTED_RDAP_MISMATCH: 'SEMANTIC_REJECTED_RDAP_MISMATCH',
   SEMANTIC_REJECTED_NO_DISTINCTIVE_TOKENS: 'SEMANTIC_REJECTED_NO_DISTINCTIVE_TOKENS',
 
+  // Phase C.4 — Maps marked the business "Chiuso definitivamente"; enrich
+  // skips it by default (--include-closed overrides). The row is still
+  // written (status SKIPPED) so CSV/JSONL row parity holds.
+  SKIPPED_PERMANENTLY_CLOSED: 'SKIPPED_PERMANENTLY_CLOSED',
+
+  // Phase D.1 — lead matched the operator's suppression list (GDPR
+  // right-to-objection / do-not-contact). Dropped from outputs entirely;
+  // counted in the run summary.
+  SUPPRESSED: 'SUPPRESSED',
+
   // Internal
   ERROR_INTERNAL: 'ERROR_INTERNAL',
 } as const;

@@ -100,17 +100,28 @@ describe('R13.1 — FinancialStage wiring (no network)', () => {
 });
 
 describe('R13.1 — CSV columns are deterministic and append-only', () => {
-  it('appends exactly the 4 financial columns at the end of ENRICHED', () => {
-    expect(ENRICHED_CSV_COLUMNS.slice(-4)).toEqual([
+  // Schema v1 (Phase C.1) appended phone_raw/permanently_closed/_schema_version
+  // AFTER the financial block; the financial columns are therefore the last
+  // four columns BEFORE the v1 appendix. The append-only guarantee (no
+  // pre-existing column moved) is asserted by the base-prefix test below.
+  const V1_APPENDIX = ['phone_raw', 'permanently_closed', '_schema_version'];
+
+  it('keeps the 4 financial columns contiguous, right before the v1 appendix', () => {
+    const beforeAppendix = ENRICHED_CSV_COLUMNS.slice(0, -V1_APPENDIX.length);
+    expect(beforeAppendix.slice(-4)).toEqual([
       'financial_source',
       'financial_confidence',
       'financial_evidence_count',
       'financial_notes',
     ]);
+    expect(ENRICHED_CSV_COLUMNS.slice(-V1_APPENDIX.length)).toEqual(V1_APPENDIX);
   });
 
-  it('keeps ENRICHED a strict superset that starts with all RAW columns', () => {
-    expect(ENRICHED_CSV_COLUMNS.slice(0, RAW_CSV_COLUMNS.length)).toEqual([...RAW_CSV_COLUMNS]);
+  it('keeps ENRICHED a strict superset that starts with the RAW base columns', () => {
+    const rawBase = RAW_CSV_COLUMNS.slice(0, -V1_APPENDIX.length);
+    expect(ENRICHED_CSV_COLUMNS.slice(0, rawBase.length)).toEqual([...rawBase]);
+    // Both flavors carry the SAME appendix at the very end.
+    expect(RAW_CSV_COLUMNS.slice(-V1_APPENDIX.length)).toEqual(V1_APPENDIX);
   });
 
   it('places the financial columns AFTER the pre-existing "errors" column', () => {
@@ -133,7 +144,11 @@ describe('R13.1 — CSV columns are deterministic and append-only', () => {
     });
     await w.close();
     const [header, row] = fs.readFileSync(p, 'utf8').split('\n');
-    expect(header.trim().endsWith('financial_source,financial_confidence,financial_evidence_count,financial_notes')).toBe(true);
+    expect(
+      header
+        .trim()
+        .endsWith('financial_source,financial_confidence,financial_evidence_count,financial_notes,phone_raw,permanently_closed,_schema_version')
+    ).toBe(true);
     expect(row).toContain('input');
     expect(row).toContain('0.6');
     expect(row).toContain('italian_piva_checksum_ok');

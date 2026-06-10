@@ -17,6 +17,14 @@ import type { Lead } from '../types/lead';
  * first (e.g. PG before Maps for Italian SMBs, since PG addresses are more
  * structured).
  */
+export interface DedupReviewCandidate {
+  /** Why the pair was flagged. */
+  rule: 'token_sort_name_city';
+  key: string;
+  existing: Pick<Lead, 'company_name' | 'city' | 'address' | 'phone' | 'source'>;
+  incoming: Pick<Lead, 'company_name' | 'city' | 'address' | 'phone' | 'source'>;
+}
+
 export class Deduplicator {
   private byPhone = new Map<string, Lead>();
   private byNameCity = new Map<string, Lead>();
@@ -24,6 +32,16 @@ export class Deduplicator {
   private byPgUrl = new Map<string, Lead>();
   private byMapsUrl = new Map<string, Lead>();
   private byHost = new Map<string, Lead>();
+  /**
+   * Phase C.3 — auxiliary token-sorted name index for NEAR-duplicate
+   * detection. "Immobiliare Rossi | padova" and "Rossi Immobiliare |
+   * padova" produce different primary keys but the same sorted-token
+   * key. Candidates are LOGGED for operator review, never auto-merged —
+   * word order can be load-bearing in Italian business names
+   * ("Studio Casa" vs "Casa Studio" are distinct registered firms).
+   */
+  private bySortedNameCity = new Map<string, Lead>();
+  private reviewCandidates: DedupReviewCandidate[] = [];
 
   find(item: Lead): Lead | undefined {
     const phone = this.phoneKey(item);
@@ -50,6 +68,27 @@ export class Deduplicator {
     if (item.maps_url) this.byMapsUrl.set(item.maps_url, item);
     const host = this.hostKey(item.website);
     if (host) this.byHost.set(host, item);
+    // Phase C.3 — near-duplicate detection. Fires when the sorted-token
+    // key collides but the primary name+city key does not (requires the
+    // same words in a different order). Candidate is logged, not merged.
+    const sk = this.sortedNameCityKey(item);
+    if (sk) {
+      const near = this.bySortedNameCity.get(sk);
+      if (near && near !== item && this.nameCityKey(near) !== nc) {
+        this.reviewCandidates.push({
+          rule: 'token_sort_name_city',
+          key: sk,
+          existing: pickReviewFields(near),
+          incoming: pickReviewFields(item),
+        });
+      }
+      if (!near) this.bySortedNameCity.set(sk, item);
+    }
+  }
+
+  /** Phase C.3 — near-duplicate pairs flagged during this run (review-only). */
+  getReviewCandidates(): DedupReviewCandidate[] {
+    return this.reviewCandidates;
   }
 
   /**
@@ -132,6 +171,21 @@ export class Deduplicator {
     return addrTokens ? `${n}|addr:${addrTokens}` : undefined;
   }
 
+  /**
+   * Phase C.3 — sorted-token variant of nameCityKey. Same locality rules;
+   * name tokens are sorted so word order stops mattering. Only produced
+   * for names with ≥ 2 tokens (single-token names cannot reorder).
+   */
+  private sortedNameCityKey(item: Lead): string | undefined {
+    if (!item.company_name) return undefined;
+    const tokens = normalizeForKey(item.company_name).split(' ').filter(Boolean);
+    if (tokens.length < 2) return undefined;
+    const localitySource = item.city ?? item.business_city ?? item.query_location ?? '';
+    const c = normalizeForKey(localitySource);
+    if (c.length < 2) return undefined;
+    return `${tokens.sort().join(' ')}|${c}`;
+  }
+
   private hostKey(website: string | undefined): string | undefined {
     if (!website) return undefined;
     try {
@@ -140,6 +194,10 @@ export class Deduplicator {
       return undefined;
     }
   }
+}
+
+function pickReviewFields(l: Lead): DedupReviewCandidate['existing'] {
+  return { company_name: l.company_name, city: l.city, address: l.address, phone: l.phone, source: l.source };
 }
 
 function normalizeForKey(s: string): string {
