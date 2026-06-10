@@ -7,6 +7,7 @@ import { acquireOutputLock } from '../runtime/output_lock';
 import { RunRecorder, EXIT, installInterruptHandler, readRunHistory, runsFilePath, assessYield } from '../runtime/run_record';
 import { getNotifier } from '../runtime/notifier';
 import { PreflightError } from '../discovery/preflight';
+import { postRunValidate } from './_post_run';
 
 /**
  * scrape — Phase 4 CLI (thin wrapper).
@@ -135,6 +136,14 @@ async function main(): Promise<number> {
       comuni_yield: summary.comuni_yield,
       suspect: yieldCheck.suspect || undefined,
       suspect_comuni: yieldCheck.suspect ? yieldCheck.suspectComuni : undefined,
+    });
+
+    // Phase B.2 — automatic output validation (warn-only).
+    await postRunValidate({
+      csvPath: out,
+      jsonlPath: summary.output_jsonl,
+      flavor: 'raw',
+      runId,
     });
 
     if (summary.interrupted) {

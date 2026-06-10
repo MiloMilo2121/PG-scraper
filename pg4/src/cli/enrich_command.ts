@@ -63,6 +63,13 @@ export async function runEnrichCommand(o: EnrichCommandOptions): Promise<EnrichC
         '[enrich] --enable-paid is ignored because --cost-ceiling-eur is 0; force-OFF paid for this run',
       );
     }
+    // Phase B.4 — fail fast when paid was requested but no provider is
+    // actually usable (missing key / not enabled). Mock-HTTP runs are
+    // offline by definition and skip the check.
+    if (paidEnabled && !o.mockHttpPath) {
+      const { assertPaidSecrets } = await import('../config/env');
+      assertPaidSecrets();
+    }
     const run = createRun({
       ledgerJsonlPath: ledgerPath,
       costCeilingEur: o.costCeilingEur,

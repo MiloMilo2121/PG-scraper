@@ -83,6 +83,37 @@ export function resetEnvCache(): void {
   cached = null;
 }
 
+/**
+ * Phase B.4 — fail fast with an actionable message when the operator asked
+ * for paid providers but none is actually usable. Without this, a missing
+ * SERPER_API_KEY silently dropped the provider from the registry and the
+ * "paid" run completed free-only with no signal.
+ */
+export function assertPaidSecrets(): void {
+  const env = getEnv();
+  const paidCandidates: Array<{ name: string; enabled: boolean; key?: string; keyVar: string; enableVar: string }> = [
+    { name: 'serper', enabled: env.SERPER_ENABLED, key: env.SERPER_API_KEY, keyVar: 'SERPER_API_KEY', enableVar: 'SERPER_ENABLED' },
+    { name: 'exa', enabled: env.EXA_ENABLED, key: env.EXA_API_KEY, keyVar: 'EXA_API_KEY', enableVar: 'EXA_ENABLED' },
+    { name: 'tavily', enabled: env.TAVILY_ENABLED, key: env.TAVILY_API_KEY, keyVar: 'TAVILY_API_KEY', enableVar: 'TAVILY_ENABLED' },
+    { name: 'brightdata', enabled: env.BRIGHTDATA_ENABLED, key: env.BRIGHTDATA_API_KEY, keyVar: 'BRIGHTDATA_API_KEY', enableVar: 'BRIGHTDATA_ENABLED' },
+  ];
+  const usable = paidCandidates.filter((p) => p.enabled && p.key && p.key.length > 0);
+  if (usable.length > 0) return;
+
+  const enabledButKeyless = paidCandidates.filter((p) => p.enabled && (!p.key || p.key.length === 0));
+  if (enabledButKeyless.length > 0) {
+    const names = enabledButKeyless.map((p) => `${p.name} (${p.enableVar}=true but ${p.keyVar} is empty)`).join(', ');
+    throw new Error(
+      `--enable-paid was passed but no paid provider has a usable API key: ${names}. ` +
+        `Set the missing key in .env, or drop --enable-paid to run free-only.`
+    );
+  }
+  throw new Error(
+    `--enable-paid was passed but no paid provider is enabled in the environment. ` +
+      `Set e.g. SERPER_ENABLED=true and SERPER_API_KEY=<key> in .env, or drop --enable-paid to run free-only.`
+  );
+}
+
 /** Resolved runtime config — env merged onto DEFAULTS. */
 export function getConfig() {
   const env = getEnv();

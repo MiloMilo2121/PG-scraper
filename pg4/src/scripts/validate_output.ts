@@ -3,8 +3,16 @@
  *
  * CLI: tsx src/scripts/validate_output.ts --csv <path> --jsonl <path>
  *                                          [--ledger <path>] [--max-cost <eur>]
+ *                                          [--flavor raw|enriched]
  *
  * Prints a JSON summary to stdout.  Exits non-zero if ok===false.
+ *
+ * Phase B.2 — also exported as `validateOutputs()` so scrape/enrich call it
+ * automatically at the end of every run (warn-only: validation errors are
+ * logged + notified but never change the run's exit code).
+ *
+ * Flavors: `enriched` (default, full checks) vs `raw` — scrape outputs have
+ * no status/reason_code columns, so those per-row checks are skipped.
  */
 
 import fs from 'fs';
@@ -85,7 +93,9 @@ interface CsvResult {
   reasonCodes: Set<string>;
 }
 
-async function validateCsv(csvPath: string): Promise<CsvResult> {
+export type OutputFlavor = 'raw' | 'enriched';
+
+async function validateCsv(csvPath: string, flavor: OutputFlavor = 'enriched'): Promise<CsvResult> {
   const errors: string[] = [];
   const methods = new Set<string>();
   const reasonCodes = new Set<string>();
@@ -131,15 +141,18 @@ async function validateCsv(csvPath: string): Promise<CsvResult> {
         rows += 1;
         const rowIdx = rows;
 
-        // Check status present
-        if (!record['status'] || record['status'].trim() === '') {
-          errors.push(`Row ${rowIdx}: missing status`);
-        }
-
-        // Check reason_code present
-        if (!record['reason_code'] || record['reason_code'].trim() === '') {
-          errors.push(`Row ${rowIdx}: missing reason_code`);
-        } else {
+        // Enriched-only per-row checks: raw scrape outputs have no
+        // status/reason_code columns by design.
+        if (flavor === 'enriched') {
+          if (!record['status'] || record['status'].trim() === '') {
+            errors.push(`Row ${rowIdx}: missing status`);
+          }
+          if (!record['reason_code'] || record['reason_code'].trim() === '') {
+            errors.push(`Row ${rowIdx}: missing reason_code`);
+          } else {
+            reasonCodes.add(record['reason_code'].trim());
+          }
+        } else if (record['reason_code'] && record['reason_code'].trim()) {
           reasonCodes.add(record['reason_code'].trim());
         }
 
@@ -290,22 +303,29 @@ async function validateLedger(ledgerPath: string): Promise<LedgerResult> {
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-async function main(): Promise<void> {
-  const args = parseArgs();
-  const csvPath = reqString(args, 'csv', 'path to enriched CSV');
-  const jsonlPath = reqString(args, 'jsonl', 'path to JSONL output');
-  const ledgerPath = optString(args, 'ledger');
-  const maxCostStr = optString(args, 'max-cost');
-  const maxCost = maxCostStr !== undefined ? Number(maxCostStr) : undefined;
+export interface ValidateOutputsOptions {
+  csvPath: string;
+  jsonlPath: string;
+  ledgerPath?: string;
+  maxCost?: number;
+  flavor?: OutputFlavor;
+}
 
+/**
+ * Phase B.2 — programmatic entry point. Runs every check and returns the
+ * summary; never exits the process. The CLI wrapper below and the
+ * scrape/enrich post-run hooks both call this.
+ */
+export async function validateOutputs(opts: ValidateOutputsOptions): Promise<ValidationSummary> {
+  const flavor = opts.flavor ?? 'enriched';
   const allErrors: string[] = [];
 
   // --- CSV ---
-  const csvResult = await validateCsv(csvPath);
+  const csvResult = await validateCsv(opts.csvPath, flavor);
   allErrors.push(...csvResult.errors);
 
   // --- JSONL ---
-  const jsonlResult = await validateJsonl(jsonlPath);
+  const jsonlResult = await validateJsonl(opts.jsonlPath);
   allErrors.push(...jsonlResult.errors);
 
   // --- Row count parity ---
@@ -320,8 +340,8 @@ async function main(): Promise<void> {
   let runIds: string[] = [];
   let totalCostEur: number | undefined;
 
-  if (ledgerPath) {
-    const ledgerResult = await validateLedger(ledgerPath);
+  if (opts.ledgerPath) {
+    const ledgerResult = await validateLedger(opts.ledgerPath);
     allErrors.push(...ledgerResult.errors);
     ledgerSummaries = ledgerResult.summaryCount;
     runIds = ledgerResult.runIds;
@@ -329,13 +349,13 @@ async function main(): Promise<void> {
   }
 
   // --- Max cost ---
-  if (maxCost !== undefined && totalCostEur !== undefined && totalCostEur > maxCost) {
+  if (opts.maxCost !== undefined && totalCostEur !== undefined && totalCostEur > opts.maxCost) {
     allErrors.push(
-      `Cost exceeded: total_cost_eur=${totalCostEur.toFixed(4)} > max-cost=${maxCost}`
+      `Cost exceeded: total_cost_eur=${totalCostEur.toFixed(4)} > max-cost=${opts.maxCost}`
     );
   }
 
-  const summary: ValidationSummary = {
+  return {
     ok: allErrors.length === 0,
     csv_rows: csvResult.rows,
     jsonl_rows: jsonlResult.rows,
@@ -346,23 +366,44 @@ async function main(): Promise<void> {
     reason_codes: [...csvResult.reasonCodes].sort(),
     errors: allErrors,
   };
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs();
+  const flavorRaw = optString(args, 'flavor');
+  if (flavorRaw !== undefined && flavorRaw !== 'raw' && flavorRaw !== 'enriched') {
+    throw new Error(`--flavor must be "raw" or "enriched", got "${flavorRaw}"`);
+  }
+  const maxCostStr = optString(args, 'max-cost');
+  const summary = await validateOutputs({
+    csvPath: reqString(args, 'csv', 'path to output CSV'),
+    jsonlPath: reqString(args, 'jsonl', 'path to JSONL output'),
+    ledgerPath: optString(args, 'ledger'),
+    maxCost: maxCostStr !== undefined ? Number(maxCostStr) : undefined,
+    flavor: flavorRaw as OutputFlavor | undefined,
+  });
 
   process.stdout.write(JSON.stringify(summary, null, 2) + '\n');
   process.exit(summary.ok ? 0 : 1);
 }
 
-main().catch((err: Error) => {
-  const out: ValidationSummary = {
-    ok: false,
-    csv_rows: 0,
-    jsonl_rows: 0,
-    ledger_summaries: 0,
-    run_ids: [],
-    found_website: 0,
-    methods: [],
-    reason_codes: [],
-    errors: [`Fatal: ${err.message}`],
-  };
-  process.stdout.write(JSON.stringify(out, null, 2) + '\n');
-  process.exit(1);
-});
+// Only run as CLI when invoked directly (tsx src/scripts/validate_output.ts),
+// not when imported by the scrape/enrich post-run hooks.
+const invokedDirectly = process.argv[1]?.includes('validate_output');
+if (invokedDirectly) {
+  main().catch((err: Error) => {
+    const out: ValidationSummary = {
+      ok: false,
+      csv_rows: 0,
+      jsonl_rows: 0,
+      ledger_summaries: 0,
+      run_ids: [],
+      found_website: 0,
+      methods: [],
+      reason_codes: [],
+      errors: [`Fatal: ${err.message}`],
+    };
+    process.stdout.write(JSON.stringify(out, null, 2) + '\n');
+    process.exit(1);
+  });
+}

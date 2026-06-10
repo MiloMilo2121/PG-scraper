@@ -5,6 +5,7 @@ import { logger, bindRunLogFile } from '../runtime/logger';
 import { RunRecorder, EXIT, installInterruptHandler } from '../runtime/run_record';
 import { getNotifier } from '../runtime/notifier';
 import { runEnrichCommand } from './enrich_command';
+import { postRunValidate } from './_post_run';
 
 /**
  * `pnpm run enrich -- --input output/raw.csv --out output/enriched.csv`
@@ -64,6 +65,15 @@ async function main(): Promise<number> {
       with_website: result.withWebsite,
       row_errors: result.errors,
       total_cost_eur: result.totalCostEur,
+    });
+
+    // Phase B.2 — automatic output validation (warn-only).
+    await postRunValidate({
+      csvPath: csvOut,
+      jsonlPath: result.jsonlOut,
+      ledgerPath: result.ledgerPath,
+      flavor: 'enriched',
+      runId,
     });
 
     logger.info(

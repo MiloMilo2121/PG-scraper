@@ -86,3 +86,37 @@ are irreversible; all are config- or flag-gated.
   drain wedges; a second signal force-exits immediately. The force path
   writes a fallback run record but may leave a partially flushed CSV —
   accepted as the escape hatch.
+
+## B.1 — `run` command output layout
+
+- **Default:** `--out <base>` produce `<base>_raw.csv`, `<base>_enriched.csv`
+  (+ jsonl/ledger), `<base>.log.jsonl`. Ogni stage acquisisce il proprio
+  output lock (stessa protezione dei comandi separati).
+- **Alternative:** dirigere tutto in una directory per-campagna (più file
+  da spostare per il delivery — rinviato).
+
+## B.2 — Validazione automatica post-run
+
+- **Default:** `validateOutputs()` gira a fine scrape (flavor raw) e fine
+  enrich (flavor enriched). WARN-ONLY: un fallimento è loggato + notificato
+  ma non cambia l'exit code — gli output sono già su disco e nasconderli
+  non aiuta l'operatore.
+- **Alternative:** exit code dedicato per validation-failed (rompe la
+  semantica "exit≠0 = run non completato" — rifiutato per ora).
+
+## B.3 — Scheduler
+
+- **OPERATOR DECISION PENDING:** nessuno scheduler installato. Esempi
+  pronti (launchd, cron, GH Actions commentato) in
+  `docs/scheduling_examples.md`. CLI già non-interattivi by design.
+
+## B.4 — Secrets
+
+- **Default:** `.env` resta il meccanismo (conservativo). `assertPaidSecrets()`
+  fallisce fast e nominando la variabile mancante quando `--enable-paid` è
+  passato senza alcun provider paid usabile.
+- **Scan eseguito (2026-06-10):** nessuna chiave key-shaped nel working
+  tree pg4, nella history git dei path pg4, né a HEAD dell'intero repo;
+  `.env` mai committato. Nessun finding CRITICAL.
+- **OPERATOR DECISION PENDING:** upgrade a secrets manager (1Password /
+  SOPS / Doppler) per uso multi-operatore.
