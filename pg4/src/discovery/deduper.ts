@@ -149,12 +149,7 @@ export class Deduplicator {
   }
 
   private phoneKey(item: Lead): string | undefined {
-    if (!item.phone) return undefined;
-    let digits = item.phone.replace(/\D/g, '');
-    // Strip leading 0039 / 39 country prefix to match domestic vs international writings.
-    if (digits.startsWith('0039')) digits = digits.slice(4);
-    else if (digits.length >= 11 && digits.startsWith('39')) digits = digits.slice(2);
-    return digits.length >= 8 ? digits : undefined;
+    return computePhoneKey(item);
   }
 
   /**
@@ -167,13 +162,7 @@ export class Deduplicator {
    * host) and the records stay distinct.
    */
   private nameCityKey(item: Lead): string | undefined {
-    if (!item.company_name) return undefined;
-    const n = normalizeCompanyNameForKey(item.company_name);
-    if (n.length < 3) return undefined;
-    const localitySource = item.city ?? item.business_city ?? item.query_location ?? '';
-    const c = normalizeForKey(localitySource);
-    if (c.length < 2) return undefined;
-    return `${n}|${c}`;
+    return computeNameCityKey(item);
   }
 
   /**
@@ -187,15 +176,7 @@ export class Deduplicator {
    * Two tokens is the lowest-noise signal.)
    */
   private nameAddrKey(item: Lead): string | undefined {
-    if (!item.company_name || !item.address) return undefined;
-    const n = normalizeCompanyNameForKey(item.company_name);
-    if (n.length < 3) return undefined;
-    const addrTokens = normalizeForKey(item.address)
-      .split(' ')
-      .filter((t) => t.length >= 3 && !/^\d+$/.test(t))
-      .slice(0, 2)
-      .join(' ');
-    return addrTokens ? `${n}|addr:${addrTokens}` : undefined;
+    return computeNameAddrKey(item);
   }
 
   /**
@@ -214,12 +195,53 @@ export class Deduplicator {
   }
 
   private hostKey(website: string | undefined): string | undefined {
-    if (!website) return undefined;
-    try {
-      return new URL(website.startsWith('http') ? website : `https://${website}`).hostname.replace(/^www\./, '').toLowerCase();
-    } catch {
-      return undefined;
-    }
+    return computeHostKey(website);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Exported pure key builders — the SINGLE source of truth for dedup keys,
+// shared by the in-memory Deduplicator AND the persistence layer's
+// computeDedupKey (src/persistence/dedup_key.ts), so the DB unique constraint
+// can never drift from the scraper's dedup behaviour.
+// ---------------------------------------------------------------------------
+
+export function computePhoneKey(item: Lead): string | undefined {
+  if (!item.phone) return undefined;
+  let digits = item.phone.replace(/\D/g, '');
+  if (digits.startsWith('0039')) digits = digits.slice(4);
+  else if (digits.length >= 11 && digits.startsWith('39')) digits = digits.slice(2);
+  return digits.length >= 8 ? digits : undefined;
+}
+
+export function computeNameCityKey(item: Lead): string | undefined {
+  if (!item.company_name) return undefined;
+  const n = normalizeCompanyNameForKey(item.company_name);
+  if (n.length < 3) return undefined;
+  const localitySource = item.city ?? item.business_city ?? item.query_location ?? '';
+  const c = normalizeForKey(localitySource);
+  if (c.length < 2) return undefined;
+  return `${n}|${c}`;
+}
+
+export function computeNameAddrKey(item: Lead): string | undefined {
+  if (!item.company_name || !item.address) return undefined;
+  const n = normalizeCompanyNameForKey(item.company_name);
+  if (n.length < 3) return undefined;
+  const addrTokens = normalizeForKey(item.address)
+    .split(' ')
+    .filter((t) => t.length >= 3 && !/^\d+$/.test(t))
+    .slice(0, 2)
+    .join(' ');
+  return addrTokens ? `${n}|addr:${addrTokens}` : undefined;
+}
+
+export function computeHostKey(website: string | undefined): string | undefined {
+  if (!website) return undefined;
+  try {
+    return new URL(website.startsWith('http') ? website : `https://${website}`).hostname.replace(/^www\./, '').toLowerCase();
+  } catch {
+    return undefined;
   }
 }
 
