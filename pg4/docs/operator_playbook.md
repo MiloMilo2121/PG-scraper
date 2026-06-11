@@ -844,3 +844,52 @@ per revisione manuale. MAI mergiati automaticamente.
 I CLI sono cron-safe (nessun prompt, exit code stabili). Esempi pronti
 launchd/cron/GH-Actions in `docs/scheduling_examples.md`. Nessuno
 scheduler è attivo di default.
+
+## 24. Provider morti — il detector si auto-segnala (Gate-0)
+
+Da Gate-0 un provider che fa ≥10 chiamate in un run e riesce **0 volte** viene
+segnalato **forte**, non più in silenzio (era la lezione dns_mx/crtsh: 0/12.728,
+invisibili per mesi).
+
+Dove leggerlo dopo un `enrich` / `run`:
+```bash
+# 1. Nel run record (_runs.jsonl) — campo provider_dead
+tail -1 output/_runs.jsonl | jq '.provider_dead'   # [] = tutto sano
+# 2. Nel log: cerca la riga [provider-health]
+grep provider-health output/<out>.log.jsonl
+# 3. Notifica macOS "Dead provider detected" se NOTIFY=local
+```
+Se compare un provider in `provider_dead` → indaga o rimuovilo (aggiunge solo
+latenza, zero resa). `dns_mx` e `crtsh` sono stati **eliminati** dal catalogo;
+`ddg_lite` resta ma è gated off per il profilo immobiliare.
+
+## 25. Dedup — nuove regole (Gate-0)
+
+- **Forme legali normalizzate**: "Immobiliare S.r.l." e "Immobiliare SRL" ora
+  collassano (stesso lead); "Rossi SRL" e "Rossi SPA" restano distinti.
+- **Trigger review shared-host**: due record sullo stesso dominio registrabile
+  (es. `studiorossi.it`) con nomi diversi vengono **segnalati per review** (mai
+  auto-merge), tranne i fratelli franchise su sottodomini diversi
+  (`padova1.tecnocasa.it` vs `padova2…`). I candidati finiscono in
+  `.dedup-review.jsonl` accanto all'output — controllali prima della consegna.
+
+## 26. Fondamenta SaaS — costruite ma "in folle"
+
+Questo è uno strato nuovo (multi-tenant DB + API + framework per-campo)
+costruito ma **non attivo in produzione**. Cosa puoi fare oggi a €0, senza gate:
+
+- girare scrape/enrich locali con i **tier free** (free-gold + engine);
+- persistere su `InMemoryTenantDb` (dev/locale);
+- esercitare control plane API + framework per-campo su dati dev.
+
+Cosa è **in folle** e come si accende → `docs/saas_foundation_report.md` +
+`docs/gdpr/PRODUCTION_ACTIVATION_CHECKLIST.md`. In sintesi i gate:
+- **DB live**: applica `db/migrations/0001_*.sql`, cabla `SqlExecutor`, lancia il
+  test di leakage cross-tenant su DB reale (Gate C).
+- **Paid a regime**: prima il test live €0.02 (serve `SERPER_API_KEY`), poi
+  flip degli step `enabled` in `field_registry.ts`.
+- **Email outreach**: bloccato dietro Gate A (LIA firmata + informativa art.14).
+- **Billing/deploy**: schema pronto, Stripe e frontend non cablati.
+
+⚠️ Niente di tutto questo processa dati reali su larga scala finché i gate del
+checklist non sono verdi.
