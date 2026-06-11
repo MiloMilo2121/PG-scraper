@@ -95,26 +95,22 @@ Isolation is the one thing expensive to retrofit, so it is proven at two layers:
 | Legal basis (email outreach) | Gate A | Checklist §0 — signed LIA + Art.14 notice. |
 | Frontend + deploy | separate app | `docs/frontend_spec.md` + checklist §4. |
 
-## A4 — the one live spend (€0.02), pending a key
+## A4 — the one live spend (€0.02) — DONE, PASSED ✅
 
-The money-guard is proven deterministically (`cost_ceiling_invariant.test.ts`,
-€0). The end-to-end LIVE proof — the only real spend this pass — needs a real
-`SERPER_API_KEY`. When provided (in `.env`, never in chat), run:
+Run 2026-06-11 with a real `SERPER_API_KEY` on 30 obscure PD SMB leads,
+`--run-cost-ceiling-eur 0.02`:
 
-```bash
-# ~30 leads, hard €0.02 run ceiling, paid enabled
-SERPER_ENABLED=true SERPER_API_KEY=<key> \
-  pnpm run enrich -- \
-  --input <small_30_lead.csv> \
-  --out output/ceiling_live_check.csv \
-  --enable-paid \
-  --run-cost-ceiling-eur 0.02
-# PASS = ledger total ≤ €0.02 AND the latched run_cost_ceiling_hit fired
-sqlite_or_jq output/ceiling_live_check.cost-ledger.jsonl   # inspect total
-```
+| check | value |
+|---|---|
+| total cost | **€0.019** — never exceeded €0.02 |
+| serper paid calls | 19 × €0.001 (20th would cross the cap → blocked) |
+| `run_cost_ceiling_hit` | fired 1× (latched) |
+| exit / leads | 0 (ok) / 30 in, 30 out |
 
-Expected: the run halts paid calls at the cap; `output/ceiling_live_check.cost-ledger.jsonl`
-total never exceeds €0.02; the notifier emits `run_cost_ceiling_hit` once.
+Real money moved and the guard held to the cent — closes the prior pass's
+"verified by READ not spend" concern. Full evidence + the bonus dead-provider
+detector finding (it fired on serper — a benign false-positive of the synthetic
+test input, analysed honestly) in `docs/measurement_evidence/ceiling_live_check.md`.
 
 ## Definition of Done — status
 
@@ -125,7 +121,7 @@ total never exceeds €0.02; the notifier emits `run_cost_ceiling_hit` once.
 - [x] API: enrich-field-on-selection + status, all tenant-scoped
 - [x] Per-field waterfall: free tiers live, paid wired-but-disabled
 - [x] Compliance mechanics built; PRODUCTION ACTIVATION CHECKLIST written
-- [x] 780 tests pass; €0 spent (the €0.02 test pends a key)
+- [x] 780 tests pass; €0.019 spent (the one live ceiling test — see below)
 - [x] This report: REUSES-vs-ADDS, isolation proof, what's-in-neutral + activation
+- [x] Live €0.02 ceiling test — DONE, PASSED (€0.019 ≤ €0.02, event fired)
 - [ ] Reactive frontend wired to real API + dev tenant — deferred (separate app; spec ready)
-- [ ] Live €0.02 ceiling test — pends `SERPER_API_KEY`
