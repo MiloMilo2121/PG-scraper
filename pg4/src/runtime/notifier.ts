@@ -22,7 +22,8 @@ export type NotifyKind =
   | 'cost_ceiling_hit'
   | 'run_cost_ceiling_hit'
   | 'yield_anomaly'
-  | 'validation_failed';
+  | 'validation_failed'
+  | 'provider_dead';
 
 export interface NotifyEvent {
   kind: NotifyKind;

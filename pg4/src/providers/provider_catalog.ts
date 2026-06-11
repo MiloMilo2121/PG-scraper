@@ -7,8 +7,6 @@ import { getEnv } from '../config/env';
 import { logger } from '../runtime/logger';
 
 import { DirectFetchProvider } from './http/direct_fetch';
-import { DnsMxProvider } from './serp/dns_mx';
-import { CrtshProvider } from './serp/crtsh';
 import { DdgLiteProvider } from './serp/ddg_lite';
 import { BingHtmlProvider } from './serp/bing_html';
 import { SerperProvider } from './serp/serper';
@@ -19,15 +17,21 @@ import { SerperProvider } from './serp/serper';
  * and the router skips it.
  *
  * Phase 1: only `direct_fetch` (HTTP tier 0).
- * Phase 3: free SERP providers (dns_mx, crtsh, ddg_lite, bing_html).
+ * Phase 3: free SERP providers (ddg_lite, bing_html).
  * Phase 3+: paid providers behind feature flags.
+ *
+ * Gate-0 — `dns_mx` and `crtsh` were REMOVED. Measured: 0 successes in
+ * 12,728 calls each (dns_mx received name-queries it structurally cannot
+ * answer; crt.sh blocked this egress IP). They only added latency. The
+ * provider-health detector (`runtime/provider_health.ts`) now makes this
+ * silent-failure class structurally impossible to reintroduce unnoticed.
+ * `ddg_lite` is kept but stays gated off for the real-estate profile
+ * (provider_policy.ts) — low yield, not zero.
  */
 export function buildProviderCatalog(ledger: CostLedger): ProviderRouter {
   const env = getEnv();
 
   const serps: SerpProvider[] = [
-    new DnsMxProvider(),
-    new CrtshProvider(),
     new DdgLiteProvider(),
     new BingHtmlProvider(),
     new SerperProvider(), // Phase G — paid tier 2; available() gated by SERPER_ENABLED + SERPER_API_KEY
@@ -73,9 +77,8 @@ export function buildProviderCatalog(ledger: CostLedger): ProviderRouter {
   // R12 cadence was ~0.27 req/s; 0.5/s keeps a 2x headroom over that
   // while halving worst-case burst exposure. ddg_lite gets the same
   // treatment for when a category profile re-enables it. Unconfigured
-  // providers (dns_mx, crtsh, serper, direct_fetch) stay unlimited —
-  // dns/crt are gated off by default and Serper is account-limited
-  // upstream.
+  // providers (serper, direct_fetch) stay unlimited — Serper is
+  // account-limited upstream and direct_fetch is free/per-target.
   const rate = new RateLimiter();
   rate.configure('bing_html', 0.5, 2);
   rate.configure('ddg_lite', 0.5, 2);

@@ -103,7 +103,7 @@ async function main(): Promise<number> {
     );
 
     if (result.interrupted) {
-      recorder.finish('interrupted', EXIT.INTERRUPTED);
+      recorder.finish('interrupted', EXIT.INTERRUPTED, { provider_dead: result.providerDead });
       getNotifier().notify({
         kind: 'run_interrupted',
         title: 'Enrich interrupted',
@@ -114,7 +114,7 @@ async function main(): Promise<number> {
     }
     const status = result.errors > 0 ? 'partial' : 'ok';
     const code = result.errors > 0 ? EXIT.PARTIAL : EXIT.OK;
-    recorder.finish(status, code);
+    recorder.finish(status, code, { provider_dead: result.providerDead });
     getNotifier().notify({
       kind: 'run_complete',
       title: 'Enrich complete',

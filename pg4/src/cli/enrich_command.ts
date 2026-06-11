@@ -8,6 +8,7 @@ import { PgDetailHarvester } from '../discovery/sources/pagine_gialle_detail_har
 import { acquireOutputLock } from '../runtime/output_lock';
 import { buildMockHttpRouter, buildNoopPgDetailHarvester } from './mock_http';
 import { getNotifier } from '../runtime/notifier';
+import { reportProviderHealth } from '../runtime/provider_health';
 
 /**
  * Phase B.1 — the enrich core, extracted from the CLI so the `run` command
@@ -59,6 +60,8 @@ export interface EnrichCommandResult {
   jsonlOut: string;
   ledgerPath: string;
   interrupted: boolean;
+  /** Gate-0 — providers that made ≥N calls but never succeeded this run. */
+  providerDead: string[];
 }
 
 export async function runEnrichCommand(o: EnrichCommandOptions): Promise<EnrichCommandResult> {
@@ -215,6 +218,11 @@ export async function runEnrichCommand(o: EnrichCommandOptions): Promise<EnrichC
     if (suppressed > 0) {
       logger.warn({ suppressed, list: o.suppression?.sourcePath }, '[enrich] leads dropped by suppression list');
     }
+    // Gate-0 — flag any provider that made calls but never succeeded this
+    // run (the dns_mx/crtsh silent-failure class). Warn-only; never changes
+    // the outcome. Computed before flushSummary so it lands in the summary.
+    const providerDead = reportProviderHealth(run.ledger, { runId: run.ctx.runId });
+
     run.ledger.flushSummary({
       leads_processed: total,
       leads_with_website: withWebsite,
@@ -226,6 +234,7 @@ export async function runEnrichCommand(o: EnrichCommandOptions): Promise<EnrichC
       cost_per_lead_eur: total > 0 ? run.ledger.getTotal() / total : 0,
       cost_ceiling_eur: run.ctx.costCeilingEur,
       breaker: router.describeBreaker(),
+      provider_dead: providerDead,
     });
 
     return {
@@ -240,6 +249,7 @@ export async function runEnrichCommand(o: EnrichCommandOptions): Promise<EnrichC
       jsonlOut,
       ledgerPath,
       interrupted,
+      providerDead,
     };
   } finally {
     outputLock.release();

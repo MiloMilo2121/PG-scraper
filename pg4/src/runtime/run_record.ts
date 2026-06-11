@@ -49,6 +49,11 @@ export interface RunRecord {
   /** Phase A.4 — true when ≥1 comune yielded < 30% of its historical average. */
   suspect?: boolean;
   suspect_comuni?: string[];
+  /**
+   * Gate-0 — provider ids that made ≥N calls this run and succeeded 0 times
+   * (the dns_mx/crtsh silent-failure class). Empty/absent when all healthy.
+   */
+  provider_dead?: string[];
   error?: string;
 }
 

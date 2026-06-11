@@ -19,10 +19,10 @@ import type { Lead } from '../types/lead';
  */
 export interface DedupReviewCandidate {
   /** Why the pair was flagged. */
-  rule: 'token_sort_name_city';
+  rule: 'token_sort_name_city' | 'shared_registrable_host';
   key: string;
-  existing: Pick<Lead, 'company_name' | 'city' | 'address' | 'phone' | 'source'>;
-  incoming: Pick<Lead, 'company_name' | 'city' | 'address' | 'phone' | 'source'>;
+  existing: Pick<Lead, 'company_name' | 'city' | 'address' | 'phone' | 'source' | 'website'>;
+  incoming: Pick<Lead, 'company_name' | 'city' | 'address' | 'phone' | 'source' | 'website'>;
 }
 
 export class Deduplicator {
@@ -41,6 +41,11 @@ export class Deduplicator {
    * ("Studio Casa" vs "Casa Studio" are distinct registered firms).
    */
   private bySortedNameCity = new Map<string, Lead>();
+  /**
+   * Gate-0 — first lead seen per registrable domain (eTLD+1). Used to flag
+   * same-domain / different-name pairs for review (see add()).
+   */
+  private byRegistrableHost = new Map<string, Lead>();
   private reviewCandidates: DedupReviewCandidate[] = [];
 
   find(item: Lead): Lead | undefined {
@@ -83,6 +88,28 @@ export class Deduplicator {
         });
       }
       if (!near) this.bySortedNameCity.set(sk, item);
+    }
+    // Gate-0 — shared-registrable-host review trigger. Two records on the
+    // SAME registrable domain (eTLD+1) but with different name+city keys are
+    // most often the same business recorded twice (apex vs www, or a content
+    // page vs the home page) — the full-host index above did not catch them
+    // because the hostnames differ. We FLAG them for review (never auto-merge:
+    // the website link could be incidental). EXCLUDED: franchise siblings,
+    // where both records sit on different non-www subdomains of a shared
+    // brand domain (e.g. padova1.tecnocasaimpresa.it vs padova2.…) — those
+    // are legitimately distinct branches.
+    const reg = registrableHostKey(item.website);
+    if (reg) {
+      const prior = this.byRegistrableHost.get(reg);
+      if (prior && prior !== item && this.nameCityKey(prior) !== nc && !looksLikeFranchiseSiblings(prior.website, item.website)) {
+        this.reviewCandidates.push({
+          rule: 'shared_registrable_host',
+          key: reg,
+          existing: pickReviewFields(prior),
+          incoming: pickReviewFields(item),
+        });
+      }
+      if (!prior) this.byRegistrableHost.set(reg, item);
     }
   }
 
@@ -141,7 +168,7 @@ export class Deduplicator {
    */
   private nameCityKey(item: Lead): string | undefined {
     if (!item.company_name) return undefined;
-    const n = normalizeForKey(item.company_name);
+    const n = normalizeCompanyNameForKey(item.company_name);
     if (n.length < 3) return undefined;
     const localitySource = item.city ?? item.business_city ?? item.query_location ?? '';
     const c = normalizeForKey(localitySource);
@@ -161,7 +188,7 @@ export class Deduplicator {
    */
   private nameAddrKey(item: Lead): string | undefined {
     if (!item.company_name || !item.address) return undefined;
-    const n = normalizeForKey(item.company_name);
+    const n = normalizeCompanyNameForKey(item.company_name);
     if (n.length < 3) return undefined;
     const addrTokens = normalizeForKey(item.address)
       .split(' ')
@@ -178,7 +205,7 @@ export class Deduplicator {
    */
   private sortedNameCityKey(item: Lead): string | undefined {
     if (!item.company_name) return undefined;
-    const tokens = normalizeForKey(item.company_name).split(' ').filter(Boolean);
+    const tokens = normalizeCompanyNameForKey(item.company_name).split(' ').filter(Boolean);
     if (tokens.length < 2) return undefined;
     const localitySource = item.city ?? item.business_city ?? item.query_location ?? '';
     const c = normalizeForKey(localitySource);
@@ -197,7 +224,7 @@ export class Deduplicator {
 }
 
 function pickReviewFields(l: Lead): DedupReviewCandidate['existing'] {
-  return { company_name: l.company_name, city: l.city, address: l.address, phone: l.phone, source: l.source };
+  return { company_name: l.company_name, city: l.city, address: l.address, phone: l.phone, source: l.source, website: l.website };
 }
 
 function normalizeForKey(s: string): string {
@@ -207,6 +234,75 @@ function normalizeForKey(s: string): string {
     .replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
+}
+
+/**
+ * Gate-0 — company-name key normalization that ALSO canonicalizes Italian
+ * legal forms so punctuation/spacing variants of the same entity collapse.
+ *
+ * The base `normalizeForKey` turns "Immobiliare S.r.l." into "immobiliare s
+ * r l" but "Immobiliare SRL" into "immobiliare srl" — different keys, so the
+ * same firm leaked as two records (a measured ~3-4% of the duplicate rate).
+ * Here we re-join the spaced-out legal-form letters into their canonical
+ * token ("s r l" → "srl", "s p a" → "spa", …). The form is CANONICALIZED,
+ * not stripped: "Rossi SRL" and "Rossi SPA" stay distinct (different forms),
+ * but "Rossi S.R.L." and "Rossi SRL" now match. Order: longest first.
+ */
+export function normalizeCompanyNameForKey(s: string): string {
+  let n = normalizeForKey(s);
+  n = n
+    .replace(/\bs\s+r\s+l\s+s\b/g, 'srls') // società a responsabilità limitata semplificata
+    .replace(/\bs\s+a\s+p\s+a\b/g, 'sapa') // società in accomandita per azioni
+    .replace(/\bs\s+r\s+l\b/g, 'srl')
+    .replace(/\bs\s+p\s+a\b/g, 'spa')
+    .replace(/\bs\s+n\s+c\b/g, 'snc')
+    .replace(/\bs\s+a\s+s\b/g, 'sas');
+  return n.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Registrable domain (eTLD+1) heuristic: last two labels of the hostname.
+ * Good enough for Italian SMB sites (overwhelmingly `name.it`/`name.com`).
+ * Returns undefined for unparseable input or bare hostnames.
+ */
+function registrableHostKey(website: string | undefined): string | undefined {
+  if (!website) return undefined;
+  let host: string;
+  try {
+    host = new URL(website.startsWith('http') ? website : `https://${website}`).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+  const labels = host.replace(/\.$/, '').split('.').filter(Boolean);
+  if (labels.length < 2) return undefined;
+  return labels.slice(-2).join('.');
+}
+
+/** The subdomain part of a host (labels before the registrable domain), www stripped. */
+function subdomainLabel(website: string | undefined): string {
+  if (!website) return '';
+  let host: string;
+  try {
+    host = new URL(website.startsWith('http') ? website : `https://${website}`).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+  const labels = host.replace(/\.$/, '').split('.').filter((l) => l && l !== 'www');
+  return labels.slice(0, Math.max(0, labels.length - 2)).join('.');
+}
+
+/**
+ * Two sites are FRANCHISE SIBLINGS when both sit on a distinct, non-www
+ * subdomain of the same registrable domain (e.g. `padova1.tecnocasa.it`
+ * vs `padova2.tecnocasa.it`). A single company virtually never splits
+ * itself across two custom subdomains, so this pattern means independent
+ * branches — not a duplicate. (apex-vs-www, or apex-vs-subdomain, is NOT a
+ * franchise pattern and stays reviewable.)
+ */
+function looksLikeFranchiseSiblings(a: string | undefined, b: string | undefined): boolean {
+  const sa = subdomainLabel(a);
+  const sb = subdomainLabel(b);
+  return sa.length > 0 && sb.length > 0 && sa !== sb;
 }
 
 /**

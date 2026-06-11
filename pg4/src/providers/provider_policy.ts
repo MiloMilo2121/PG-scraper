@@ -14,18 +14,22 @@
  * candidate was rejected at verify (709 SERP_DIRECTORY_ONLY + 34
  * SERP_REJECTED_BY_VERIFY) — 0 conversions.
  *
- * Decision: for the `italian_real_estate` profile, skip the three proven
- * zero-yield providers (dns_mx, crtsh, ddg_lite) and keep the rest (bing_html
- * stays as the single, legitimate free SERP — a conservative choice; see the
- * R14 audit doc for the open question of dropping free SERP entirely). The
- * providers are NOT deleted and remain fully available for other categories
- * and for the expanded-free override.
+ * Gate-0 update: `dns_mx` and `crtsh` were DELETED from the catalog (0
+ * successes in 12,728 calls each — see provider_catalog.ts). What remains
+ * of the low-yield set is `ddg_lite`, which returns ad-junk that never
+ * verifies on the real-estate profile but is non-zero elsewhere, so it is
+ * kept and merely GATED OFF for `italian_real_estate` (restored by the
+ * expanded-free override). bing_html stays as the single legitimate free
+ * SERP for this profile.
  */
 
 export type SerpProfile = 'default' | 'italian_real_estate';
 
-/** Free SERP providers with no conversions on the real-estate profile (R12). */
-export const LOW_YIELD_REAL_ESTATE_SERP: ReadonlyArray<string> = ['dns_mx', 'crtsh', 'ddg_lite'];
+/**
+ * Free SERP providers gated off on the real-estate profile (R12). dns_mx +
+ * crtsh were deleted outright (Gate-0); only ddg_lite remains to gate.
+ */
+export const LOW_YIELD_REAL_ESTATE_SERP: ReadonlyArray<string> = ['ddg_lite'];
 
 /**
  * Map a lead category to a routing profile. Italian real-estate categories all

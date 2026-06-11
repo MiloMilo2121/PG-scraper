@@ -4,7 +4,7 @@ import { CircuitBreaker } from '../../src/runtime/circuit_breaker';
 describe('CircuitBreaker', () => {
   it('starts closed and allows calls', () => {
     const cb = new CircuitBreaker();
-    expect(cb.allow('crtsh')).toBe(true);
+    expect(cb.allow('bing_html')).toBe(true);
   });
 
   it('trips OPEN after N consecutive failures', () => {
@@ -68,10 +68,10 @@ describe('CircuitBreaker', () => {
 
   it('per-key configuration overrides the global default', () => {
     const cb = new CircuitBreaker({ failureThreshold: 100, windowMs: 60_000, cooldownMs: 5_000 });
-    cb.configure('crtsh', { failureThreshold: 2, windowMs: 60_000, cooldownMs: 5_000 });
-    cb.recordFailure('crtsh');
-    cb.recordFailure('crtsh');
-    expect(cb.allow('crtsh')).toBe(false);
+    cb.configure('bing_html', { failureThreshold: 2, windowMs: 60_000, cooldownMs: 5_000 });
+    cb.recordFailure('bing_html');
+    cb.recordFailure('bing_html');
+    expect(cb.allow('bing_html')).toBe(false);
     // global default still applies to other keys
     cb.recordFailure('serper');
     expect(cb.allow('serper')).toBe(true);

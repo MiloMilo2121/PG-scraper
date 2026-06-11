@@ -33,10 +33,12 @@ describe('resolveSerpProfile', () => {
 });
 
 describe('resolveFreeSerpRoute', () => {
-  it('real-estate (no expanded) excludes the three low-yield providers', () => {
+  it('real-estate (no expanded) gates off the low-yield ddg_lite', () => {
+    // Gate-0: dns_mx + crtsh were deleted from the catalog; only ddg_lite
+    // remains to gate on the real-estate profile.
     const r = resolveFreeSerpRoute('agenzie immobiliari', false);
     expect(r.profile).toBe('italian_real_estate');
-    expect([...r.excludeProviderIds].sort()).toEqual(['crtsh', 'ddg_lite', 'dns_mx']);
+    expect([...r.excludeProviderIds].sort()).toEqual(['ddg_lite']);
   });
 
   it('real-estate with expandedFree excludes nothing (full free set)', () => {
@@ -76,30 +78,33 @@ class FakeSerp implements SerpProvider {
 }
 
 describe('ProviderRouter — excludeProviderIds (R14)', () => {
+  // Generic exclusion mechanism (still used to gate ddg_lite on the
+  // real-estate profile). Uses neutral free-SERP stub ids — not the deleted
+  // dns_mx/crtsh — so the test exercises the mechanism, not gone providers.
   it('skips excluded providers, runs the rest', async () => {
-    const dns = new FakeSerp('dns_mx', 0);
-    const crtsh = new FakeSerp('crtsh', 0);
+    const free0 = new FakeSerp('ddg_lite', 0);
+    const free0b = new FakeSerp('free_x', 0);
     const bing = new FakeSerp('bing_html', 1);
-    const router = new ProviderRouter([dns, crtsh, bing], [], [], new CostLedger());
+    const router = new ProviderRouter([free0, free0b, bing], [], [], new CostLedger());
 
-    const out = await router.search('q', { maxTier: 1, excludeProviderIds: ['dns_mx', 'crtsh'] });
+    const out = await router.search('q', { maxTier: 1, excludeProviderIds: ['ddg_lite', 'free_x'] });
 
-    expect(dns.callCount).toBe(0);
-    expect(crtsh.callCount).toBe(0);
+    expect(free0.callCount).toBe(0);
+    expect(free0b.callCount).toBe(0);
     // bing (tier 1) is the first non-excluded candidate and returns a result.
     expect(out.provider).toBe('bing_html');
     expect(bing.callCount).toBe(1);
   });
 
   it('no exclusions → first candidate by tier wins (unchanged behavior)', async () => {
-    const dns = new FakeSerp('dns_mx', 0);
+    const free0 = new FakeSerp('ddg_lite', 0);
     const bing = new FakeSerp('bing_html', 1);
-    const router = new ProviderRouter([dns, bing], [], [], new CostLedger());
+    const router = new ProviderRouter([free0, bing], [], [], new CostLedger());
 
     const out = await router.search('q', { maxTier: 1 });
 
-    expect(dns.callCount).toBe(1); // tier 0 tried first, returns a result
-    expect(out.provider).toBe('dns_mx');
+    expect(free0.callCount).toBe(1); // tier 0 tried first, returns a result
+    expect(out.provider).toBe('ddg_lite');
     expect(bing.callCount).toBe(0); // router returns on first success
   });
 });

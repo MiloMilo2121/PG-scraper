@@ -17,8 +17,9 @@ const EnvSchema = z.object({
   COST_CEILING_EUR_PER_LEAD: z.coerce.number().nonnegative().optional(),
   REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
 
-  // Free SERP routing — R14. The low-yield free providers (dns_mx, crtsh,
-  // ddg_lite) are SKIPPED for the `italian_real_estate` category profile.
+  // Free SERP routing — R14. The low-yield free provider `ddg_lite` is
+  // SKIPPED for the `italian_real_estate` category profile (dns_mx + crtsh
+  // were deleted outright in Gate-0).
   // R12 evidence (1,492 leads): the free SERP tier produced 0 final-website
   // conversions; all 536 websites came from input/guess methods + direct_fetch.
   // Set true to force the full free SERP set even for that profile (debug or
