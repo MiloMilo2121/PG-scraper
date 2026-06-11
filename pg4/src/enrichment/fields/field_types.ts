@@ -1,0 +1,55 @@
+import type { Lead } from '../../types/lead';
+import type { BodyExtraction } from '../extract/extract_from_body';
+import type { EnrichableField } from '../../api/types';
+
+/**
+ * Per-field enrichment waterfall — the generalization of pg4's single
+ * website-discovery ladder into one ordered free→paid cascade PER FIELD.
+ *
+ * This is DATA, not code: a field declares its cascade of steps, a per-field
+ * cost ceiling, and a stop condition. The runner (run_field_cascade.ts) is the
+ * pipeline loop shape lifted out — it reuses the engine's CostLedger and the
+ * triple-gate (a paid step runs only if enabled + paidEnabled + within the
+ * per-field budget). Born free-first and safe; paid steps are wired but
+ * DISABLED in this pass.
+ */
+
+export type Tier = 0 | 1 | 2; // 0 free-deterministic · 1 free-network · 2 paid
+
+export interface StepResult {
+  value?: string;
+  confidence: number; // 0..1
+  source: string;
+  costEur: number;
+  /** Set when a step could not run (disabled / gated / no input). */
+  skippedReason?: 'disabled' | 'paid_gated' | 'budget' | 'no_input' | 'no_value';
+}
+
+/** Inputs every step receives. The body extraction is computed ONCE (free-gold). */
+export interface FieldStepContext {
+  lead: Lead;
+  /** Parsed result of the already-fetched website body (Phase 1). */
+  extraction?: BodyExtraction;
+  paidEnabled: boolean;
+}
+
+export interface EnrichmentStep {
+  id: string;
+  tier: Tier;
+  /** Estimated/actual cost of this step in EUR (0 for free tiers). */
+  costEur: number;
+  /** Wired-but-disabled paid steps set this false until activated. */
+  enabled: boolean;
+  run(ctx: FieldStepContext): StepResult;
+}
+
+export interface EnrichmentFieldDescriptor {
+  field: EnrichableField;
+  /** The target Lead property the resolved value is written to. */
+  target: keyof Lead;
+  cascade: EnrichmentStep[];
+  /** Per-field cost ceiling (EUR). Paid steps are skipped once it is reached. */
+  ceilingEur: number;
+  /** Stop when a step's confidence is ≥ this. */
+  stopConfidence: number;
+}

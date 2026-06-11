@@ -1,4 +1,3 @@
-import type { Lead } from '../types/lead';
 import type { TenantDb } from '../persistence/tenant_db';
 import { computeDedupKey } from '../persistence/dedup_key';
 import {
