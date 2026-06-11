@@ -57,6 +57,12 @@ export class InMemoryTenantDb implements TenantDb {
     return [...b.values()].map((e) => e.row);
   }
 
+  async getCompanyIds(tenantId: string): Promise<string[]> {
+    const b = this.store.get(tenantId);
+    if (!b) return [];
+    return [...b.values()].map((e) => e.id);
+  }
+
   async count(tenantId: string): Promise<number> {
     return this.store.get(tenantId)?.size ?? 0;
   }

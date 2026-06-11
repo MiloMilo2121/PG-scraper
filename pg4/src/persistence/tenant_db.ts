@@ -56,6 +56,8 @@ export interface TenantDb {
   upsertCompany(tenantId: string, lead: Lead): Promise<UpsertResult>;
   /** Tenant-scoped read — returns ONLY this tenant's companies. */
   getCompanies(tenantId: string): Promise<CompanyRow[]>;
+  /** Tenant-scoped company ids (for ownership validation in the API). */
+  getCompanyIds(tenantId: string): Promise<string[]>;
   count(tenantId: string): Promise<number>;
 }
 

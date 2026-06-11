@@ -65,6 +65,11 @@ export class PgTenantDb implements TenantDb {
     return this.sql.query<CompanyRow>(`select * from companies where tenant_id = $1`, [tenantId]);
   }
 
+  async getCompanyIds(tenantId: string): Promise<string[]> {
+    const rows = await this.sql.query<{ id: string }>(`select id from companies where tenant_id = $1`, [tenantId]);
+    return rows.map((r) => r.id);
+  }
+
   async count(tenantId: string): Promise<number> {
     const rows = await this.sql.query<{ n: string }>(`select count(*)::text as n from companies where tenant_id = $1`, [tenantId]);
     return Number(rows[0]?.n ?? 0);
