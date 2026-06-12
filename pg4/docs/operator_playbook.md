@@ -893,3 +893,36 @@ Cosa è **in folle** e come si accende → `docs/saas_foundation_report.md` +
 
 ⚠️ Niente di tutto questo processa dati reali su larga scala finché i gate del
 checklist non sono verdi.
+
+## 27. La dashboard (single-tenant dev) — vederla e usarla
+
+Dashboard reattiva su **dati free-gold reali**, un tenant solo (il tuo), locale.
+Due processi:
+
+```bash
+# Terminale 1 — il motore come API, su dati reali (seed r12: 1383 aziende vere)
+pnpm run serve            # → http://localhost:8787
+
+# Terminale 2 — la dashboard
+cd web && pnpm install && pnpm run dev   # → http://localhost:3000
+```
+
+Apri `http://localhost:3000`. Cosa puoi fare:
+- **Cercare**: pannello "Nuova ricerca" (categoria validata, provincia curata,
+  fonti). Maps mostra l'avviso "≥ N" (il conteggio oscilla 6×, è un minimo).
+- **Arricchire dal vivo**: seleziona righe nella tabella → bottoni "+ Email /
+  + P.IVA / + Instagram…". Il free-gold rilegge i siti veri e le celle si
+  riempiono in tempo reale (queued → cerco… → valore). **€0** — solo tier free.
+- **Leggere la verità del sistema**: pannello "Salute provider" mostra i
+  provider morti (dns_mx/crtsh, 0% successi) — segnalati, non nascosti; le barre
+  "Copertura campi" salgono dopo ogni arricchimento; coda dedup-review visibile.
+
+Note:
+- I provider a pagamento sono **disabilitati** (free-gold a €0). Il tetto costo
+  è già provato dal vivo (€0,019 ≤ €0,02).
+- Il tenant è **fisso lato server** — nessuna richiesta può leggere dati di un
+  altro tenant (la superficie d'attacco non esiste). Schema multi-tenant + RLS
+  intatti sotto.
+- Lo stato vive in React + backend; i dati si riseminano al riavvio del server
+  (è dev, non persistente — vedi PRODUCTION_ACTIVATION_CHECKLIST per il DB live).
+→ Dettagli build + verifica e2e: `docs/frontend_report.md`.

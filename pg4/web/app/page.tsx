@@ -1,0 +1,370 @@
+'use client';
+
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { api, type Company, type Metrics, type ProviderHealth, type CostView, type CellStatus } from '../lib/api';
+
+const ENRICH_FIELDS = [
+  { key: 'email', col: 'email_inferred', label: 'Email' },
+  { key: 'pec', col: 'pec', label: 'PEC' },
+  { key: 'vat', col: 'vat_code_final', label: 'P.IVA' },
+  { key: 'instagram', col: 'instagram', label: 'Instagram' },
+  { key: 'facebook', col: 'facebook', label: 'Facebook' },
+  { key: 'linkedin', col: 'linkedin', label: 'LinkedIn' },
+] as const;
+
+const FILL_LABELS: Record<string, string> = {
+  official_website: 'Sito ufficiale',
+  phone: 'Telefono',
+  email: 'Email',
+  pec: 'PEC',
+  vat: 'P.IVA',
+  instagram: 'Instagram',
+  facebook: 'Facebook',
+  linkedin: 'LinkedIn',
+};
+
+type CellMap = Record<string, Record<string, { status: CellStatus; value?: string }>>; // companyId → field → state
+
+export default function Dashboard() {
+  const [health, setHealth] = useState<{ ok: boolean; companies: number; seed: string } | null>(null);
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [providerHealth, setProviderHealth] = useState<ProviderHealth | null>(null);
+  const [dedupCount, setDedupCount] = useState<number>(0);
+  const [cost, setCost] = useState<CostView | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  // composer
+  const [category, setCategory] = useState('agenzie immobiliari');
+  const [province, setProvince] = useState('PD');
+  const [srcPg, setSrcPg] = useState(true);
+  const [srcMaps, setSrcMaps] = useState(true);
+  const [paid, setPaid] = useState(false);
+  const [scrapeNote, setScrapeNote] = useState<string | null>(null);
+
+  // table
+  const [page, setPage] = useState(0);
+  const [onlyWebsite, setOnlyWebsite] = useState(false);
+  const [filterText, setFilterText] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [cells, setCells] = useState<CellMap>({});
+  const pollRef = useRef<Set<string>>(new Set());
+  const PAGE_SIZE = 50;
+
+  const loadAll = useCallback(async () => {
+    try {
+      const [h, c, m, ph, dr, co] = await Promise.all([
+        api.health(),
+        api.companies(2000),
+        api.metrics(),
+        api.providerHealth(),
+        api.dedupReview(),
+        api.cost(),
+      ]);
+      setHealth(h);
+      setCompanies(c.rows);
+      setMetrics(m);
+      setProviderHealth(ph);
+      setDedupCount(dr.candidates.length);
+      setCost(co);
+      setErr(null);
+    } catch (e) {
+      setErr((e as Error).message + ' — è acceso il server API? (pnpm run serve)');
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAll();
+  }, [loadAll]);
+
+  const filtered = useMemo(() => {
+    let rows = companies;
+    if (onlyWebsite) rows = rows.filter((r) => r.official_website);
+    if (filterText.trim()) {
+      const q = filterText.toLowerCase();
+      rows = rows.filter((r) => (r.company_name ?? '').toLowerCase().includes(q) || (r.city ?? '').toLowerCase().includes(q));
+    }
+    return rows;
+  }, [companies, onlyWebsite, filterText]);
+
+  const pageRows = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const pageIds = pageRows.map((r) => r.id);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+
+  function toggle(id: string) {
+    setSelected((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  }
+  function toggleAllPage() {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (allPageSelected) pageIds.forEach((id) => n.delete(id));
+      else pageIds.forEach((id) => n.add(id));
+      return n;
+    });
+  }
+
+  // ---- live enrich: POST then poll the job, streaming cell states in ----
+  async function enrich(fieldKey: string) {
+    const ids = [...selected];
+    if (!ids.length) return;
+    // optimistic: mark queued
+    setCells((prev) => {
+      const n = { ...prev };
+      for (const id of ids) n[id] = { ...(n[id] ?? {}), [fieldKey]: { status: 'queued' } };
+      return n;
+    });
+    try {
+      const { jobId } = await api.enrich(ids, [fieldKey]);
+      pollRef.current.add(jobId);
+      pollJob(jobId);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
+
+  async function pollJob(jobId: string) {
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 1200));
+      let job;
+      try {
+        job = await api.job(jobId);
+      } catch {
+        break;
+      }
+      setCells((prev) => {
+        const n = { ...prev };
+        for (const it of job.items) {
+          for (const [f, st] of Object.entries(it.cells)) {
+            n[it.companyId] = { ...(n[it.companyId] ?? {}), [f]: { status: st.status, value: st.value } };
+          }
+        }
+        return n;
+      });
+      // write filled values into the row data so fill-rates + cells persist
+      setCompanies((prev) => {
+        const byId = new Map(prev.map((r) => [r.id, r]));
+        let changed = false;
+        for (const it of job.items) {
+          const row = byId.get(it.companyId);
+          if (!row) continue;
+          for (const [f, st] of Object.entries(it.cells)) {
+            if (st.status === 'filled' && st.value) {
+              const col = ENRICH_FIELDS.find((x) => x.key === f)?.col;
+              if (col && !row[col]) {
+                (row as Record<string, unknown>)[col] = st.value;
+                changed = true;
+              }
+            }
+          }
+        }
+        return changed ? [...prev] : prev;
+      });
+      if (job.status === 'done') break;
+    }
+    pollRef.current.delete(jobId);
+    // refresh metrics so fill-rate bars climb after a live enrich
+    api.metrics().then(setMetrics).catch(() => {});
+  }
+
+  async function submitIntent() {
+    setScrapeNote('Avvio…');
+    try {
+      const r = await api.scrape({ category, province, sources: [srcPg && 'pg', srcMaps && 'maps'].filter(Boolean), paidEnabled: paid });
+      setScrapeNote(r.note);
+    } catch (e) {
+      setScrapeNote((e as Error).message);
+    }
+  }
+
+  function cellOf(id: string, fieldKey: string, col: string, row: Company) {
+    const st = cells[id]?.[fieldKey];
+    const existing = row[col] as string | undefined;
+    if (st?.status === 'running' || st?.status === 'queued')
+      return (
+        <span className={`cell ${st.status}`}>
+          {st.status === 'running' ? <span className="spinner" /> : null}
+          {st.status === 'running' ? 'cerco…' : 'in coda'}
+        </span>
+      );
+    if (st?.status === 'filled' || existing)
+      return <span className={`cell filled ${st?.status === 'filled' ? 'justfilled' : ''}`}>{(st?.value ?? existing) as string}</span>;
+    if (st?.status === 'not_found') return <span className="cell not_found">—</span>;
+    return <span className="cell empty">·</span>;
+  }
+
+  return (
+    <div className="app">
+      <div className="topbar">
+        <div className="brand">
+          <h1>pg4 <span className="serif" style={{ color: 'var(--accent-2)' }}>intelligence</span></h1>
+          <span className="tag">company-intelligence · tenant dev · dati reali free-gold</span>
+        </div>
+        <div className="right">
+          <span><span className={`dot ${health?.ok ? 'ok' : ''}`} />{health ? `${metrics?.total ?? companies.length} aziende` : 'connessione…'}</span>
+          <span className="num">costo sessione: €{(cost?.liveSessionCostEur ?? 0).toFixed(3)}</span>
+        </div>
+      </div>
+
+      {err && <div className="banner" style={{ background: 'oklch(0.72 0.18 25 / 0.14)', borderColor: 'var(--bad)' }}>⚠ {err}</div>}
+
+      <div className="grid">
+        {/* ---- left: composer + metrics ---- */}
+        <div className="stack">
+          <div className="panel">
+            <div className="hd">Nuova ricerca</div>
+            <div className="bd">
+              <div className="field">
+                <label>Categoria</label>
+                <select value={category} onChange={(e) => setCategory(e.target.value)}>
+                  <option value="agenzie immobiliari">agenzie immobiliari (validata)</option>
+                  <option value="__other" disabled>altre categorie → lavoro backend, non promessa UI</option>
+                </select>
+                <div className="hint">Solo le categorie validate hanno copertura piena. Le altre richiedono un giro di calibrazione backend.</div>
+              </div>
+              <div className="field">
+                <label>Provincia</label>
+                <select value={province} onChange={(e) => setProvince(e.target.value)}>
+                  {['PD', 'VR', 'VE', 'VI', 'TV', 'RO', 'BL', 'BS', 'MN', 'MI', 'TO', 'RM'].map((p) => (
+                    <option key={p} value={p}>{p} (curata)</option>
+                  ))}
+                </select>
+                <div className="hint">Province curate in italy_geo: copertura comuni verificata.</div>
+              </div>
+              <div className="field">
+                <label>Fonti</label>
+                <div className="toggles">
+                  <span className={`toggle ${srcPg ? 'on' : ''}`} onClick={() => setSrcPg((v) => !v)}>PagineGialle</span>
+                  <span className={`toggle ${srcMaps ? 'on' : ''}`} onClick={() => setSrcMaps((v) => !v)}>Maps</span>
+                  <span className="toggle off-paid" style={{ cursor: 'not-allowed', opacity: 0.5 }}>Registro (prossima fase)</span>
+                </div>
+                {srcMaps && <div className="hint warn">Maps: il conteggio oscilla run-su-run (misurato 6×). In dashboard è mostrato come “≥ N”, un minimo, mai un dato secco.</div>}
+              </div>
+              <div className="field">
+                <label>Tetto costo (€/run) · provider a pagamento</label>
+                <div className="row2">
+                  <input type="number" defaultValue={0.02} step={0.01} min={0} />
+                  <span className={`toggle ${paid ? 'on' : 'off-paid'}`} onClick={() => setPaid((v) => !v)} style={{ textAlign: 'center' }}>
+                    paid: {paid ? 'ON' : 'OFF'}
+                  </span>
+                </div>
+                <div className="hint">I provider a pagamento sono disabilitati in questa build (free-gold a €0). Il tetto è già provato dal vivo (€0,019 ≤ €0,02).</div>
+              </div>
+              <button className="primary" onClick={submitIntent}>Avvia ricerca free-gold</button>
+              {scrapeNote && <div className="hint" style={{ marginTop: 10 }}>{scrapeNote}</div>}
+            </div>
+          </div>
+
+          {/* fill rates */}
+          <div className="panel">
+            <div className="hd">Copertura campi <span className="num muted">{metrics?.total ?? 0} righe</span></div>
+            <div className="bd">
+              {metrics ? (
+                Object.entries(metrics.fillRates).map(([k, v]) => (
+                  <div className="fillrow" key={k}>
+                    <div className="top"><span>{FILL_LABELS[k] ?? k}</span><span className="pct num">{v}%</span></div>
+                    <div className="bar"><i style={{ width: `${v}%` }} /></div>
+                  </div>
+                ))
+              ) : <div className="muted">…</div>}
+              <div className="hint" style={{ marginTop: 10 }}>
+                I dati partono dallo stato “before” reale (sito+telefono). Seleziona righe e arricchisci email/P.IVA/social: il free-gold rilegge i siti veri e le barre salgono.
+              </div>
+            </div>
+          </div>
+
+          {/* provider health */}
+          <div className="panel">
+            <div className="hd">Salute provider</div>
+            <div className="bd">
+              {providerHealth?.providerDead.length ? (
+                <>
+                  {providerHealth.providerDead.map((d) => (
+                    <div className="health-item" key={d.provider}>
+                      <span className="pill bad">0% · morto</span>
+                      <b>{d.provider}</b>
+                      <span className="muted num">{d.calls} chiamate, tutte {d.dominant_kind}</span>
+                    </div>
+                  ))}
+                  <div className="hint">Segnalati, non nascosti — è la classe dns_mx/crtsh che restava silenziosa per mesi.</div>
+                </>
+              ) : (
+                <div className="health-item"><span className="pill ok">tutti sani</span></div>
+              )}
+            </div>
+          </div>
+
+          {/* sources + dedup + cost */}
+          <div className="panel">
+            <div className="hd">Provenienza & qualità</div>
+            <div className="bd">
+              {metrics && Object.entries(metrics.sources).map(([s, n]) => (
+                <div className="metric" key={s}><span className="k">{s}</span><span className="v num">{n}</span></div>
+              ))}
+              <div className="metric"><span className="k">coda dedup-review</span><span className="v num">{dedupCount}</span></div>
+              <div className="metric"><span className="k">lead (Maps band)</span><span className="v num">{metrics?.mapsBand.display}</span></div>
+              <div className="metric"><span className="k">costo run seed</span><span className="v num">€{(cost?.seedRunCostEur ?? 0).toFixed(3)}</span></div>
+            </div>
+          </div>
+        </div>
+
+        {/* ---- right: the reactive table ---- */}
+        <div className="panel">
+          <div className="toolbar">
+            <span className="sel">{selected.size ? `${selected.size} selezionate` : `${filtered.length} aziende`}</span>
+            <input type="text" placeholder="filtra per nome o città…" value={filterText} onChange={(e) => { setFilterText(e.target.value); setPage(0); }} style={{ width: 200 }} />
+            <span className={`toggle ${onlyWebsite ? 'on' : ''}`} onClick={() => { setOnlyWebsite((v) => !v); setPage(0); }}>solo con sito</span>
+            {ENRICH_FIELDS.map((f) => (
+              <button key={f.key} className="ebtn" disabled={!selected.size} onClick={() => enrich(f.key)} title={`Arricchisci ${f.label} sulle selezionate (free-gold, €0)`}>
+                + {f.label}
+              </button>
+            ))}
+          </div>
+          <div className="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: 30 }}><input type="checkbox" checked={allPageSelected} onChange={toggleAllPage} /></th>
+                  <th>Azienda</th>
+                  <th>Telefono</th>
+                  <th>Sito</th>
+                  {ENRICH_FIELDS.map((f) => <th key={f.key}>{f.label}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map((r) => (
+                  <tr key={r.id} className={selected.has(r.id) ? 'selected' : ''}>
+                    <td><input type="checkbox" checked={selected.has(r.id)} onChange={() => toggle(r.id)} /></td>
+                    <td className="name">{r.company_name}<div className="sub">{r.city}{r.province ? ` (${r.province})` : ''} · {r.category}</div></td>
+                    <td className="num">{r.phone ?? <span className="muted">—</span>}</td>
+                    <td>{r.official_website ? <a href={r.official_website as string} target="_blank" rel="noreferrer">{hostOf(r.official_website as string)}</a> : <span className="muted">—</span>}</td>
+                    {ENRICH_FIELDS.map((f) => <td key={f.key}>{cellOf(r.id, f.key, f.col, r)}</td>)}
+                  </tr>
+                ))}
+                {pageRows.length === 0 && (
+                  <tr><td colSpan={4 + ENRICH_FIELDS.length}><div className="empty-state">Nessuna azienda con questi filtri.</div></td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="pager">
+            <span>pagina {page + 1} / {Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))}</span>
+            <button disabled={page === 0} onClick={() => setPage((p) => p - 1)}>‹ prec</button>
+            <button disabled={(page + 1) * PAGE_SIZE >= filtered.length} onClick={() => setPage((p) => p + 1)}>succ ›</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
