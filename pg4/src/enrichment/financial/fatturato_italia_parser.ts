@@ -51,6 +51,31 @@ function parseAmount(raw: string | undefined): number | undefined {
 }
 
 /**
+ * Parse the fatturatoitalia "N. dipendenti" value, which is published as a
+ * BAND, not a single number: "da 10 a 15", "da 3 a 5", "oltre 1000", or a bare
+ * integer. The old `.replace(/[^\d-]/g, '')` concatenated the band digits into
+ * nonsense ("da 10 a 15" → "1015", "da 3 a 5" → "35", "oltre 1000" → "1000").
+ * Found by Marco's spot-check — the "single field so it's fine" assumption was
+ * exactly what the revenue wrong-year bug had just disproved. Returns a clean
+ * human band ("10-15", "3-5", "1000+", "1") or undefined.
+ */
+export function parseDipendenti(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const s = raw.trim().toLowerCase();
+  let m: RegExpMatchArray | null;
+  if ((m = s.match(/da\s+(\d+)\s+a\s+(\d+)/))) return `${m[1]}-${m[2]}`; // "da 10 a 15"
+  if ((m = s.match(/(\d+)\s*[-–]\s*(\d+)/))) return `${m[1]}-${m[2]}`; // "10-15" / "10–15"
+  if ((m = s.match(/(?:oltre|più di|piu di|>)\s*(\d+)/))) return `${m[1]}+`; // "oltre 1000"
+  if ((m = s.match(/(?:fino a|meno di|<)\s*(\d+)/))) return `<${m[1]}`; // "fino a 5"
+  // single count, Italian thousands dots allowed ("8.200" → "8200"); spaces are
+  // NOT stripped, so an unhandled "10 15"-style range degrades to undefined
+  // rather than being mangled back into "1015".
+  const single = s.replace(/\./g, '');
+  if (/^\d+$/.test(single)) return single;
+  return undefined;
+}
+
+/**
  * Pull the 5-year series out of the embedded chart JS:
  *   var datiChartFatturato = [40503424402, 39245672100, ...];
  *   var datiChartUtile     = [1234567, ...];
@@ -128,7 +153,7 @@ function parseGrid($: cheerio.CheerioAPI): {
   }
 
   const dipendentiRaw = data['n. dipendenti'] || data['dipendenti'] || data['numero dipendenti'];
-  const dipendenti = dipendentiRaw ? dipendentiRaw.replace(/[^\d-]/g, '') || undefined : undefined;
+  const dipendenti = parseDipendenti(dipendentiRaw);
 
   const ragione_sociale = data['ragione sociale'] || undefined;
   const vat_code = data['partita iva'] || data['p.iva'] || undefined;

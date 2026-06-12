@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { parseFatturatoItaliaPage } from '../../src/enrichment/financial/fatturato_italia_parser';
+import { parseFatturatoItaliaPage, parseDipendenti } from '../../src/enrichment/financial/fatturato_italia_parser';
 
 // Local SYNTHETIC fixtures — no live network, no real scraped data.
 const fixDir = path.join(__dirname, '../fixtures/financial');
@@ -95,5 +95,28 @@ describe('GOLDEN regression — most-recent-year selection (the wrong-year bug)'
     expect(r.history.map((h) => h.year)).toEqual([2020, 2021, 2022, 2023, 2024]);
     expect(r.history[0]).toMatchObject({ year: 2020, fatturato: 35_550 });
     expect(r.history[4]).toMatchObject({ year: 2024, fatturato: 51_619 });
+  });
+});
+
+describe('GOLDEN regression — employees BANDS (real strings, the 2nd sample-check bug)', () => {
+  // fatturatoitalia publishes "N. dipendenti" as a BAND. The old
+  // `.replace(/[^\d-]/g,'')` mangled them ("da 10 a 15" → "1015",
+  // "da 3 a 5" → "35", "oltre 1000" → "1000"). These are the REAL strings
+  // observed on live pages — the guardrail now lives in the real world.
+  it('parses ranges/bounds instead of concatenating digits', () => {
+    expect(parseDipendenti('da 10 a 15')).toBe('10-15');
+    expect(parseDipendenti('da 3 a 5')).toBe('3-5');
+    expect(parseDipendenti('da 6 a 9')).toBe('6-9');
+    expect(parseDipendenti('oltre 1000')).toBe('1000+');
+    expect(parseDipendenti('fino a 5')).toBe('<5');
+    expect(parseDipendenti('1')).toBe('1'); // a real single value stays single
+    // the specific mangled outputs must never come back
+    expect(parseDipendenti('da 10 a 15')).not.toBe('1015');
+    expect(parseDipendenti('oltre 1000')).not.toBe('1000');
+  });
+  it('returns undefined for empty/garbage', () => {
+    expect(parseDipendenti('')).toBeUndefined();
+    expect(parseDipendenti(undefined)).toBeUndefined();
+    expect(parseDipendenti('n/d')).toBeUndefined();
   });
 });

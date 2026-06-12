@@ -32,6 +32,20 @@ golden fixture uses the real oldest-first data.
   2022=€537.000 matches Marco's independent external check exactly.
 - 02580520282 → **€ 16.496 (2024)** (was €35.291).
 
+**Second sample-check finding — employees were ALSO wrong (bands mangled).**
+Marco refused to accept "employees comes from a single field so it's fine" —
+the exact assumption the revenue bug had just disproved — and demanded the
+spot-check. It found a real bug: fatturatoitalia publishes "N. dipendenti" as a
+BAND ("da 10 a 15", "da 3 a 5", "oltre 1000"), and the old
+`.replace(/[^\d-]/g,'')` concatenated the digits into nonsense — "da 10 a 15" →
+**1015**, "da 3 a 5" → **35**, "oltre 1000" → **1000**. Fixed (`parseDipendenti`):
+proper band parsing → "10-15", "3-5", "1000+", single "8.200" → "8200". Golden
+test with the REAL band strings. Verified on real pages
+(`docs/measurement_evidence/dipendenti_band_fix_evidence.txt`): 10-15 · 3-5 ·
+1000+ · 6-9 · 2 (were 1015 · 35 · 1000 · 69 · 2). The lesson held twice: the
+guardrail must match reality, and "single field so it's fine" is the assumption
+to distrust.
+
 **Two related findings, both resolved:**
 - *Revenue without a visible P.IVA* (Bordignon Service, 3b Srl, …): NOT a
   wrong-company name-match — `fetchFatturatoItalia` is **VAT-only** (URL
