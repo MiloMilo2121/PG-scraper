@@ -20,6 +20,7 @@
     "benchmark": "tsx src/cli/benchmark.ts",
     "validate:output": "tsx src/scripts/validate_output.ts",
     "lookup": "tsx src/cli/lookup.ts",
+    "serve": "tsx src/server/api_server.ts",
     "lint": "eslint src tests scripts",
     "test:coverage": "vitest run tests/unit --coverage --reporter=dot"
   },

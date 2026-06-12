@@ -73,4 +73,45 @@ export class InMemoryTenantDb implements TenantDb {
     for (const b of this.store.values()) n += b.size;
     return n;
   }
+
+  /**
+   * Tenant-scoped {id, row} pairs — for the dev API server, which needs the
+   * stable id alongside each row. Still strictly tenant-scoped (only reads the
+   * requested tenant's bucket).
+   */
+  entries(tenantId: string): Array<{ id: string; row: CompanyRow }> {
+    const b = this.store.get(tenantId);
+    if (!b) return [];
+    return [...b.values()].map((e) => ({ id: e.id, row: { ...e.row } }));
+  }
+
+  /** Tenant-scoped fetch of one company by id. */
+  getById(tenantId: string, id: string): CompanyRow | undefined {
+    const b = this.store.get(tenantId);
+    if (!b) return undefined;
+    for (const e of b.values()) if (e.id === id) return { ...e.row };
+    return undefined;
+  }
+
+  /**
+   * Patch a company in place (fill-only-missing, like the merge policy): used
+   * by the live enrich-field path to write the free-gold result back. Returns
+   * the patched row or undefined if not found / wrong tenant.
+   */
+  patchCompany(tenantId: string, id: string, patch: Record<string, unknown>): CompanyRow | undefined {
+    const b = this.store.get(tenantId);
+    if (!b) return undefined;
+    for (const e of b.values()) {
+      if (e.id !== id) continue;
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === undefined || v === null || v === '') continue;
+        const cur = (e.row as Record<string, unknown>)[k];
+        if (cur === undefined || cur === null || cur === '') {
+          (e.row as Record<string, unknown>)[k] = v;
+        }
+      }
+      return { ...e.row };
+    }
+    return undefined;
+  }
 }
