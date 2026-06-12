@@ -910,9 +910,14 @@ cd web && pnpm install && pnpm run dev   # → http://localhost:3000
 Apri `http://localhost:3000`. Cosa puoi fare:
 - **Cercare**: pannello "Nuova ricerca" (categoria validata, provincia curata,
   fonti). Maps mostra l'avviso "≥ N" (il conteggio oscilla 6×, è un minimo).
-- **Arricchire dal vivo**: seleziona righe nella tabella → bottoni "+ Email /
-  + P.IVA / + Instagram…". Il free-gold rilegge i siti veri e le celle si
-  riempiono in tempo reale (queued → cerco… → valore). **€0** — solo tier free.
+- **Arricchire dal vivo**: seleziona righe → bottoni "+ Email / + P.IVA /
+  + Fatturato / + Dipend. / + Instagram…". Il free-gold rilegge i siti; il moat
+  official-data prende **fatturato + dipendenti reali da fatturatoitalia.it per
+  P.IVA** e valida la P.IVA su **VIES** (UE). Le celle si riempiono in tempo
+  reale (passa il mouse su una cella piena → la fonte). **€0** — VIES e
+  fatturatoitalia sono gratis; i provider a pagamento restano disabilitati.
+  Misurato: ~45% delle aziende con sito danno fatturato reale (vedi
+  `docs/official_data_report.md`). Max 200 righe per arricchimento (guard).
 - **Leggere la verità del sistema**: pannello "Salute provider" mostra i
   provider morti (dns_mx/crtsh, 0% successi) — segnalati, non nascosti; le barre
   "Copertura campi" salgono dopo ogni arricchimento; coda dedup-review visibile.

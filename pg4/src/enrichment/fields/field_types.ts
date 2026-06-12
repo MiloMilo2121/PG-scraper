@@ -40,7 +40,12 @@ export interface EnrichmentStep {
   costEur: number;
   /** Wired-but-disabled paid steps set this false until activated. */
   enabled: boolean;
-  run(ctx: FieldStepContext): StepResult;
+  /**
+   * Resolve the field for this step. Tier-0 free steps are synchronous (they
+   * read the already-fetched body); tier-1/2 network steps (VIES,
+   * fatturatoitalia, paid APIs) return a Promise. The runner awaits either.
+   */
+  run(ctx: FieldStepContext): StepResult | Promise<StepResult>;
 }
 
 export interface EnrichmentFieldDescriptor {

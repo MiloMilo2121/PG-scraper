@@ -14,7 +14,7 @@ live spend awaits a key.
 
 | | |
 |---|---|
-| Tests | **780 pass**, 1 skip (was 736 at pass start) |
+| Tests | **780 pass**, 1 skip at this pass (later passes added more; see frontend_report.md / official_data_report.md) |
 | typecheck / lint | clean |
 | € spent | **€0** (the one €0.02 live test is pending a SERPER_API_KEY) |
 | Live DB / server / Stripe / deploy | none — by design |
@@ -116,8 +116,8 @@ test input, analysed honestly) in `docs/measurement_evidence/ceiling_live_check.
 
 - [x] Gate-0 closed; silent-dead-provider class now self-reporting
 - [x] Multi-tenant schema, `tenant_id` on every domain row, isolation tested (app layer; DB-layer RLS test at activation)
-- [x] Engine persists via a sink (CSV unchanged, core intact) — sink seam + Pg adapter
-- [x] Audit trail (`_runs.jsonl`) mapped to the `runs` table (loader at activation)
+- [~] Sink SEAM built (`TenantLeadSink` + Pg adapter) — CSV unchanged; NOT yet wired into the CLI enrich path (still CSV-only). The seam exists; plugging the CLI into it is an activation step.
+- [~] `runs`/`cost_ledger` SCHEMA defined for the audit trail; the `_runs.jsonl`→DB loader is deferred to activation (schema present, data not yet flowing).
 - [x] API: enrich-field-on-selection + status, all tenant-scoped
 - [x] Per-field waterfall: free tiers live, paid wired-but-disabled
 - [x] Compliance mechanics built; PRODUCTION ACTIVATION CHECKLIST written

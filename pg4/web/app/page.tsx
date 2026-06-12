@@ -7,6 +7,8 @@ const ENRICH_FIELDS = [
   { key: 'email', col: 'email_inferred', label: 'Email' },
   { key: 'pec', col: 'pec', label: 'PEC' },
   { key: 'vat', col: 'vat_code_final', label: 'P.IVA' },
+  { key: 'revenue', col: 'revenue', label: 'Fatturato' },
+  { key: 'employees', col: 'employees', label: 'Dipend.' },
   { key: 'instagram', col: 'instagram', label: 'Instagram' },
   { key: 'facebook', col: 'facebook', label: 'Facebook' },
   { key: 'linkedin', col: 'linkedin', label: 'LinkedIn' },
@@ -18,12 +20,16 @@ const FILL_LABELS: Record<string, string> = {
   email: 'Email',
   pec: 'PEC',
   vat: 'P.IVA',
+  revenue: 'Fatturato (ufficiale)',
+  employees: 'Dipendenti (ufficiale)',
   instagram: 'Instagram',
   facebook: 'Facebook',
   linkedin: 'LinkedIn',
 };
 
-type CellMap = Record<string, Record<string, { status: CellStatus; value?: string }>>; // companyId → field → state
+const MAX_ENRICH = 200; // mirrors the server's ENRICH_MAX_SELECTION (footgun guard)
+
+type CellMap = Record<string, Record<string, { status: CellStatus; value?: string; source?: string }>>; // companyId → field → state
 
 export default function Dashboard() {
   const [health, setHealth] = useState<{ ok: boolean; companies: number; seed: string } | null>(null);
@@ -119,10 +125,17 @@ export default function Dashboard() {
     });
     try {
       const { jobId } = await api.enrich(ids, [fieldKey]);
+      setErr(null);
       pollRef.current.add(jobId);
       pollJob(jobId);
     } catch (e) {
       setErr((e as Error).message);
+      // roll back the optimistic "queued" cells so they don't hang
+      setCells((prev) => {
+        const n = { ...prev };
+        for (const id of ids) if (n[id]) delete n[id][fieldKey];
+        return n;
+      });
     }
   }
 
@@ -133,17 +146,23 @@ export default function Dashboard() {
       try {
         job = await api.job(jobId);
       } catch {
+        setErr('connessione al server persa durante l’arricchimento — riprova');
         break;
       }
       setCells((prev) => {
         const n = { ...prev };
         for (const it of job.items) {
           for (const [f, st] of Object.entries(it.cells)) {
-            n[it.companyId] = { ...(n[it.companyId] ?? {}), [f]: { status: st.status, value: st.value } };
+            n[it.companyId] = { ...(n[it.companyId] ?? {}), [f]: { status: st.status, value: st.value, source: st.source } };
           }
         }
         return n;
       });
+      // F0 — a failed/timed-out job surfaces its error instead of a frozen spinner.
+      if (job.status === 'error') {
+        setErr(job.error ?? 'enrich job failed');
+        break;
+      }
       // write filled values into the row data so fill-rates + cells persist
       setCompanies((prev) => {
         const byId = new Map(prev.map((r) => [r.id, r]));
@@ -190,8 +209,13 @@ export default function Dashboard() {
           {st.status === 'running' ? 'cerco…' : 'in coda'}
         </span>
       );
-    if (st?.status === 'filled' || existing)
-      return <span className={`cell filled ${st?.status === 'filled' ? 'justfilled' : ''}`}>{(st?.value ?? existing) as string}</span>;
+    if (st?.status === 'failed') return <span className="cell failed" title={st.value}>errore</span>;
+    if (st?.status === 'filled' || existing) {
+      // evidence-lite: hover shows the provenance (the first step toward the
+      // full Q4 drill-down — source + how the value was found).
+      const evidence = st?.source ? `fonte: ${st.source}` : 'da dati seed';
+      return <span className={`cell filled ${st?.status === 'filled' ? 'justfilled' : ''}`} title={evidence}>{(st?.value ?? existing) as string}</span>;
+    }
     if (st?.status === 'not_found') return <span className="cell not_found">—</span>;
     return <span className="cell empty">·</span>;
   }
@@ -314,11 +338,14 @@ export default function Dashboard() {
         {/* ---- right: the reactive table ---- */}
         <div className="panel">
           <div className="toolbar">
-            <span className="sel">{selected.size ? `${selected.size} selezionate` : `${filtered.length} aziende`}</span>
+            <span className="sel">
+              {selected.size ? `${selected.size} selezionate` : `${filtered.length} aziende`}
+              {selected.size > MAX_ENRICH && <span className="hint warn" style={{ marginLeft: 8 }}>max {MAX_ENRICH} per arricchimento</span>}
+            </span>
             <input type="text" placeholder="filtra per nome o città…" value={filterText} onChange={(e) => { setFilterText(e.target.value); setPage(0); }} style={{ width: 200 }} />
             <span className={`toggle ${onlyWebsite ? 'on' : ''}`} onClick={() => { setOnlyWebsite((v) => !v); setPage(0); }}>solo con sito</span>
             {ENRICH_FIELDS.map((f) => (
-              <button key={f.key} className="ebtn" disabled={!selected.size} onClick={() => enrich(f.key)} title={`Arricchisci ${f.label} sulle selezionate (free-gold, €0)`}>
+              <button key={f.key} className="ebtn" disabled={!selected.size || selected.size > MAX_ENRICH} onClick={() => enrich(f.key)} title={`Arricchisci ${f.label} sulle selezionate (€0)`}>
                 + {f.label}
               </button>
             ))}

@@ -1,5 +1,8 @@
 import type { EnrichmentFieldDescriptor, EnrichmentStep, StepResult, FieldStepContext } from './field_types';
 import { registrableDomain } from '../extract/extract_from_body';
+import { normalizeVatCode, validateItalianVatChecksum } from '../financial/vat';
+import { checkVatViaVies } from '../financial/vies';
+import { fetchFatturatoItalia } from '../financial/fatturato_italia_fetch';
 
 /**
  * THE per-field cascade registry. Each field declares its ordered free→paid
@@ -73,11 +76,66 @@ const disabled = (id: string, tier: 0 | 1 | 2, costEur: number, source: string):
   run: (): StepResult => ({ confidence: 0, source, costEur, skippedReason: 'disabled' }),
 });
 
+// ---- official-data steps (Phase 3 — FREE, network; the VAT-as-master-key spine) ----
+// Enabled by default (VIES + fatturatoitalia are free public sources); each is
+// toggleable via an env flag so a deployment can pin them off.
+
+function flagOn(name: string): boolean {
+  const v = process.env[name];
+  return v === undefined || v === '' || v === '1' || v.toLowerCase() === 'true';
+}
+
+/** The VAT a field step keys on: a resolved final VAT, a body-extracted one, or the input. */
+function resolveVat(ctx: FieldStepContext): string | undefined {
+  const raw =
+    (ctx.lead.vat_code_final as string | undefined) ??
+    ctx.extraction?.vat_candidates?.[0] ??
+    (ctx.lead.vat_code as string | undefined);
+  const v = normalizeVatCode(raw);
+  return /^\d{11}$/.test(v) && validateItalianVatChecksum(v) ? v : undefined;
+}
+
+// VIES — validate the VAT against the official EU endpoint (free). Runs as the
+// fallback after the body checksum step: when the firm's own page already
+// yielded a checksum-valid VAT the cascade stops there; VIES confirms an INPUT
+// VAT (or surfaces the official name) when the body had none.
+const viesHarden: EnrichmentStep = {
+  id: 'vat.vies_harden',
+  tier: 1,
+  costEur: 0,
+  enabled: flagOn('OFFICIAL_DATA_VIES_ENABLED'),
+  run: async (ctx): Promise<StepResult> => {
+    const vat = resolveVat(ctx);
+    if (!vat) return { confidence: 0, source: 'vies', costEur: 0, skippedReason: 'no_input' };
+    const r = await checkVatViaVies({ vatNumber: vat, countryCode: 'IT' });
+    if (!r.isValid) return { confidence: 0, source: 'vies', costEur: 0, skippedReason: 'no_value' };
+    return { value: vat, confidence: r.checked ? 0.95 : 0.85, source: r.source, costEur: 0 };
+  },
+};
+
+// fatturatoitalia.it — revenue + employees by P.IVA (free public page; the
+// parser already existed, this wires the fetch). One lookup fills both fields
+// (memoised in the fetcher), so enriching revenue then employees costs one fetch.
+const fatturatoItaliaStep = (field: 'revenue' | 'employees', confFloor: number): EnrichmentStep => ({
+  id: `${field}.fatturatoitalia_by_vat`,
+  tier: 1,
+  costEur: 0,
+  enabled: flagOn('OFFICIAL_DATA_FATTURATOITALIA_ENABLED'),
+  run: async (ctx): Promise<StepResult> => {
+    const vat = resolveVat(ctx);
+    if (!vat) return { confidence: 0, source: 'fatturatoitalia', costEur: 0, skippedReason: 'no_input' };
+    const fi = await fetchFatturatoItalia(vat);
+    const value = fi?.[field];
+    if (!value) return { confidence: 0, source: 'fatturatoitalia', costEur: 0, skippedReason: 'no_value' };
+    return { value: String(value), confidence: Math.max(confFloor, fi.confidence), source: 'fatturatoitalia', costEur: 0 };
+  },
+});
+
 export const FIELD_REGISTRY: EnrichmentFieldDescriptor[] = [
   {
     field: 'vat',
     target: 'vat_code_final',
-    cascade: [vatFromBody, disabled('vat.vies_harden', 1, 0, 'vies')],
+    cascade: [vatFromBody, viesHarden],
     ceilingEur: 0,
     stopConfidence: 0.85,
   },
@@ -102,14 +160,14 @@ export const FIELD_REGISTRY: EnrichmentFieldDescriptor[] = [
   {
     field: 'revenue',
     target: 'revenue',
-    cascade: [disabled('revenue.fatturatoitalia_by_vat', 1, 0, 'fatturatoitalia')],
+    cascade: [fatturatoItaliaStep('revenue', 0.7)],
     ceilingEur: 0,
     stopConfidence: 0.7,
   },
   {
     field: 'employees',
     target: 'employees',
-    cascade: [disabled('employees.fatturatoitalia_by_vat', 1, 0, 'fatturatoitalia')],
+    cascade: [fatturatoItaliaStep('employees', 0.6)],
     ceilingEur: 0,
     stopConfidence: 0.6,
   },

@@ -27,12 +27,32 @@ type CellStatus = 'queued' | 'running' | 'filled' | 'failed' | 'not_found';
 interface EnrichJob {
   id: string;
   fields: EnrichableField[];
-  status: 'running' | 'done';
+  status: 'running' | 'done' | 'error';
   costEur: number;
+  error?: string;
   items: Map<string, { companyId: string; cells: Record<string, { status: CellStatus; value?: string; source?: string }> }>;
 }
 const jobs = new Map<string, EnrichJob>();
 let jobSeq = 0;
+
+// F0 — footgun guards: bound concurrency + cap total job duration so a large
+// selection can't serialise hundreds of 8s fetches into a 67-min event-loop
+// stall, and a stuck host can't orphan a job forever.
+const ENRICH_CONCURRENCY = 5;
+const ENRICH_JOB_TIMEOUT_MS = 180_000;
+export const ENRICH_MAX_SELECTION = 200; // the API rejects larger selections
+
+/** Run `worker` over `items` with at most `limit` in flight. */
+async function pool<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+  let i = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      const idx = i++;
+      await worker(items[idx]);
+    }
+  });
+  await Promise.all(runners);
+}
 
 let seed: SeedResult;
 
@@ -66,6 +86,8 @@ const FIELD_FILL_TARGETS: Record<string, EnrichableField> = {
   email: 'email',
   pec: 'pec',
   vat: 'vat',
+  revenue: 'revenue',
+  employees: 'employees',
   instagram: 'instagram',
   facebook: 'facebook',
   linkedin: 'linkedin',
@@ -102,6 +124,8 @@ function computeMetrics() {
       email: fillRate(rows, 'email_inferred'),
       pec: fillRate(rows, 'pec'),
       vat: fillRate(rows, 'vat_code_final'),
+      revenue: fillRate(rows, 'revenue'),
+      employees: fillRate(rows, 'employees'),
       instagram: fillRate(rows, 'instagram'),
       facebook: fillRate(rows, 'facebook'),
       linkedin: fillRate(rows, 'linkedin'),
@@ -116,33 +140,34 @@ function computeDedupReview() {
   return dd.getReviewCandidates().slice(0, 50);
 }
 
-// ---- the live free-gold enrich-field job ----
-async function runEnrichJob(job: EnrichJob, companyIds: string[]): Promise<void> {
-  for (const cid of companyIds) {
-    const row = seed.db.getById(DEV_TENANT_ID, cid) as Record<string, unknown> | undefined;
-    const item = job.items.get(cid)!;
-    if (!row || !row.official_website) {
-      for (const f of job.fields) item.cells[f] = { status: 'not_found' };
-      continue;
-    }
-    for (const f of job.fields) item.cells[f] = { status: 'running' };
+// ---- the live enrich-field job (free-gold body + official-data steps) ----
+async function enrichOneCompany(job: EnrichJob, cid: string): Promise<void> {
+  const row = seed.db.getById(DEV_TENANT_ID, cid) as Record<string, unknown> | undefined;
+  const item = job.items.get(cid)!;
+  for (const f of job.fields) item.cells[f] = { status: 'running' };
 
-    let html: string | undefined;
+  // Fetch the firm's own page (free-gold body) when it has a website — the
+  // free tiers read it; the official-data steps (VIES/fatturatoitalia) fetch
+  // their own sources keyed on the VAT they find.
+  let html: string | undefined;
+  if (row?.official_website) {
     try {
       const res = await FETCH.fetch(String(row.official_website), { timeoutMs: 8000 });
       html = res.html;
     } catch {
-      /* fetch failed → not_found below */
+      /* host down/slow → fields fall through to not_found/registry */
     }
+  }
 
-    for (const f of job.fields) {
-      const field = FIELD_FILL_TARGETS[f];
-      if (!field || !html) {
-        item.cells[f] = { status: 'not_found' };
-        continue;
-      }
+  for (const f of job.fields) {
+    const field = FIELD_FILL_TARGETS[f];
+    if (!field) {
+      item.cells[f] = { status: 'not_found' };
+      continue;
+    }
+    try {
       const lead = { ...row } as Lead;
-      const outcome = runFieldCascade(lead, field, { body: html });
+      const outcome = await runFieldCascade(lead, field, { body: html });
       if (outcome.resolved && outcome.value) {
         const target = FIELD_BY_NAME.get(field)!.target as string;
         seed.db.patchCompany(DEV_TENANT_ID, cid, { [target]: outcome.value });
@@ -150,9 +175,31 @@ async function runEnrichJob(job: EnrichJob, companyIds: string[]): Promise<void>
       } else {
         item.cells[f] = { status: 'not_found' };
       }
+    } catch (err) {
+      // A field that throws becomes a visible failed cell, never a silent hang.
+      item.cells[f] = { status: 'failed', value: (err as Error).message.slice(0, 80) };
     }
   }
-  job.status = 'done';
+}
+
+async function runEnrichJob(job: EnrichJob, companyIds: string[]): Promise<void> {
+  const deadline = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), ENRICH_JOB_TIMEOUT_MS).unref?.());
+  const work = pool(companyIds, ENRICH_CONCURRENCY, (cid) => enrichOneCompany(job, cid));
+  try {
+    const r = await Promise.race([work.then(() => 'done' as const), deadline]);
+    if (r === 'timeout') {
+      job.status = 'error';
+      job.error = `job exceeded ${ENRICH_JOB_TIMEOUT_MS / 1000}s — partial results kept`;
+      // mark any still-running cells as failed so the UI never hangs
+      for (const it of job.items.values())
+        for (const [f, st] of Object.entries(it.cells)) if (st.status === 'running' || st.status === 'queued') it.cells[f] = { status: 'failed' };
+      return;
+    }
+    job.status = 'done';
+  } catch (err) {
+    job.status = 'error';
+    job.error = (err as Error).message;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +209,7 @@ function jobView(job: EnrichJob) {
     status: job.status,
     fields: job.fields,
     costEur: job.costEur,
+    error: job.error,
     items: [...job.items.values()],
   };
 }
@@ -216,6 +264,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const ids = Array.isArray(body.companyIds) ? body.companyIds : [];
     const fields = (Array.isArray(body.fields) ? body.fields : []).filter((f) => f in FIELD_FILL_TARGETS) as EnrichableField[];
     if (!ids.length || !fields.length) return json(res, 422, { error: 'companyIds and fields are required' });
+    if (ids.length > ENRICH_MAX_SELECTION)
+      return json(res, 422, { error: `selection too large (${ids.length}); max ${ENRICH_MAX_SELECTION} per enrich job` });
     const job: EnrichJob = {
       id: `job_${++jobSeq}`,
       fields,

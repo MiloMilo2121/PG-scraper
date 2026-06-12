@@ -14,6 +14,8 @@ export interface Company {
   email_inferred?: string;
   pec?: string;
   vat_code_final?: string;
+  revenue?: string;
+  employees?: string;
   instagram?: string;
   facebook?: string;
   linkedin?: string;
@@ -45,9 +47,10 @@ export interface CostView {
 export type CellStatus = 'queued' | 'running' | 'filled' | 'failed' | 'not_found';
 export interface EnrichJob {
   jobId: string;
-  status: 'running' | 'done';
+  status: 'running' | 'done' | 'error';
   fields: string[];
   costEur: number;
+  error?: string;
   items: Array<{ companyId: string; cells: Record<string, { status: CellStatus; value?: string; source?: string }> }>;
 }
 

@@ -43,12 +43,12 @@ export interface RunFieldOptions {
  * logic — including ENABLED paid steps — can be tested without mutating the
  * shipped registry (whose paid steps are all disabled this pass).
  */
-export function runFieldDescriptor(lead: Lead, descriptor: EnrichmentFieldDescriptor, opts: RunFieldOptions = {}): FieldCascadeOutcome {
+export async function runFieldDescriptor(lead: Lead, descriptor: EnrichmentFieldDescriptor, opts: RunFieldOptions = {}): Promise<FieldCascadeOutcome> {
   const extraction = opts.extraction ?? (opts.body ? extractFromBody(opts.body, lead) : undefined);
   return runOne(lead, descriptor, extraction, opts);
 }
 
-function runOne(lead: Lead, descriptor: EnrichmentFieldDescriptor, extraction: BodyExtraction | undefined, opts: RunFieldOptions): FieldCascadeOutcome {
+async function runOne(lead: Lead, descriptor: EnrichmentFieldDescriptor, extraction: BodyExtraction | undefined, opts: RunFieldOptions): Promise<FieldCascadeOutcome> {
   const paidEnabled = opts.paidEnabled === true;
   const steps: FieldCascadeOutcome['steps'] = [];
   let spentOnField = 0;
@@ -70,7 +70,14 @@ function runOne(lead: Lead, descriptor: EnrichmentFieldDescriptor, extraction: B
       continue;
     }
 
-    const res = step.run({ lead, extraction, paidEnabled });
+    // tier-0 steps are sync, network steps return a Promise — await either.
+    // A throwing step degrades to "no value" rather than failing the cascade.
+    let res: StepResult;
+    try {
+      res = await step.run({ lead, extraction, paidEnabled });
+    } catch {
+      res = { confidence: 0, source: step.id, costEur: 0, skippedReason: 'no_value' };
+    }
     if (step.costEur > 0) {
       spentOnField += step.costEur;
       opts.ledger?.record(step.id, 'enrich_field', step.costEur, !!res.value, {
@@ -101,7 +108,7 @@ function runOne(lead: Lead, descriptor: EnrichmentFieldDescriptor, extraction: B
 }
 
 /** Run one field's cascade. */
-export function runFieldCascade(lead: Lead, field: EnrichableField, opts: RunFieldOptions = {}): FieldCascadeOutcome {
+export async function runFieldCascade(lead: Lead, field: EnrichableField, opts: RunFieldOptions = {}): Promise<FieldCascadeOutcome> {
   const descriptor = FIELD_BY_NAME.get(field);
   if (!descriptor) throw new Error(`unknown enrichment field: ${field}`);
   const extraction = opts.extraction ?? (opts.body ? extractFromBody(opts.body, lead) : undefined);
@@ -111,12 +118,16 @@ export function runFieldCascade(lead: Lead, field: EnrichableField, opts: RunFie
 /**
  * Run several fields over one lead. The website body is parsed ONCE (free-gold)
  * and shared across every field's free tier — the cost principle made concrete.
+ * Fields run sequentially so a master-key field (VAT) resolved by an earlier
+ * cascade is visible to a later one (e.g. PEC/revenue keyed on vat_code_final).
  */
-export function runFieldCascades(lead: Lead, fields: EnrichableField[], opts: RunFieldOptions = {}): FieldCascadeOutcome[] {
+export async function runFieldCascades(lead: Lead, fields: EnrichableField[], opts: RunFieldOptions = {}): Promise<FieldCascadeOutcome[]> {
   const extraction = opts.extraction ?? (opts.body ? extractFromBody(opts.body, lead) : undefined);
-  return fields.map((f) => {
+  const out: FieldCascadeOutcome[] = [];
+  for (const f of fields) {
     const descriptor = FIELD_BY_NAME.get(f);
     if (!descriptor) throw new Error(`unknown enrichment field: ${f}`);
-    return runOne(lead, descriptor, extraction, opts);
-  });
+    out.push(await runOne(lead, descriptor, extraction, opts));
+  }
+  return out;
 }

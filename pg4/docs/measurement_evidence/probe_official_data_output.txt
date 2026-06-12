@@ -1,0 +1,10 @@
+{
+  "input": "output/r12_maps_pd_province_full_enriched_free.jsonl",
+  "sampled": 50,
+  "sites_fetched": 49,
+  "vat_from_site": "38 (77.6% of fetched)",
+  "fatturatoitalia_page": "22 (57.9% of VAT)",
+  "revenue": "22 (57.9% of VAT, 44.9% of fetched)",
+  "employees": "19 (50.0% of VAT)",
+  "cost_eur": 0
+}

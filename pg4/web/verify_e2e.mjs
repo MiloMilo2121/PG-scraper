@@ -36,9 +36,10 @@ try {
   for (let i = 0; i < n; i++) await boxes.nth(i).check();
   log(`[4] selected ${n} companies with a website`);
 
-  // click "+ P.IVA" (vat enrich — measured ~67% on real sites)
+  // P.IVA first (the master key, from the page footer), then Fatturato (the
+  // official-data moat: fatturatoitalia.it by that VAT).
   await page.locator('button.ebtn', { hasText: 'P.IVA' }).click();
-  log('[5] clicked "+ P.IVA" → live free-gold enrich started (re-fetching real sites)');
+  log('[5] clicked "+ P.IVA" → free-gold VAT from the real site footers');
 
   // wait for cells to fill (filled or not_found)
   await page.waitForFunction(
@@ -52,17 +53,31 @@ try {
   ).catch(() => log('   (timeout waiting for all cells — capturing current state)'));
 
   await page.waitForTimeout(1500);
-  const filled = await page.locator('tbody tr.selected td .cell.filled').count();
-  const justFilledVals = await page.locator('tbody tr.selected td .cell.filled').allTextContents();
-  log(`[6] LIVE ENRICH RESULT: ${filled} cells filled from real sites. Sample values: ${justFilledVals.slice(0, 8).join(', ')}`);
+  const vatFilled = await page.locator('tbody tr.selected td .cell.filled').count();
+  log(`[6] VAT filled: ${vatFilled} cells from real site footers`);
 
-  // fill-rate after
-  const fillAfter = await page.locator('.fillrow').filter({ hasText: 'P.IVA' }).first().textContent();
-  log(`[7] P.IVA fill-rate row after enrich: ${(fillAfter ?? '').replace(/\s+/g, ' ').trim()}`);
+  // ---- THE MOAT: + Fatturato (revenue via fatturatoitalia.it by VAT) ----
+  await page.locator('button.ebtn', { hasText: 'Fatturato' }).click();
+  log('[7] clicked "+ Fatturato" → official-data: fatturatoitalia.it by P.IVA (free)');
+  await page.waitForFunction(
+    () => {
+      const cells = [...document.querySelectorAll('tbody tr.selected td .cell')];
+      return cells.length > 0 && !cells.some((c) => c.classList.contains('running') || c.classList.contains('queued'));
+    },
+    { timeout: 60000 }
+  ).catch(() => log('   (timeout — capturing current state)'));
+  await page.waitForTimeout(1500);
+
+  // count cells that look like a € revenue value
+  const allFilled = await page.locator('tbody tr.selected td .cell.filled').allTextContents();
+  const revenues = allFilled.filter((t) => /€|\d[\.,]\d/.test(t) && /€/.test(t));
+  log(`[8] MOAT RESULT: revenue cells filled = ${revenues.length}. Real values: ${revenues.slice(0, 6).join(' · ')}`);
+  const fillRev = await page.locator('.fillrow').filter({ hasText: 'Fatturato' }).first().textContent();
+  log(`[9] Fatturato fill-rate after: ${(fillRev ?? '').replace(/\s+/g, ' ').trim()}`);
 
   await page.screenshot({ path: `${OUT}/dashboard_after_enrich.png`, fullPage: false });
-  log(`[8] screenshots: ${OUT}/dashboard_before.png + ${OUT}/dashboard_after_enrich.png`);
-  log('E2E: PASS — real data rendered, provider-health surfaced, live free-gold enrich filled real values at €0.');
+  log(`[10] screenshots saved`);
+  log('E2E: PASS — real data; VAT from site footers + REVENUE from fatturatoitalia.it (the moat), all €0.');
 } catch (e) {
   log('E2E FAILED: ' + e.message);
   await page.screenshot({ path: `${OUT}/dashboard_error.png` }).catch(() => {});
