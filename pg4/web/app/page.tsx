@@ -201,7 +201,10 @@ export default function Dashboard() {
 
   function cellOf(id: string, fieldKey: string, col: string, row: Company) {
     const st = cells[id]?.[fieldKey];
-    const existing = row[col] as string | undefined;
+    // P.IVA column falls back to the input vat_code so a revenue sourced from
+    // the input VAT (no website → no enriched vat_code_final) still shows the
+    // VAT it was keyed on — revenue is never "without a P.IVA".
+    const existing = (fieldKey === 'vat' ? (row.vat_code_final ?? (row as Record<string, unknown>).vat_code) : row[col]) as string | undefined;
     if (st?.status === 'running' || st?.status === 'queued')
       return (
         <span className={`cell ${st.status}`}>

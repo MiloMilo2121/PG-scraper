@@ -34,7 +34,7 @@ export interface FatturatoItaliaParseResult {
   revenue_year?: string;
   employees?: string;
   utile?: number;
-  /** Full year history from the JS chart vars, newest-first as published. */
+  /** Full year history from the JS chart vars, OLDEST-first as published. */
   history: FIFinancialYear[];
   source_url?: string;
   /** 0..1 — how confident we are this parse is real & complete. */
@@ -160,12 +160,23 @@ export function parseFatturatoItaliaPage(
   const history = extractChartData(html);
   const grid = parseGrid($);
 
-  // Headline revenue: chart latest (positive) wins, else grid.
+  // Headline revenue: the MOST RECENT labeled year with a positive revenue
+  // from the chart wins, else grid.
+  //
+  // BUG FIX (2026-06-12): the chart arrays are published OLDEST-FIRST — verified
+  // on real pages, e.g. P.IVA 02440120281 has labelChart
+  // ['2020','2021','2022','2023','2024'] with datiChartFatturato
+  // [35550,24903,53822,37769,51619]. The previous `history.find(first positive)`
+  // returned history[0] = 2020 (€35.550) for EVERY company instead of 2024
+  // (€51.619) — a systematic wrong-year error. Anchor on max(year), never on
+  // array position, so the order can never bite again.
   let revenue_amount: number | undefined;
   let revenue_year: string | undefined;
   let utile: number | undefined = grid.utile_current;
 
-  const latestChart = history.find((h) => h.fatturato !== undefined);
+  const latestChart = history
+    .filter((h) => h.fatturato !== undefined)
+    .reduce<FIFinancialYear | undefined>((best, h) => (best === undefined || h.year > best.year ? h : best), undefined);
   if (latestChart) {
     revenue_amount = latestChart.fatturato;
     revenue_year = String(latestChart.year);

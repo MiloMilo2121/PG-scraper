@@ -4,6 +4,55 @@
 sources, free. What was wired, the measured hit-rates, the INI-PEC decision.
 2026-06-12.*
 
+## ⚠️ CORRECTION (2026-06-12) — wrong-year bug found by sample-check, fixed
+
+The first build of this spine shipped a **systematic wrong-year bug** in the
+revenue extraction, caught by Marco's manual sample-check (the exact discipline
+the whole project exists to enforce). The numbers in the original demo
+(€35.550 · €630.283 · €35.291) were the companies' **2020** figures, not the
+most recent year — **retracted**.
+
+**Root cause (confirmed on the real HTML, not guessed):** fatturatoitalia's
+chart arrays are published **OLDEST-FIRST**. For P.IVA 02440120281:
+`labelChart=['2020','2021','2022','2023','2024']`,
+`datiChartFatturato=[35550,24903,53822,37769,51619]`. The parser did
+`history.find(first positive)` → `history[0]` = 2020 (€35.550) for **every**
+company. It was systematic, not conditional.
+
+**Fix:** anchor on `max(year)` (most recent labeled year), never on array
+position (`fatturato_italia_parser.ts`). **Golden regression test** locks it:
+Euganea 02440120281 → € 51.619 (2024), and must never return € 35.550 again.
+The pre-existing parser fixture was newest-first, so the test passed while the
+real (oldest-first) site was wrong — the fixture didn't match reality. The new
+golden fixture uses the real oldest-first data.
+
+**Corrected, source-verified values** (`docs/measurement_evidence/fatturato_year_fix_evidence.txt`):
+- Euganea 02440120281 → **€ 51.619 (2024)** — matches the source exactly (was €35.550).
+- Metroquadro 02553730280 → **€ 1.715.785 (2024)** (was €630.283); parsed
+  2022=€537.000 matches Marco's independent external check exactly.
+- 02580520282 → **€ 16.496 (2024)** (was €35.291).
+
+**Two related findings, both resolved:**
+- *Revenue without a visible P.IVA* (Bordignon Service, 3b Srl, …): NOT a
+  wrong-company name-match — `fetchFatturatoItalia` is **VAT-only** (URL
+  `fatturatoitalia.it/<vat>`, checksum-gated), it can never match by name. Those
+  companies have an **input `vat_code`** (668/1492 do); `resolveVat` used it, so
+  the revenue is correct for that VAT — the column just showed the (empty)
+  enriched `vat_code_final`. Fixed: the P.IVA column now shows
+  `vat_code_final ?? vat_code`, so every revenue shows its VAT.
+- *Confidence nuance (honest limit):* revenue keyed on the **input** scrape VAT
+  is lower-confidence than revenue keyed on the firm's **own-site** VAT — the
+  input VAT is unverified (a mis-scraped but checksum-valid VAT would fetch a
+  different company). Both are checksum-valid; a future improvement is to
+  VIES-validate the input VAT before trusting it for firmographics.
+
+The moat *concept* holds (VAT→official-data chain is valid, the VAT match is
+correct, the source has the right number) — but the demo evidence was wrong and
+is retracted; the extraction is now fixed + regression-locked.
+
+---
+
+
 ## What was wired (REAL, free, network)
 
 The per-field framework's dormant registry tiers are now real steps:
@@ -45,8 +94,11 @@ fatturatoitalia (smaller/younger ones aren't), so 100% was never on the table;
 45%-of-website-having at €0 is the honest, strong result.
 
 **E2E in the browser** (`web/verify_e2e.mjs`): select 5 PD companies → `+ P.IVA`
-(5/5 from site footers) → `+ Fatturato` → **3 real revenues: €35.550 · €630.283
-· €35.291** from fatturatoitalia.it, live, €0. Screenshots in `docs/frontend_evidence/`.
+(5/5 from site footers) → `+ Fatturato` → real revenues from fatturatoitalia.it,
+live, €0. NOTE: the original screenshots showed the wrong-year values (€35.550 …)
+— after the fix the same companies return their **2024** figures (Euganea
+€51.619 etc.); re-capture the screenshot after re-running. Screenshots in
+`docs/frontend_evidence/`.
 
 ## The footgun fix (shipped first)
 

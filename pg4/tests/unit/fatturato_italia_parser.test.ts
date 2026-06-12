@@ -75,3 +75,25 @@ describe('parseFatturatoItaliaPage — guards', () => {
     expect(r.revenue_amount).toBeUndefined();
   });
 });
+
+describe('GOLDEN regression — most-recent-year selection (the wrong-year bug)', () => {
+  // Real chart vars from fatturatoitalia.it/02440120281, OLDEST-FIRST. The bug:
+  // history.find(first positive) returned 2020 (€35.550) for every company.
+  // Marco's sample-check caught it (dashboard showed €35.550; the 2024 figure
+  // is €51.619). This locks the fix: headline revenue = the MOST RECENT year.
+  const r = parseFatturatoItaliaPage(read('fatturato_euganea_oldest_first.html'));
+
+  it('returns the MOST RECENT year (2024), not the oldest (2020)', () => {
+    expect(r.revenue_year).toBe('2024');
+    expect(r.revenue_amount).toBe(51_619);
+    expect(r.revenue).toBe('€ 51.619');
+    // the specific wrong value must never come back
+    expect(r.revenue_amount).not.toBe(35_550);
+  });
+
+  it('still preserves the full oldest-first history', () => {
+    expect(r.history.map((h) => h.year)).toEqual([2020, 2021, 2022, 2023, 2024]);
+    expect(r.history[0]).toMatchObject({ year: 2020, fatturato: 35_550 });
+    expect(r.history[4]).toMatchObject({ year: 2024, fatturato: 51_619 });
+  });
+});
