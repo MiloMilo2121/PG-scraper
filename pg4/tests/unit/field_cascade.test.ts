@@ -7,6 +7,10 @@ import { runFieldCascade, runFieldCascades, runFieldDescriptor } from '../../src
 import { FIELD_REGISTRY, fieldHasFreeTier } from '../../src/enrichment/fields/field_registry';
 import type { EnrichmentFieldDescriptor, EnrichmentStep } from '../../src/enrichment/fields/field_types';
 
+// Keep this suite OFFLINE: with VIES off, vat.vies_confirmed resolves the
+// footer VAT at low confidence without any network call.
+process.env.OFFICIAL_DATA_VIES_ENABLED = 'false';
+
 const FIX = path.join(__dirname, '..', 'fixtures', 'extract');
 const load = (n: string): string => fs.readFileSync(path.join(FIX, n), 'utf8');
 const lead = (o: Partial<Lead>): Lead => ({ company_name: 'X', ...o });
@@ -26,8 +30,8 @@ describe('per-field cascade — free tiers (€0, from the already-fetched body)
 
   it('resolves VAT (checksum-valid) and socials from the body', async () => {
     const lv = lead({ company_name: 'Verdi', official_website: 'https://verdicostruzioni.it' });
-    // VAT resolves from the body (0.9) and stops — VIES (the next step) is not
-    // reached, so this test makes no network call.
+    // With VIES off, vat.vies_confirmed returns the footer VAT at 0.6
+    // (unconfirmed) offline — no network call.
     expect((await runFieldCascade(lv, 'vat', { body: load('it_site_legal_footer_piva.html') })).resolved).toBe(true);
     expect(lv.vat_code_final).toBe('01234567897');
 
@@ -114,11 +118,11 @@ describe('per-field cascade — gating (the safety triple-gate)', () => {
 });
 
 describe('registry shape', () => {
-  it('free body-tier for body-parse fields; revenue/employees are official-data (tier-1), not free-from-body', () => {
+  it('free body-tier for body-parse fields; VAT/revenue/employees are official-data (tier-1)', () => {
     expect(fieldHasFreeTier('email')).toBe(true);
     expect(fieldHasFreeTier('instagram')).toBe(true);
-    expect(fieldHasFreeTier('vat')).toBe(true);
-    expect(fieldHasFreeTier('revenue')).toBe(false); // fatturatoitalia is tier-1, not body-tier-0
+    expect(fieldHasFreeTier('vat')).toBe(false); // now VIES-confirmed (tier-1), not pure body-tier-0
+    expect(fieldHasFreeTier('revenue')).toBe(false); // fatturatoitalia is tier-1
     expect(fieldHasFreeTier('employees')).toBe(false);
   });
 });

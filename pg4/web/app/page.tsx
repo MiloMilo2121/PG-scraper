@@ -29,7 +29,7 @@ const FILL_LABELS: Record<string, string> = {
 
 const MAX_ENRICH = 200; // mirrors the server's ENRICH_MAX_SELECTION (footgun guard)
 
-type CellMap = Record<string, Record<string, { status: CellStatus; value?: string; source?: string }>>; // companyId → field → state
+type CellMap = Record<string, Record<string, { status: CellStatus; value?: string; source?: string; confidence?: number }>>; // companyId → field → state
 
 export default function Dashboard() {
   const [health, setHealth] = useState<{ ok: boolean; companies: number; seed: string } | null>(null);
@@ -153,7 +153,7 @@ export default function Dashboard() {
         const n = { ...prev };
         for (const it of job.items) {
           for (const [f, st] of Object.entries(it.cells)) {
-            n[it.companyId] = { ...(n[it.companyId] ?? {}), [f]: { status: st.status, value: st.value, source: st.source } };
+            n[it.companyId] = { ...(n[it.companyId] ?? {}), [f]: { status: st.status, value: st.value, source: st.source, confidence: st.confidence } };
           }
         }
         return n;
@@ -214,9 +214,11 @@ export default function Dashboard() {
       );
     if (st?.status === 'failed') return <span className="cell failed" title={st.value}>errore</span>;
     if (st?.status === 'filled' || existing) {
-      // evidence-lite: hover shows the provenance (the first step toward the
-      // full Q4 drill-down — source + how the value was found).
-      const evidence = st?.source ? `fonte: ${st.source}` : 'da dati seed';
+      // evidence-lite: hover shows provenance + confidence (the A.3 drill-down:
+      // WHERE the value came from and HOW trustworthy). A footer mailto ≠ a
+      // pattern guess; a site VAT ≠ a vies-unconfirmed input VAT.
+      const conf = typeof st?.confidence === 'number' ? ` · conf ${(st.confidence * 100).toFixed(0)}%` : '';
+      const evidence = st?.source ? `fonte: ${st.source}${conf}` : 'da dati seed';
       return <span className={`cell filled ${st?.status === 'filled' ? 'justfilled' : ''}`} title={evidence}>{(st?.value ?? existing) as string}</span>;
     }
     if (st?.status === 'not_found') return <span className="cell not_found">—</span>;

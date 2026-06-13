@@ -22,7 +22,7 @@ export interface StepResult {
   source: string;
   costEur: number;
   /** Set when a step could not run (disabled / gated / no input). */
-  skippedReason?: 'disabled' | 'paid_gated' | 'budget' | 'no_input' | 'no_value';
+  skippedReason?: 'disabled' | 'paid_gated' | 'budget' | 'no_input' | 'no_value' | 'vat_unverified';
 }
 
 /** Inputs every step receives. The body extraction is computed ONCE (free-gold). */

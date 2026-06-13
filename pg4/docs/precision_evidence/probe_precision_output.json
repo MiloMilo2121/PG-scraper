@@ -1,0 +1,322 @@
+{
+  "report": {
+    "input": "output/r12_maps_pd_province_full_enriched_free.jsonl",
+    "sites_fetched": 23,
+    "email": {
+      "fill_rate": "12/23 (52.2%)",
+      "precision_same_domain": "12/12 (100.0%)",
+      "role_or_generic": "10/12 (83.3%) — company-owned but not a person"
+    },
+    "vat": {
+      "fill_rate": "18/23 (78.3%)",
+      "precision_vies_name_match": "8/13 verifiable (61.5%)",
+      "mismatch_wrong_company": "5",
+      "vies_no_name_unverifiable": "5"
+    },
+    "social": {
+      "fill_rate": "14/23 (60.9%)",
+      "precision_profile_shaped": "14/14 (100.0%) — ownership needs eyeball"
+    },
+    "cost_eur": 0
+  },
+  "samples": [
+    {
+      "company": "Agenzia Immobiliare Euganea Case",
+      "site": "euganeacase.com",
+      "social": {
+        "value": "https://facebook.com/euganeacase",
+        "profile_shaped": true
+      },
+      "vat": {
+        "value": "02440120281",
+        "vies_name": null,
+        "verdict": "vies_no_name"
+      }
+    },
+    {
+      "company": "Eur Duomo Immobiliare S.a.s. di Pier Alfredo Formentin & C.",
+      "site": "eurduomo.it",
+      "vat": {
+        "value": "00332240282",
+        "vies_name": null,
+        "verdict": "vies_no_name"
+      }
+    },
+    {
+      "company": "Star Immobiliare S.r.l.",
+      "site": "starimmobiliare.it"
+    },
+    {
+      "company": "Soluzione Casa di Agius Magda",
+      "site": "soluzionecasa1993.it",
+      "email": {
+        "value": "info@soluzionecasa1993.it",
+        "same_domain": true,
+        "role": true
+      },
+      "vat": {
+        "value": "05136050282",
+        "vies_name": null,
+        "verdict": "vies_no_name"
+      }
+    },
+    {
+      "company": "Agenzia Immobiliare Pinto Roberto",
+      "site": "pintocasa.it",
+      "email": {
+        "value": "info@pintocasa.it",
+        "same_domain": true,
+        "role": true
+      },
+      "vat": {
+        "value": "03779330269",
+        "vies_name": "P.P. S.A.S. DI PINTO ROBERTO & C.",
+        "verdict": "match"
+      }
+    },
+    {
+      "company": "Trevisan Michele",
+      "site": "trevisanmichele.it",
+      "social": {
+        "value": "https://instagram.com/micheletrevisan_ortopedico",
+        "profile_shaped": true
+      },
+      "vat": {
+        "value": "05014630239",
+        "vies_name": null,
+        "verdict": "vies_no_name"
+      }
+    },
+    {
+      "company": "FenixGroup Real Estate",
+      "site": "grfenix.com",
+      "social": {
+        "value": "https://instagram.com/fenixgrouprealestate",
+        "profile_shaped": true
+      },
+      "vat": {
+        "value": "12598180961",
+        "vies_name": "JDT S.R.L.",
+        "verdict": "MISMATCH"
+      }
+    },
+    {
+      "company": "Agenzia Immobiliare Nuova Casa S.n.C.",
+      "site": "nuovacasapadova.it",
+      "email": {
+        "value": "info@nuovacasapadova.it",
+        "same_domain": true,
+        "role": true
+      },
+      "vat": {
+        "value": "01768980284",
+        "vies_name": null,
+        "verdict": "vies_no_name"
+      }
+    },
+    {
+      "company": "Studio 2L Immobiliare - Affitti e Compravendite residenziali e commerciali",
+      "site": "studio2limmobiliare.it"
+    },
+    {
+      "company": "Immobiliare Edilbaraldo s.r.l.",
+      "site": "edilbaraldo.it",
+      "email": {
+        "value": "info@edilbaraldo.it",
+        "same_domain": true,
+        "role": true
+      },
+      "social": {
+        "value": "https://facebook.com/edilbaraldo",
+        "profile_shaped": true
+      },
+      "vat": {
+        "value": "04019620287",
+        "vies_name": "IMMOBILIARE EDILBARALDO S.R.L.",
+        "verdict": "match"
+      }
+    },
+    {
+      "company": "Iperverde Articoli per Giardinaggio",
+      "site": "iperverde.eu",
+      "vat": {
+        "value": "02420940286",
+        "vies_name": "FRIZZARIN MARCELLO & C. SNC",
+        "verdict": "MISMATCH"
+      }
+    },
+    {
+      "company": "Calzature Zanin",
+      "site": "calzaturezanin.it",
+      "social": {
+        "value": "https://instagram.com/calzaturezanin",
+        "profile_shaped": true
+      },
+      "vat": {
+        "value": "04866590286",
+        "vies_name": "CALZATURE ZANIN DI PITTARELLO ELENA",
+        "verdict": "match"
+      }
+    },
+    {
+      "company": "Iad_Archimedia Immobiliare Tencarola_Agenzia Immobiliare Tencarola",
+      "site": "archimediaimmobiliare.it",
+      "email": {
+        "value": "info@archimediaimmobiliare.it",
+        "same_domain": true,
+        "role": true
+      },
+      "social": {
+        "value": "https://instagram.com/archimedia_immobiliare",
+        "profile_shaped": true
+      },
+      "vat": {
+        "value": "04557170281",
+        "vies_name": "BLUREBUS S.R.L.",
+        "verdict": "MISMATCH"
+      }
+    },
+    {
+      "company": "Bosco Costruzioni",
+      "site": "boscocostruzioni.it",
+      "email": {
+        "value": "direzione@boscocostruzioni.it",
+        "same_domain": true,
+        "role": false
+      },
+      "social": {
+        "value": "https://instagram.com/boscocostruzioni",
+        "profile_shaped": true
+      },
+      "vat": {
+        "value": "00622790285",
+        "vies_name": "BOSCO COSTRUZIONI S.R.L.",
+        "verdict": "match"
+      }
+    },
+    {
+      "company": "Signor Prestito - Padova",
+      "site": "signorprestito.it",
+      "email": {
+        "value": "info@signorprestito.it",
+        "same_domain": true,
+        "role": true
+      },
+      "social": {
+        "value": "https://facebook.com/SignorPrestito",
+        "profile_shaped": true
+      },
+      "vat": {
+        "value": "04739190231",
+        "vies_name": "GRUPPO IVA SIGNOR PRESTITO SPA",
+        "verdict": "match"
+      }
+    },
+    {
+      "company": "andromeda srls",
+      "site": "andromeda.com"
+    },
+    {
+      "company": "Rivaluta Srl",
+      "site": "rivaluta.eu",
+      "email": {
+        "value": "amministrazione@rivaluta.eu",
+        "same_domain": true,
+        "role": true
+      },
+      "social": {
+        "value": "https://linkedin.com/company/rivaluta-s-r-l/about",
+        "profile_shaped": true
+      },
+      "vat": {
+        "value": "04030840245",
+        "vies_name": "RIVALUTA S.R.L.",
+        "verdict": "match"
+      }
+    },
+    {
+      "company": "Marcolongo Arredamenti",
+      "site": "marcolongoarredamenti.it",
+      "email": {
+        "value": "info@marcolongoarredamenti.it",
+        "same_domain": true,
+        "role": true
+      },
+      "social": {
+        "value": "https://facebook.com/pages/Marcolongo-Arredamenti-Padova/182011975294289",
+        "profile_shaped": true
+      },
+      "vat": {
+        "value": "03632410282",
+        "vies_name": "MARCOLONGO ARREDAMENTI SRL",
+        "verdict": "match"
+      }
+    },
+    {
+      "company": "Progetto Casa Sas Di Scapin Mauro & C.",
+      "site": "progettocasainterni.it",
+      "email": {
+        "value": "info@progettocasainterni.it",
+        "same_domain": true,
+        "role": true
+      }
+    },
+    {
+      "company": "Alessio Nicoletto",
+      "site": "agenziatutelaimmobiliare.com",
+      "email": {
+        "value": "info@agenziatutelaimmobiliare.com",
+        "same_domain": true,
+        "role": true
+      },
+      "social": {
+        "value": "https://instagram.com/alessionicoletto",
+        "profile_shaped": true
+      }
+    },
+    {
+      "company": "Impresoft Engage",
+      "site": "impresoftengage.com",
+      "social": {
+        "value": "https://linkedin.com/company/impresoft-engage",
+        "profile_shaped": true
+      },
+      "vat": {
+        "value": "03184500241",
+        "vies_name": "IMPRESOFT ENGAGE S.R.L.",
+        "verdict": "match"
+      }
+    },
+    {
+      "company": "Centro S. Antonio Agorà - Doposcuola Cittadella",
+      "site": "cooplagoccia.eu",
+      "email": {
+        "value": "cse.agora@cooplagoccia.eu",
+        "same_domain": true,
+        "role": false
+      },
+      "social": {
+        "value": "https://facebook.com/Servizi-Sociali-La-Goccia-136371930443392",
+        "profile_shaped": true
+      },
+      "vat": {
+        "value": "00882110240",
+        "vies_name": "SERVIZI SOCIALI LA GOCCIA SOCIETA' COOPERATIVA SOCIALE A R.L",
+        "verdict": "MISMATCH"
+      }
+    },
+    {
+      "company": "Terme Boutique House",
+      "site": "termeabanoterme.it",
+      "social": {
+        "value": "https://instagram.com/atlantictermeabano",
+        "profile_shaped": true
+      },
+      "vat": {
+        "value": "02178780280",
+        "vies_name": "GESTIONE ATLANTIC S.N.C. DI CARRARO MATTEO & C.",
+        "verdict": "MISMATCH"
+      }
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+CMD: pnpm exec tsx src/scripts/probe_precision.ts --n 24

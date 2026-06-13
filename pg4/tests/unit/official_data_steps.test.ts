@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Lead } from '../../src/types/lead';
 import { fetchFatturatoItalia } from '../../src/enrichment/financial/fatturato_italia_fetch';
 import { runFieldCascade } from '../../src/enrichment/fields/run_field_cascade';
+import { resolveVat, companyNameMatches } from '../../src/enrichment/fields/field_registry';
 
 /**
  * Phase 3 official-data steps (VIES + fatturatoitalia) — wiring + SAFETY.
@@ -20,6 +21,45 @@ describe('fetchFatturatoItalia — checksum gate (no network on bad VAT)', () =>
   });
 });
 
+describe('A.2 — companyNameMatches (VAT precision via VIES name, REAL name pairs)', () => {
+  // The VAT precision fix selects the candidate whose VIES official name matches
+  // the company. Pairs below are real-shaped: VIES upper-case + legal form vs the
+  // directory name. A match ⇒ the footer VAT is the company's; a mismatch ⇒ it's
+  // the accountant's/partner's cited VAT (the ~28% the probe found).
+  it('matches the company across legal-form + case (the VAT is the company own)', () => {
+    expect(companyNameMatches('AGENZIA IMMOBILIARE EUGANEA CASE SRL', 'Agenzia Immobiliare Euganea Case')).toBe(true);
+    expect(companyNameMatches('IMMOBILIARE METROQUADRO A RESPONSABILITA’ LIMITATA', 'Immobiliare Metroquadro')).toBe(true);
+  });
+  it('REJECTS a different company (footer cites the accountant/partner VAT)', () => {
+    expect(companyNameMatches('STUDIO COMMERCIALE BIANCHI E ASSOCIATI SRL', 'Agenzia Immobiliare Euganea Case')).toBe(false);
+    expect(companyNameMatches('WEB AGENCY PIXEL SRL', 'Immobiliare Metroquadro')).toBe(false);
+  });
+  it('handles empty/garbage', () => {
+    expect(companyNameMatches(undefined, 'X')).toBe(false);
+    expect(companyNameMatches('SRL', 'SRL')).toBe(false); // only the legal form → no real tokens
+  });
+});
+
+describe('A.1 — resolveVat provenance (site vs unverified input, no network)', () => {
+  const VALID = '02440120281'; // checksum-valid
+  it('a footer/enriched VAT is provenance=site (trusted)', () => {
+    expect(resolveVat({ lead: lead({ vat_code_final: VALID }), paidEnabled: false })).toEqual({ vat: VALID, provenance: 'site' });
+    expect(resolveVat({ lead: lead({}), extraction: { vat_candidates: [VALID], phones: [] }, paidEnabled: false }))
+      .toEqual({ vat: VALID, provenance: 'site' });
+  });
+  it('an input-only VAT is provenance=input (must be VIES-gated before trust)', () => {
+    expect(resolveVat({ lead: lead({ vat_code: VALID }), paidEnabled: false })).toEqual({ vat: VALID, provenance: 'input' });
+  });
+  it('site VAT wins over input VAT', () => {
+    expect(resolveVat({ lead: lead({ vat_code_final: VALID, vat_code: '12345678903' }), paidEnabled: false }))
+      .toMatchObject({ provenance: 'site' });
+  });
+  it('no checksum-valid VAT anywhere → undefined', () => {
+    expect(resolveVat({ lead: lead({ vat_code: '01234567890' }), paidEnabled: false })).toBeUndefined(); // bad checksum
+    expect(resolveVat({ lead: lead({}), paidEnabled: false })).toBeUndefined();
+  });
+});
+
 describe('official-data steps — gate on missing VAT (no network)', () => {
   it('revenue step short-circuits to no_input when no VAT is resolvable', async () => {
     const out = await runFieldCascade(lead({ company_name: 'NoVat' }), 'revenue', {});
@@ -29,12 +69,12 @@ describe('official-data steps — gate on missing VAT (no network)', () => {
     expect(step.reason).toBe('no_input');
   });
 
-  it('VAT cascade: body checksum step + VIES fallback are both wired (no body, no input → unresolved, no network)', async () => {
+  it('VAT cascade: vies-confirming resolver wired; no body, no input → no_input, no network', async () => {
     const out = await runFieldCascade(lead({ company_name: 'NoVat' }), 'vat', {});
     expect(out.resolved).toBe(false);
-    expect(out.steps.map((s) => s.id)).toEqual(['vat.body_checksum', 'vat.vies_harden']);
-    // VIES ran but found no VAT to validate → no_input (it never hit the network)
-    expect(out.steps.find((s) => s.id === 'vat.vies_harden')!.reason).toBe('no_input');
+    expect(out.steps.map((s) => s.id)).toEqual(['vat.vies_confirmed']);
+    // no candidates → no_input, returned before any VIES network call
+    expect(out.steps[0].reason).toBe('no_input');
   });
 
   it('official-data steps are tier-1 FREE (not paid) and enabled by default', async () => {

@@ -918,6 +918,12 @@ Apri `http://localhost:3000`. Cosa puoi fare:
   fatturatoitalia sono gratis; i provider a pagamento restano disabilitati.
   Misurato: ~45% delle aziende con sito danno fatturato reale (vedi
   `docs/official_data_report.md`). Max 200 righe per arricchimento (guard).
+- **Fidati della confidenza, non solo del valore**: passa il mouse su una cella
+  piena → mostra **fonte + confidenza**. P.IVA: `vies_confirmed · 95%` (VIES ha
+  confermato che la P.IVA è dell'azienda) vs `footer_unconfirmed · 60%` (presa
+  dal footer, ma VIES non copre le P.IVA solo-domestiche, quindi non confermata).
+  Il fill-rate dice che il campo è pieno; la confidenza dice quanto fidarti.
+  Distinzione chiave — vedi `docs/quality_pass_report.md` (fill-rate vs precisione).
 - **Leggere la verità del sistema**: pannello "Salute provider" mostra i
   provider morti (dns_mx/crtsh, 0% successi) — segnalati, non nascosti; le barre
   "Copertura campi" salgono dopo ogni arricchimento; coda dedup-review visibile.

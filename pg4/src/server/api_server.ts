@@ -30,7 +30,7 @@ interface EnrichJob {
   status: 'running' | 'done' | 'error';
   costEur: number;
   error?: string;
-  items: Map<string, { companyId: string; cells: Record<string, { status: CellStatus; value?: string; source?: string }> }>;
+  items: Map<string, { companyId: string; cells: Record<string, { status: CellStatus; value?: string; source?: string; confidence?: number }> }>;
 }
 const jobs = new Map<string, EnrichJob>();
 let jobSeq = 0;
@@ -171,7 +171,7 @@ async function enrichOneCompany(job: EnrichJob, cid: string): Promise<void> {
       if (outcome.resolved && outcome.value) {
         const target = FIELD_BY_NAME.get(field)!.target as string;
         seed.db.patchCompany(DEV_TENANT_ID, cid, { [target]: outcome.value });
-        item.cells[f] = { status: 'filled', value: outcome.value, source: outcome.source };
+        item.cells[f] = { status: 'filled', value: outcome.value, source: outcome.source, confidence: outcome.confidence };
       } else {
         item.cells[f] = { status: 'not_found' };
       }

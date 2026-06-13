@@ -51,7 +51,7 @@ export interface EnrichJob {
   fields: string[];
   costEur: number;
   error?: string;
-  items: Array<{ companyId: string; cells: Record<string, { status: CellStatus; value?: string; source?: string }> }>;
+  items: Array<{ companyId: string; cells: Record<string, { status: CellStatus; value?: string; source?: string; confidence?: number }> }>;
 }
 
 async function get<T>(path: string): Promise<T> {
