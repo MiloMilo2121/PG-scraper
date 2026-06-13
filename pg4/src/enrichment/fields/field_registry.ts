@@ -181,11 +181,15 @@ const fatturatoItaliaStep = (field: 'revenue' | 'employees', confFloor: number):
     // A.1 — an UNVERIFIED input VAT must be VIES-checked before we trust it to
     // fetch a company's firmographics; otherwise a mis-scraped (but checksum-
     // valid) VAT silently returns the WRONG company's revenue.
-    let tag: string = rv.provenance; // 'site' is already trusted (firm's own page)
-    let confCap = 1;
+    // B.2 — CONFIDENCE INHERITANCE: a downstream firmographic is only as trustworthy
+    // as the VAT KEY that fetched it (a wrong key = the wrong company's revenue). So
+    // `confCap` carries the key's trust into the value's confidence:
+    //   own-page VAT (site) → 0.9 · VIES-confirmed input → 0.95 · VIES-down input → 0.5.
+    let tag: string = rv.provenance; // 'site' = the firm's own page (trusted, not independently VIES-confirmed here)
+    let confCap = 0.9;
     if (rv.provenance === 'input') {
       const v = await checkVatViaVies({ vatNumber: rv.vat, countryCode: 'IT' });
-      if (v.isValid && v.checked) tag = 'input+vies'; // VIES confirmed → trust
+      if (v.isValid && v.checked) { tag = 'input+vies'; confCap = 0.95; } // VIES confirmed → trust
       else if (v.isValid && !v.checked) { tag = 'input?vies-down'; confCap = 0.5; } // VIES unreachable → low confidence, flagged
       else return { confidence: 0, source: 'fatturatoitalia(input)', costEur: 0, skippedReason: 'vat_unverified' }; // VIES says invalid → refuse
     }
@@ -211,10 +215,17 @@ export const FIELD_REGISTRY: EnrichmentFieldDescriptor[] = [
   },
   {
     field: 'email',
+    // B.1: emailFromBody now reads a DEEPENED extraction (homepage + contact/about
+    // pages, merged by deep_pages.ts) — same-domain precision preserved, fill-rate
+    // lifted for the ~half of IT SMB sites that hide the email off the homepage.
+    // The pattern-guess tier (info@domain) is wired-but-DISABLED on purpose: with
+    // dns_mx removed (0%-useful) an unverified guess is a precision risk on the
+    // verified base — exactly what Phase A fought. Activate only with a real
+    // verifier (SMTP/finder API), and tag it as a distinct low-confidence source.
     target: 'email_inferred',
     cascade: [
       emailFromBody,
-      disabled('email.mx_guess', 1, 0, 'dns_mx'),
+      disabled('email.pattern_guess', 1, 0, 'email:pattern_guess'),
       disabled('email.finder_api', 2, 0.02, 'email_finder'),
     ],
     ceilingEur: 0.05,

@@ -1,0 +1,41 @@
+{
+  "sample": 60,
+  "email_fill_homepage_only": {
+    "count": 28,
+    "pct": "46.7%"
+  },
+  "email_fill_deepened": {
+    "count": 30,
+    "pct": "50.0%"
+  },
+  "lift": {
+    "newly_filled": 2,
+    "of_sample": "3.3%"
+  },
+  "lift_precision": {
+    "same_domain": 2,
+    "of_lifted": "100.0%",
+    "note": "lifted emails that stayed on the firm own registrable domain (precision preserved)"
+  },
+  "cost": {
+    "extra_contact_page_fetches_total": 92,
+    "avg_per_site": "1.53",
+    "eur": 0
+  },
+  "lift_samples": [
+    {
+      "company": "Michelangelo S.n.c.",
+      "site": "https://michelangelo.net",
+      "email": "mail@michelangelo.net",
+      "sameDomain": true,
+      "pages": 3
+    },
+    {
+      "company": "Lunarossa Immobiliare",
+      "site": "http://www.lunarossaimmobiliare.com",
+      "email": "info@lunarossaimmobiliare.com",
+      "sameDomain": true,
+      "pages": 3
+    }
+  ]
+}

@@ -1,0 +1,113 @@
+{
+  "vat_keys_probed": 24,
+  "reachability": {
+    "blocked": 0,
+    "reachable": 24,
+    "blocked_pct": "0.0%"
+  },
+  "among_reachable": {
+    "has_revenue": {
+      "count": 9,
+      "pct": "37.5%"
+    },
+    "has_employees": {
+      "count": 6,
+      "pct": "25.0%"
+    },
+    "no_data": {
+      "count": 15,
+      "pct": "62.5%"
+    }
+  },
+  "multiplier_note": "1 reachable VAT key → 37.5% revenue + 25.0% employees, free. NO_DATA = ditta individuale / no bilancio filed.",
+  "spacing": "~4s/req (rate-limited; bulk free scraping is reliable only when throttled)",
+  "samples": [
+    {
+      "company": "Agenzia Immobiliare Marengo",
+      "vat": "00399020270",
+      "klass": "NO_DATA"
+    },
+    {
+      "company": "Agedi Case S.r.l.",
+      "vat": "02579740289",
+      "klass": "HAS_DATA",
+      "revenue": "€ 111.390",
+      "employees": "1"
+    },
+    {
+      "company": "Agenzia Punto Immobiliare S.a.s.",
+      "vat": "03679870281",
+      "klass": "NO_DATA"
+    },
+    {
+      "company": "Berto Vittorino",
+      "vat": "02655140289",
+      "klass": "NO_DATA"
+    },
+    {
+      "company": "Dovevivo S.p.a.",
+      "vat": "00406960732",
+      "klass": "HAS_DATA",
+      "revenue": "€ 47.115.794",
+      "employees": "100-199"
+    },
+    {
+      "company": "Immobiliare Basso S.r.l.",
+      "vat": "01773700289",
+      "klass": "HAS_DATA",
+      "revenue": "€ 440.944"
+    },
+    {
+      "company": "Kabe Intermediazioni Immobiliari",
+      "vat": "03373020282",
+      "klass": "NO_DATA"
+    },
+    {
+      "company": "Orma S.r.l.",
+      "vat": "00249870288",
+      "klass": "HAS_DATA",
+      "revenue": "€ 517.590",
+      "employees": "1"
+    },
+    {
+      "company": "R.I. S.R.L.",
+      "vat": "04608090280",
+      "klass": "HAS_DATA",
+      "revenue": "€ 1.759.580"
+    },
+    {
+      "company": "Studio Enne S.r.l.",
+      "vat": "05225530285",
+      "klass": "HAS_DATA",
+      "revenue": "€ 285.734",
+      "employees": "1"
+    },
+    {
+      "company": "Lunarossa Immobiliare S.a.s. di ",
+      "vat": "03767690286",
+      "klass": "NO_DATA"
+    },
+    {
+      "company": "Aedilis Design di Pintonello Bar",
+      "vat": "04461950281",
+      "klass": "NO_DATA"
+    },
+    {
+      "company": "Baires S.r.l.",
+      "vat": "04516710284",
+      "klass": "HAS_DATA",
+      "revenue": "€ 375.587",
+      "employees": "3-5"
+    },
+    {
+      "company": "Comax Immobiliare di Trevisan Ma",
+      "vat": "03357000284",
+      "klass": "NO_DATA"
+    },
+    {
+      "company": "Agenzia Immobiliare Veggiano di ",
+      "vat": "03922500289",
+      "klass": "NO_DATA"
+    }
+  ]
+}

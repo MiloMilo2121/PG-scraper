@@ -19,8 +19,20 @@ import { normalizeVatCode, validateItalianVatChecksum } from './vat';
 import { parseFatturatoItaliaPage } from './fatturato_italia_parser';
 import type { FatturatoItaliaParseResult } from './fatturato_italia_parser';
 import { DirectFetchProvider } from '../../providers/http/direct_fetch';
+import { RateLimiter } from '../../runtime/rate_limiter';
 
 const fetcher = new DirectFetchProvider();
+
+// MEASURED 2026-06-13: fatturatoitalia.it drops connections (status 0, empty
+// body) under burst requests — a no-delay probe of 30 VATs returned 0% while the
+// SAME VATs fetched 5/5 with ~4s spacing. So bulk free scraping is reliable ONLY
+// when throttled. This module-level limiter self-throttles ALL callers (dev
+// server pool + probes) to ~1 req / 2.5s, capacity 1 — good-citizen spacing that
+// trades volume speed for not getting silently blocked. The trade-off: a large
+// enrich selection is slow (bounded by the caller's job timeout, partial-but-true
+// results), which is correct — a fast 0%-fill is worse than a slow real fill.
+const limiter = new RateLimiter();
+limiter.configure('fatturatoitalia', 0.25, 1); // ~1 req / 4s — MEASURED reliable (2.5s still got blocked, 4s = 5/5)
 
 export interface FatturatoItaliaLookup extends FatturatoItaliaParseResult {
   vat_queried: string;
@@ -53,12 +65,13 @@ export async function fetchFatturatoItalia(
   const url = `https://www.fatturatoitalia.it/${vat}`;
   let html: string | undefined;
   try {
+    await limiter.acquire('fatturatoitalia'); // good-citizen spacing — see limiter note
     const res = await fetcher.fetch(url, { timeoutMs: opts.timeoutMs ?? 12_000 });
     html = res.html;
   } catch {
     return undefined; // transient — do not memoise a failure
   }
-  if (!html) return undefined;
+  if (!html) return undefined; // includes status-0 block (empty body) — not memoised, retryable
 
   const parsed = parseFatturatoItaliaPage(html);
   // confidence 0.4 = the generic site shell (no company resolved); require a

@@ -7,6 +7,8 @@ import { Deduplicator } from '../discovery/deduper';
 import { DirectFetchProvider } from '../providers/http/direct_fetch';
 import { runFieldCascade } from '../enrichment/fields/run_field_cascade';
 import { FIELD_BY_NAME } from '../enrichment/fields/field_registry';
+import { deepExtractFromSite } from '../enrichment/extract/deep_pages';
+import type { BodyExtraction } from '../enrichment/extract/extract_from_body';
 import type { EnrichableField } from '../api/types';
 
 /**
@@ -146,17 +148,22 @@ async function enrichOneCompany(job: EnrichJob, cid: string): Promise<void> {
   const item = job.items.get(cid)!;
   for (const f of job.fields) item.cells[f] = { status: 'running' };
 
-  // Fetch the firm's own page (free-gold body) when it has a website — the
-  // free tiers read it; the official-data steps (VIES/fatturatoitalia) fetch
-  // their own sources keyed on the VAT they find.
-  let html: string | undefined;
+  // Deepened free-gold extraction (B.1): fetch the firm's homepage AND a bounded
+  // set of its own contact/about pages ONCE, merged — the free tiers read it; the
+  // official-data steps (VIES/fatturatoitalia) fetch their own sources keyed on
+  // the VAT they find. ~half of IT SMB sites print the email only on /contatti,
+  // so deepening lifts email fill-rate WITHOUT lowering precision (same-domain
+  // enforced by the extractor on every page).
+  let extraction: BodyExtraction | undefined;
   if (row?.official_website) {
-    try {
-      const res = await FETCH.fetch(String(row.official_website), { timeoutMs: 8000 });
-      html = res.html;
-    } catch {
-      /* host down/slow → fields fall through to not_found/registry */
-    }
+    const deep = await deepExtractFromSite(String(row.official_website), async (url) => {
+      try {
+        return (await FETCH.fetch(url, { timeoutMs: 8000 })).html;
+      } catch {
+        return undefined; // host down/slow → fields fall through to not_found/registry
+      }
+    });
+    extraction = deep.extraction;
   }
 
   for (const f of job.fields) {
@@ -167,7 +174,7 @@ async function enrichOneCompany(job: EnrichJob, cid: string): Promise<void> {
     }
     try {
       const lead = { ...row } as Lead;
-      const outcome = await runFieldCascade(lead, field, { body: html });
+      const outcome = await runFieldCascade(lead, field, { extraction });
       if (outcome.resolved && outcome.value) {
         const target = FIELD_BY_NAME.get(field)!.target as string;
         seed.db.patchCompany(DEV_TENANT_ID, cid, { [target]: outcome.value });
