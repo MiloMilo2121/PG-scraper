@@ -62,6 +62,14 @@ visure data cost (operator decision — see quality_pass_b_c_report.md).
 > discovery for now. This remains the highest-leverage fix the day a paid source
 > (Registro Imprese / company-data API) is approved — it's a ~1-adapter build
 > against the ready `RegistryUniverseSource` spec.
+>
+> Scraping pass (2026-06-14, `docs/scraping_pass_report.md`): a FREE third-party
+> cross-reference to lift the VAT footer-unconfirmed 60%@0.6 was MEASURED to add
+> **0 confirmations beyond VIES** (n=15) — fatturatoitalia is filer-only and
+> overlaps VIES; the gap-covering sources (ufficiocamerale, infoimprese) gate their
+> search behind reCAPTCHA. So VAT footer-unconfirmed STAYS @0.6 on the free path;
+> gap #1 closes only via the paid official API (Openapi free-tier slice ready) or
+> captcha-solving (rejected). The structural ceilings below are unchanged by scraping.
 
 ## Structural ceilings (not bugs — don't chase them with free tools)
 - **Email free fill ~50%**: the rest publish no same-domain email (gmail / form / none).

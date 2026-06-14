@@ -925,6 +925,15 @@ Apri `http://localhost:3000`. Cosa puoi fare:
   selezione grande di + Fatturato/+ Dipend. è **lenta ma vera**, non veloce-ma-vuota.
   Se vedi tanti "non trovato" su un lotto grande, è il rate-limit, non assenza dati —
   riduci la selezione o attendi. **Mai** togliere il rate-limiter per "andare veloce".
+- **Fonti scraping di terzi — cosa NON aspettarti** (vedi `docs/scraping_pass_report.md`):
+  ufficiocamerale e infoimprese (dati Registro completi, incluse ditte individuali)
+  hanno la **ricerca protetta da reCAPTCHA** → non interrogabili a programma senza
+  risolvere captcha (scelta scartata: provenienza sporca). fatturatoitalia è
+  interrogabile per P.IVA ma ha solo i **depositanti** (~37-45%). Quindi alzare la
+  precisione P.IVA o sbloccare le ditte individuali via scraping free **non è
+  possibile** — serve l'API ufficiale a pagamento (slice free pronto in
+  `docs/openapi_slice_comparison.md`). Sono siti commerciali: i loro ToS verosimilmente
+  vietano lo scraping massivo — tieni distinto "lo uso io per arricchire" da "lo rivendo".
 - **Fidati della confidenza, non solo del valore**: passa il mouse su una cella
   piena → mostra **fonte + confidenza**. P.IVA: `vies_confirmed · 95%` (VIES ha
   confermato che la P.IVA è dell'azienda) vs `footer_unconfirmed · 60%` (presa
