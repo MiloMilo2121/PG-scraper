@@ -1,0 +1,85 @@
+{
+  "pass": 8,
+  "total": 10,
+  "results": [
+    {
+      "co": "Agenzia Immobiliare Euganea Ca",
+      "vat": "02440120281",
+      "pipeline": "€ 51.619 (2024)",
+      "page": "€ 51.619 (2024)",
+      "emp_pipe": "1",
+      "MATCH": true
+    },
+    {
+      "co": "Immobiliare Metroquadro Srl",
+      "vat": "02553730280",
+      "pipeline": "€ 1.715.785 (2024)",
+      "page": "€ 1.715.785 (2024)",
+      "emp_pipe": "3-5",
+      "MATCH": true
+    },
+    {
+      "co": "Agedi Case S.r.l.",
+      "vat": "02579740289",
+      "pipeline": "€ 111.390 (2024)",
+      "page": "€ 111.390 (2024)",
+      "MATCH": true
+    },
+    {
+      "co": "Liviana Immobiliare S.R.L.",
+      "vat": "01413520287",
+      "pipeline": "€ 127.934 (2023)",
+      "page": "€ 127.934 (2023)",
+      "emp_pipe": "1",
+      "MATCH": true
+    },
+    {
+      "co": "Arcos Immobiliare S.r.l.",
+      "vat": "03658680289",
+      "pipeline": "€ 24.719 (2024)",
+      "page": "€ 24.719 (2024)",
+      "MATCH": true
+    },
+    {
+      "co": "Cpr S.r.l.",
+      "vat": "02507070288",
+      "pipeline": "€ 2.036.043 (2024)",
+      "page": "€ 2.036.043 (2024)",
+      "emp_pipe": "1",
+      "MATCH": true
+    },
+    {
+      "co": "Immobiliare Edilbaraldo s.r.l.",
+      "vat": "04019620287",
+      "pipeline": "€ 2.128.318 (2024)",
+      "page": "€ 2.128.318 (2024)",
+      "MATCH": true
+    },
+    {
+      "co": "Agenzia Immobiliare Tecnocasa ",
+      "vat": "08365160152",
+      "pipeline": "€ 58.024.680 (2024)",
+      "page": "NO-HEADLINE",
+      "emp_pipe": "10-15",
+      "emp_page": "da 10 a 15",
+      "MATCH": false
+    },
+    {
+      "co": "Consulenti Associati Srl",
+      "vat": "03241320286",
+      "pipeline": "€ 558.438 (2023)",
+      "page": "€ 558.438 (2023)",
+      "emp_pipe": "6-9",
+      "emp_page": "da 6 a 9",
+      "MATCH": true
+    },
+    {
+      "co": "Immobiliare Baggio S.r.l.",
+      "vat": "02544120286",
+      "pipeline": "€ 1.289.353 (2024)",
+      "page": "NO-HEADLINE",
+      "emp_pipe": "6-9",
+      "MATCH": false
+    }
+  ]
+}

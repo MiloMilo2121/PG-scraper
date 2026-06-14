@@ -1,0 +1,1717 @@
+{
+  "label": "S1",
+  "comuni": [
+    "padova"
+  ],
+  "sample_size": 14,
+  "fill_rate": {
+    "email": "6/14 (43%)",
+    "instagram": "3/14 (21%)",
+    "facebook": "8/14 (57%)",
+    "linkedin": "3/14 (21%)",
+    "vat": "12/14 (86%)",
+    "pec": "1/14 (7%)",
+    "revenue": "3/14 (21%)",
+    "employees": "3/14 (21%)"
+  },
+  "bug1_maxyear": {
+    "checked": 5,
+    "pass": 5,
+    "fails": []
+  },
+  "bug2_ranges": {
+    "checked": 3,
+    "pass": 3,
+    "fails": [],
+    "samples": [
+      {
+        "co": "Agenzia Immobiliare Euganea Case",
+        "emp": "1",
+        "ok": true
+      },
+      {
+        "co": "Immobiliare Metroquadro Srl",
+        "emp": "3-5",
+        "ok": true
+      },
+      {
+        "co": "Liviana Immobiliare S.R.L.",
+        "emp": "1",
+        "ok": true
+      }
+    ]
+  },
+  "bug3_vat_honest": {
+    "confidence_all_honest": true,
+    "breakdown": [
+      {
+        "co": "Agenzia Immobiliare Euganea Case",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "Immobiliare Metroquadro Srl",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      },
+      {
+        "co": "Studio Zeta Intermediazioni Immobiliari",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "Immobiliare Brenta sas",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      },
+      {
+        "co": "Agenzia Immobiliare Florida",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "Immobiliare Giglio di Cecchinato Ornella",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "Il Trifoglio Studio Tecnico e Immobiliare",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "Agedi Case S.r.l.",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "Liviana Immobiliare S.R.L.",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "Agenzia Punto Immobiliare S.a.s. di Gianni Bacco",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      },
+      {
+        "co": "Arcos Immobiliare S.r.l.",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "Centro Casa Immobiliare di Prai Stefania",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      }
+    ]
+  },
+  "bug4_ratelimit": {
+    "rechecked_empties": 4,
+    "silent_drops": 0,
+    "genuine_no_data": 4
+  },
+  "structural_ceiling": {
+    "with_fatturato": 5,
+    "no_fatturato_genuine": 4,
+    "note": "no-fatturato should be ditte individuali / non-filers = honest empties"
+  },
+  "companies": [
+    {
+      "company_name": "Agenzia Immobiliare Euganea Case",
+      "comune": "Padova",
+      "website": "https://www.euganeacase.com",
+      "pages_fetched": 2,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/euganeacase",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "02440120281",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "value": "€ 51.619",
+          "source": "fatturatoitalia(site)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        },
+        "employees": {
+          "value": "1",
+          "source": "fatturatoitalia(site)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        }
+      },
+      "fatturato": {
+        "vat": "02440120281",
+        "revenue": "€ 51.619",
+        "revenue_year": "2024",
+        "employees": "1",
+        "history": [
+          {
+            "year": 2020,
+            "fatturato": 35550,
+            "utile": 3519
+          },
+          {
+            "year": 2021,
+            "fatturato": 24903,
+            "utile": -4314
+          },
+          {
+            "year": 2022,
+            "fatturato": 53822,
+            "utile": 13488
+          },
+          {
+            "year": 2023,
+            "fatturato": 37769,
+            "utile": -11519
+          },
+          {
+            "year": 2024,
+            "fatturato": 51619,
+            "utile": -2734
+          }
+        ],
+        "name": "AGENZIA IMMOBILIARE EUGANEA CASE S.R.L."
+      }
+    },
+    {
+      "company_name": "Immobiliare Metroquadro Srl",
+      "comune": "Padova",
+      "website": "http://www.metroquadropadova.it",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "value": "info@metroquadropadova.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/MetroquadroPadova",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "value": "https://it.linkedin.com/in/alessandro-busca-07b971133",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "vat": {
+          "value": "02553730280",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "value": "€ 1.715.785",
+          "source": "fatturatoitalia(site)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        },
+        "employees": {
+          "value": "3-5",
+          "source": "fatturatoitalia(site)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        }
+      },
+      "fatturato": {
+        "vat": "02553730280",
+        "revenue": "€ 1.715.785",
+        "revenue_year": "2024",
+        "employees": "3-5",
+        "history": [
+          {
+            "year": 2020,
+            "fatturato": 630283,
+            "utile": 165321
+          },
+          {
+            "year": 2021,
+            "fatturato": 422271,
+            "utile": 39154
+          },
+          {
+            "year": 2022,
+            "fatturato": 537000,
+            "utile": 70158
+          },
+          {
+            "year": 2023,
+            "fatturato": 424057,
+            "utile": 31024
+          },
+          {
+            "year": 2024,
+            "fatturato": 1715785,
+            "utile": 956130
+          }
+        ],
+        "name": "IMMOBILIARE METROQUADRO A RESPONSABILITA' LIMITATA"
+      }
+    },
+    {
+      "company_name": "Studio Zeta Intermediazioni Immobiliari",
+      "comune": "Padova",
+      "website": "http://www.studiozetapadova.it",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "00712210285",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Immobiliare alle Mura",
+      "comune": "Padova",
+      "website": "http://www.immobiliareallemura.it",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "value": "silvia@immobiliareallemura.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/ImmobiliareAlleMura",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "value": "https://linkedin.com/cws/share",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "vat": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Immobiliare Brenta sas",
+      "comune": "Padova",
+      "website": "https://immobiliarebrenta.it",
+      "input_vat": "01338750282",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "value": "info@immobiliarebrenta.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "value": "https://instagram.com/agenziaimmobiliarebrenta",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/agenziabrenta",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "01338750282",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      },
+      "rate_limit_class": "GENUINE-NO-DATA"
+    },
+    {
+      "company_name": "Agenzia Immobiliare Florida",
+      "comune": "Padova",
+      "website": "https://www.appartamentiapadova.it/",
+      "input_vat": "00070600283",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "00070600283",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      },
+      "rate_limit_class": "GENUINE-NO-DATA"
+    },
+    {
+      "company_name": "Immobiliare Giglio di Cecchinato Ornella",
+      "comune": "Padova",
+      "website": "http://immobiliaregiglio.it",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "04031900287",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "value": "immobiliaregiglio@cgn.legalmail.it",
+          "source": "website_body",
+          "confidence": 0.85,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Il Trifoglio Studio Tecnico e Immobiliare",
+      "comune": "Padova",
+      "website": "http://www.trifoglioimmobiliare.com",
+      "pages_fetched": 2,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/trifoglioimmobiliare.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "04713580282",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Agedi Case S.r.l.",
+      "comune": "Padova",
+      "website": "https://agedicase.it",
+      "input_vat": "02579740289",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "value": "info@agedicase.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "02579740289",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "vat_unverified"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "vat_unverified"
+            }
+          ]
+        }
+      },
+      "fatturato": {
+        "vat": "02579740289",
+        "revenue": "€ 111.390",
+        "revenue_year": "2024",
+        "employees": "1",
+        "history": [
+          {
+            "year": 2018,
+            "fatturato": 105045,
+            "utile": 2538
+          },
+          {
+            "year": 2019,
+            "fatturato": 115479,
+            "utile": 556
+          },
+          {
+            "year": 2022,
+            "fatturato": 156778,
+            "utile": 20242
+          },
+          {
+            "year": 2023,
+            "fatturato": 124545,
+            "utile": 9448
+          },
+          {
+            "year": 2024,
+            "fatturato": 111390,
+            "utile": 12559
+          }
+        ],
+        "name": "AGEDI CASE S.R.L."
+      }
+    },
+    {
+      "company_name": "Liviana Immobiliare S.R.L.",
+      "comune": "Padova",
+      "website": "https://www.livianaimmobiliare.it",
+      "pages_fetched": 2,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "01413520287",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "value": "€ 127.934",
+          "source": "fatturatoitalia(site)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        },
+        "employees": {
+          "value": "1",
+          "source": "fatturatoitalia(site)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        }
+      },
+      "fatturato": {
+        "vat": "01413520287",
+        "revenue": "€ 127.934",
+        "revenue_year": "2023",
+        "employees": "1",
+        "history": [
+          {
+            "year": 2019,
+            "fatturato": 171647,
+            "utile": 701
+          },
+          {
+            "year": 2020,
+            "fatturato": 196180,
+            "utile": 73502
+          },
+          {
+            "year": 2021,
+            "fatturato": 255706,
+            "utile": 109472
+          },
+          {
+            "year": 2022,
+            "fatturato": 103710,
+            "utile": 59724
+          },
+          {
+            "year": 2023,
+            "fatturato": 127934,
+            "utile": 57685
+          }
+        ],
+        "name": "LIVIANA IMMOBILIARE S.R.L."
+      }
+    },
+    {
+      "company_name": "Grimaldi Immobiliare",
+      "comune": "Padova",
+      "website": "https://grimaldi.com",
+      "input_vat": "05301660287",
+      "pages_fetched": 2,
+      "cells": {
+        "email": {
+          "value": "grimaldi-ins@grimaldi.com",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/Grimaldi-Insurance-497496787012311",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true,
+              "reason": "vat_unverified"
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      },
+      "rate_limit_class": "GENUINE-NO-DATA"
+    },
+    {
+      "company_name": "Agenzia Punto Immobiliare S.a.s. di Gianni Bacco",
+      "comune": "Padova",
+      "website": "https://www.puntoimmobiliare.it",
+      "input_vat": "03679870281",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "value": "info@puntoimmobiliare.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "value": "https://instagram.com/puntoimmobiliarepadova",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/puntoimmobiliarepadova",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "03679870281",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      },
+      "rate_limit_class": "GENUINE-NO-DATA"
+    },
+    {
+      "company_name": "Arcos Immobiliare S.r.l.",
+      "comune": "Padova",
+      "website": "https://arcosimmobiliare.it",
+      "input_vat": "03658680289",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "value": "https://instagram.com/appartamentipadova",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/appartamentipadova",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "value": "https://linkedin.com/company/arcosimmobiliare",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "vat": {
+          "value": "03658680289",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "vat_unverified"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "vat_unverified"
+            }
+          ]
+        }
+      },
+      "fatturato": {
+        "vat": "03658680289",
+        "revenue": "€ 24.719",
+        "revenue_year": "2024",
+        "employees": "1",
+        "history": [
+          {
+            "year": 2016,
+            "fatturato": 13549,
+            "utile": -3343
+          },
+          {
+            "year": 2017,
+            "fatturato": 20459,
+            "utile": 1034
+          },
+          {
+            "year": 2022,
+            "fatturato": 27428,
+            "utile": 7870
+          },
+          {
+            "year": 2023,
+            "fatturato": 20177,
+            "utile": -1096
+          },
+          {
+            "year": 2024,
+            "fatturato": 24719,
+            "utile": -5209
+          }
+        ],
+        "name": "ARCOS IMMOBILIARE SRL"
+      }
+    },
+    {
+      "company_name": "Centro Casa Immobiliare di Prai Stefania",
+      "comune": "Padova",
+      "website": "http://www.centro-casa.net",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "04927760282",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

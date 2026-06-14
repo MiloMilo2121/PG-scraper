@@ -18,6 +18,7 @@ Tags: `[M]` MEASURED against source · `[I]` INFERRED from design/logic.
 | **VAT** | footer (own page) — VIES-confirmed | of footer: ~40% `[M n=18]` | **0.95**, name-matched `[M n=12]` | 0.95 `vies_confirmed` | **SOLID** | — |
 | VAT | footer — unconfirmed (domestic) | of footer: ~60% `[M]` | probably-own, **VIES can't confirm domestic** `[M]` | 0.60 `footer_unconfirmed` | **FRAGILE** | registry (C) gives official VAT → fixes this |
 | VAT | footer — proven foreign | — | refused (VIES names another co.) `[M]` | — (dropped) | **SOLID** (the precision win) | — |
+| VAT | footer — FRANCHISOR/consultant | — | refused: name-match (containment+Jaccard) rejects shared-brand collisions; fatturato step entity-verifies `[M audit 2026-06-14]` | — (dropped) | **SOLID** (new precision win) | franchise €58M-on-local-agency bug found+fixed in the validation audit |
 | VAT | input `vat_code` | 44.8% of all rows `[M]` | VIES-gated before downstream `[M]` | inherited | **SOLID** (gated) | — |
 | **revenue** | fatturatoitalia by VAT | 37.5% of reachable input-VAT `[M n=24]` · ~45% of website-having `[M]` | high when VAT-key right; official source `[M]` | 0.9/0.95/0.5 inherited from VAT | **SOLID** (ceilinged) | ceiling = bilancio-filers; not a bug |
 | revenue | — reliability | — | **needs ~4s spacing or 0% at volume** `[M]` | — | **FRAGILE** (now throttled) | watch at volume; rate-limiter shipped |

@@ -43,6 +43,19 @@ const pecFromBody: EnrichmentStep = {
  * Legal-form tokens (srl/spa/snc/…) are EXCLUDED — every company has one, so a
  * shared "srl" must not inflate the match ("Immobiliare Rossi SRL" vs "Studio
  * Rossi SRL" share only the form + "rossi", not the same firm).
+ *
+ * MATCH RULE — containment OR Jaccard ≥ 0.5 (NOT min-overlap):
+ *  - CONTAINMENT: one firm's distinctive tokens fully appear in the other's name.
+ *    Accepts the legit owner-suffix pattern ("Immobiliare Giglio" vs the registry's
+ *    "Immobiliare Giglio di Cecchinato Ornella") — common for Italian family firms.
+ *  - JACCARD (inter/union): guards the FRANCHISE-COLLISION class the validation audit
+ *    caught (2026-06-14): a local "Agenzia Immobiliare Tecnocasa Impresa Albignasego"
+ *    cites the FRANCHISOR's footer VAT, whose registry name is "Tecnocasa Franchising
+ *    S.p.A." — they share only the brand token "tecnocasa". The OLD min-overlap rule
+ *    scored that 1/2 = 0.5 and FALSE-CONFIRMED the franchisor's VAT @0.95, attaching
+ *    its €58M revenue to the local agency. Jaccard drops it to ~0.17 → refused. The
+ *    same fix covers any chain (Gabetti/Re-Max/Toscano/Grimaldi…): a single shared
+ *    brand token across two distinct legal entities no longer confirms.
  */
 const NAME_LEGAL_FORMS = new Set(['srl', 'srls', 'spa', 'snc', 'sas', 'sapa', 'ss', 'sc', 'scarl', 'scrl', 'soc', 'coop']);
 function nameTokens(s: string): Set<string> {
@@ -55,7 +68,10 @@ export function companyNameMatches(a: string | undefined, b: string | undefined)
   if (ta.size === 0 || tb.size === 0) return false;
   let inter = 0;
   for (const t of ta) if (tb.has(t)) inter += 1;
-  return inter / Math.min(ta.size, tb.size) >= 0.5;
+  if (inter === 0) return false;
+  const contained = inter === ta.size || inter === tb.size; // one name's tokens ⊆ the other
+  const jaccard = inter / (ta.size + tb.size - inter);
+  return contained || jaccard >= 0.5;
 }
 
 const socialStep = (key: 'instagram' | 'facebook' | 'linkedin'): EnrichmentStep => ({
@@ -195,7 +211,23 @@ const fatturatoItaliaStep = (field: 'revenue' | 'employees', confFloor: number):
     }
 
     const fi = await fetchFatturatoItalia(rv.vat);
-    const value = fi?.[field];
+    if (!fi) return { confidence: 0, source: `fatturatoitalia(${tag})`, costEur: 0, skippedReason: 'no_value' };
+
+    // ENTITY VERIFICATION (validation audit 2026-06-14, the franchise-collision bug):
+    // a footer/input VAT can belong to a DIFFERENT legal entity than the lead — a
+    // FRANCHISOR (a local "...Tecnocasa... Albignasego" agency cited the franchisor's
+    // VAT → €58M attached) or an accountant. fatturatoitalia returns the VAT's
+    // REGISTERED name; if it doesn't match the company, this is someone else's
+    // firmographics. Refuse it — regardless of provenance. This is the field-level
+    // guard; the VAT-field confirmation (vatResolve) is the other half. Both needed:
+    // resolveVat here trusts a 'site' VAT directly, so without this check the wrong
+    // revenue still attaches even when the VAT field correctly refused the same VAT.
+    const company = ctx.lead.company_name as string | undefined;
+    if (fi.company_name && company && !companyNameMatches(fi.company_name, company)) {
+      return { confidence: 0, source: `fatturatoitalia(${tag}:entity_mismatch)`, costEur: 0, skippedReason: 'vat_unverified' };
+    }
+
+    const value = fi[field];
     if (!value) return { confidence: 0, source: `fatturatoitalia(${tag})`, costEur: 0, skippedReason: 'no_value' };
     return { value: String(value), confidence: Math.min(confCap, Math.max(confFloor, fi.confidence)), source: `fatturatoitalia(${tag})`, costEur: 0 };
   },

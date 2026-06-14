@@ -1,0 +1,1625 @@
+{
+  "label": "S3",
+  "comuni": [
+    "cittadella",
+    "cadoneghe",
+    "abano terme"
+  ],
+  "sample_size": 14,
+  "fill_rate": {
+    "email": "6/14 (43%)",
+    "instagram": "6/14 (43%)",
+    "facebook": "8/14 (57%)",
+    "linkedin": "2/14 (14%)",
+    "vat": "10/14 (71%)",
+    "pec": "0/14 (0%)",
+    "revenue": "3/14 (21%)",
+    "employees": "1/14 (7%)"
+  },
+  "bug1_maxyear": {
+    "checked": 3,
+    "pass": 3,
+    "fails": []
+  },
+  "bug2_ranges": {
+    "checked": 1,
+    "pass": 1,
+    "fails": [],
+    "samples": [
+      {
+        "co": "Immobiliare Baggio S.r.l.",
+        "emp": "6-9",
+        "ok": true
+      }
+    ]
+  },
+  "bug3_vat_honest": {
+    "confidence_all_honest": true,
+    "breakdown": [
+      {
+        "co": "Agenzia Immobiliare Jappelli",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      },
+      {
+        "co": "Loft Immobiliari S.a.s. di Castorina Alessandro & C.",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "Immobili Abano di Barbata Giovanni",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      },
+      {
+        "co": "Immobiliare Baggio S.r.l.",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      },
+      {
+        "co": "Pronto Casa Servizi Immobiliari",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "Un per Cento S.r.l.",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      },
+      {
+        "co": "Obiettivo Casa S.a.s. di Colombin Fabrizio & C.",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "Agenzia Immobiliare Castello",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "CEC.group S.r.l.",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      },
+      {
+        "co": "Studio Associato Cristian e Cesare Pinton",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      }
+    ]
+  },
+  "bug4_ratelimit": {
+    "rechecked_empties": 1,
+    "silent_drops": 0,
+    "genuine_no_data": 1
+  },
+  "structural_ceiling": {
+    "with_fatturato": 3,
+    "no_fatturato_genuine": 1,
+    "note": "no-fatturato should be ditte individuali / non-filers = honest empties"
+  },
+  "companies": [
+    {
+      "company_name": "Agenzia Immobiliare Jappelli",
+      "comune": "Abano Terme",
+      "website": "http://www.jappelli.it",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "value": "https://instagram.com/jappelli.immobiliare",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/AgenziaImmobiliareJappelli",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "value": "https://linkedin.com/in/samuele-bozza-b9b125245",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "vat": {
+          "value": "04774040283",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Loft Immobiliari S.a.s. di Castorina Alessandro & C.",
+      "comune": "Abano Terme",
+      "website": "http://loftimmobiliari.com",
+      "pages_fetched": 2,
+      "cells": {
+        "email": {
+          "value": "info@loftimmobiliari.com",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "03821970286",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Immobili Abano di Barbata Giovanni",
+      "comune": "Abano Terme",
+      "website": "https://www.immobiliabano.it",
+      "input_vat": "04867700280",
+      "pages_fetched": 1,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "value": "https://instagram.com/immobiliabano.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/Immobiliabano-109397921699602",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "value": "https://linkedin.com/company/immobiliabano-it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "vat": {
+          "value": "04867700280",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      },
+      "rate_limit_class": "GENUINE-NO-DATA"
+    },
+    {
+      "company_name": "Immobiliare Baggio S.r.l.",
+      "comune": "Abano Terme",
+      "website": "https://immobiliarebaggio.it",
+      "input_vat": "02544120286",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/pages/Immobiliare-Baggio/370851146310489",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "02544120286",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "value": "€ 1.289.353",
+          "source": "fatturatoitalia(input+vies)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        },
+        "employees": {
+          "value": "6-9",
+          "source": "fatturatoitalia(input+vies)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        }
+      },
+      "fatturato": {
+        "vat": "02544120286",
+        "revenue": "€ 1.289.353",
+        "revenue_year": "2024",
+        "employees": "6-9",
+        "history": [
+          {
+            "year": 2020,
+            "fatturato": 658663,
+            "utile": 75082
+          },
+          {
+            "year": 2021,
+            "fatturato": 652312,
+            "utile": 66067
+          },
+          {
+            "year": 2022,
+            "fatturato": 3893580,
+            "utile": 119456
+          },
+          {
+            "year": 2023,
+            "fatturato": 1792687,
+            "utile": 110504
+          },
+          {
+            "year": 2024,
+            "fatturato": 1289353,
+            "utile": 111401
+          }
+        ],
+        "name": "IMMOBILIARE BAGGIO SRL"
+      }
+    },
+    {
+      "company_name": "Pronto Casa Servizi Immobiliari",
+      "comune": "Abano Terme",
+      "website": "http://www.agenziaprontocasa.it",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "value": "info@agenziaprontocasa.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "value": "https://instagram.com/prontocasa_",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/profile.php",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "03725500288",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Un per Cento S.r.l.",
+      "comune": "Abano Terme",
+      "website": "https://unpercento.com",
+      "input_vat": "04311650289",
+      "pages_fetched": 2,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "04311650289",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "value": "€ 66.148",
+          "source": "fatturatoitalia(input+vies)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      },
+      "fatturato": {
+        "vat": "04311650289",
+        "revenue": "€ 66.148",
+        "revenue_year": "2023",
+        "history": [
+          {
+            "year": 2019,
+            "fatturato": 32718,
+            "utile": 8633
+          },
+          {
+            "year": 2020,
+            "fatturato": 40481,
+            "utile": -7697
+          },
+          {
+            "year": 2021,
+            "fatturato": 46103,
+            "utile": 6340
+          },
+          {
+            "year": 2022,
+            "fatturato": 59374,
+            "utile": 7897
+          },
+          {
+            "year": 2023,
+            "fatturato": 66148,
+            "utile": 31584
+          }
+        ],
+        "name": "UN PER CENTO S.R.L."
+      }
+    },
+    {
+      "company_name": "Obiettivo Casa S.a.s. di Colombin Fabrizio & C.",
+      "comune": "Cadoneghe",
+      "website": "http://obiettivocasasas.it",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "value": "info@obiettivocasasas.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "value": "https://instagram.com/obiettivo_casa_cadoneghe",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/obiettivocasasas.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "04305320287",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Agenzia Immobiliare Castello",
+      "comune": "Cadoneghe",
+      "website": "http://www.immobiliarecastello.it",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/agenziacastellocadoneghe",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "03789490285",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "GALILEO SERVIZI IMMOBILIARI",
+      "comune": "Cadoneghe",
+      "website": "https://www.galileoimmobiliare.it",
+      "pages_fetched": 1,
+      "cells": {
+        "email": {
+          "value": "info@galileoimmobiliare.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "value": "https://instagram.com/galileoimmobiliarepadova",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/galileoimmobiliarepadova",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "San Bonaventura Immobiliare",
+      "comune": "Cadoneghe",
+      "website": "https://sanbonaventuraimmobiliare.it",
+      "pages_fetched": 1,
+      "cells": {
+        "email": {
+          "value": "info@sanbonaventuraimmobiliare.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "CEC.group S.r.l.",
+      "comune": "Cadoneghe",
+      "website": "https://www.marcaturace.net",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "05291680287",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "value": "€ 772.872",
+          "source": "fatturatoitalia(site)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      },
+      "fatturato": {
+        "vat": "05291680287",
+        "revenue": "€ 772.872",
+        "revenue_year": "2024",
+        "history": [
+          {
+            "year": 2020,
+            "fatturato": 412784,
+            "utile": 170554
+          },
+          {
+            "year": 2021,
+            "fatturato": 678226,
+            "utile": 173427
+          },
+          {
+            "year": 2022,
+            "fatturato": 608389,
+            "utile": 180739
+          },
+          {
+            "year": 2023,
+            "fatturato": 718157,
+            "utile": 184945
+          },
+          {
+            "year": 2024,
+            "fatturato": 772872,
+            "utile": 198607
+          }
+        ],
+        "name": "CEC.GROUP SRL"
+      }
+    },
+    {
+      "company_name": "Studio Associato Cristian e Cesare Pinton",
+      "comune": "Cadoneghe",
+      "website": "http://www.studiopinton.it",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "00576670285",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Consulting Group S.R.L.",
+      "comune": "Cadoneghe",
+      "website": "https://consultinggroup.com",
+      "pages_fetched": 1,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Consulenze Brusaferro & ZJ Immobiliare",
+      "comune": "Cadoneghe",
+      "website": "https://www.consulenzebrusaferro.it",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "value": "info@consulenzebrusaferro.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "value": "https://instagram.com/consulenzebrusaferro",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/ConsulenzeBrusaferro",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

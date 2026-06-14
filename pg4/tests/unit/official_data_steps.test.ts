@@ -34,6 +34,18 @@ describe('A.2 — companyNameMatches (VAT precision via VIES name, REAL name pai
     expect(companyNameMatches('STUDIO COMMERCIALE BIANCHI E ASSOCIATI SRL', 'Agenzia Immobiliare Euganea Case')).toBe(false);
     expect(companyNameMatches('WEB AGENCY PIXEL SRL', 'Immobiliare Metroquadro')).toBe(false);
   });
+  it('REJECTS a FRANCHISOR vs its local franchisee — shared brand token only (validation-audit bug, 2026-06-14)', () => {
+    // The local agency cites the FRANCHISOR's footer VAT; the registry name for that
+    // VAT is the franchisor. They share only the brand "tecnocasa". The OLD min-overlap
+    // rule scored 0.5 and FALSE-CONFIRMED → €58M franchisor revenue on a local agency.
+    expect(companyNameMatches('TECNOCASA FRANCHISING S.P.A.', 'Agenzia Immobiliare Tecnocasa Impresa Albignasego')).toBe(false);
+  });
+  it('ACCEPTS the owner-suffix pattern via containment (guards against over-rejection)', () => {
+    // Italian family firms: the registry name adds the owner ("di <Nome Cognome>").
+    // The lead's distinctive tokens are fully contained → still a match (not a foreign VAT).
+    expect(companyNameMatches('Immobiliare Giglio di Cecchinato Ornella', 'Immobiliare Giglio')).toBe(true);
+    expect(companyNameMatches('Studio Padova Est di Bianchi Luigi', 'Studio Padova Est')).toBe(true);
+  });
   it('handles empty/garbage', () => {
     expect(companyNameMatches(undefined, 'X')).toBe(false);
     expect(companyNameMatches('SRL', 'SRL')).toBe(false); // only the legal form → no real tokens
