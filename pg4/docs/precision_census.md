@@ -57,6 +57,12 @@ eliminating the ~60% footer-unconfirmed problem at the root) AND raises coverage
 keys revenue/employees at high confidence — three wins from one source. Gated on the
 visure data cost (operator decision — see quality_pass_b_c_report.md).
 
+> Status (2026-06-14): the FREE path to this was attempted and proven a dead-end
+> (`docs/coverage_registry_recon.md`); operator chose to accept the current PG+Maps
+> discovery for now. This remains the highest-leverage fix the day a paid source
+> (Registro Imprese / company-data API) is approved — it's a ~1-adapter build
+> against the ready `RegistryUniverseSource` spec.
+
 ## Structural ceilings (not bugs — don't chase them with free tools)
 - **Email free fill ~50%**: the rest publish no same-domain email (gmail / form / none).
 - **Revenue/employees ~37–45%**: only capital companies (SRL/SpA/coop) file public

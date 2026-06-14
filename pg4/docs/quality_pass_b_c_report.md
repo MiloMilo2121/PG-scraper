@@ -65,18 +65,25 @@ decision + provider adapter + flip enabled. INI-PEC stays operator decision
 
 ---
 
-## PHASE C — COVERAGE — BLOCKED ON OPERATOR DECISION (not executed)
+## PHASE C — COVERAGE — free-scrape attempted, operator chose to accept current discovery
 
-Per ground-rule 6 (ask, don't assume) + C.1's explicit "ask before spending":
-registry-as-universe needs a data source whose cost is an operator decision.
-**Registro Imprese visure are PAID; there is no free official ATECO+province →
-all-VATs feed.** So C cannot start without a decision on source + cost + the
-ATECO/province slice. Surfaced as a costed question (see the session message /
-DoD below), with a default proposal (real-estate 68.31 + PD) — NOT acted on.
+Operator decision 1: "attempt a free directory scrape." DONE, thoroughly — and
+reported as a dead-end rather than forced (see `docs/coverage_registry_recon.md`):
+ufficiocamerale/reportaziende are Cloudflare-blocked; companyreports renders via
+Playwright but serves only top-50-by-revenue per province (no sector filter,
+rate-limits hard, capital-companies only); aziende.virgilio is redundant
+PagineGialle data with no listing VATs; and ditte individuali appear in NO
+directory (no bilancio) — so a free census is structurally impossible.
 
-When unblocked, C delivers: ATECO+province → official VATs → existing pipeline,
-measuring coverage-lift vs PG/Maps and registry-lead precision (expected higher,
-because the official VAT fixes the #1 gap: footer-unconfirmed VAT @0.6).
+Operator decision 2 (now informed): **accept the existing PG+Maps discovery as
+the coverage method (€0)**. It already answers "companies of type X in area Y" for
+the portal-listed majority, paired with the Phase-A VAT precision. No new build,
+no spend. A true legal census (incl. ditte individuali) needs paid Registro
+Imprese / a company-data API — left as a ready-to-plug `RegistryUniverseSource`
+spec (recon doc) for when spending is approved; that path is a ~1-adapter build.
+
+Net: Phase C closes WITHOUT a registry build, by an informed operator choice, with
+the free path proven infeasible and the paid path specced. Honest over forced.
 
 ---
 
