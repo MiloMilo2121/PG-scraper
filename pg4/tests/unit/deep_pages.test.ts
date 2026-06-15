@@ -93,4 +93,20 @@ describe('deepExtractFromSite — homepage + contact page, the email LIFT', () =
     expect(extraction).toEqual({ vat_candidates: [], phones: [] });
     expect(pagesFetched).toEqual([]);
   });
+
+  it('SPACES same-domain fetches (per-domain rate-limit, no burst to the site)', async () => {
+    // Unique domain → fresh per-domain bucket. homepage + 1 contact = 2 same-site fetches;
+    // at ≤2 req/s the second waits ~0.5s. Verifies the bug#4-class guard on the web path.
+    const dom = 'https://www.ratelimit-probe-xyz.it';
+    const p: Record<string, string> = {
+      [dom]: `<html><body><a href="/contatti">Contatti</a></body></html>`,
+      [`${dom}/contatti`]: `<html><body><a href="mailto:info@ratelimit-probe-xyz.it">x</a></body></html>`,
+    };
+    const fast = async (url: string): Promise<string | undefined> => p[url.replace(/\/$/, '')];
+    const started = Date.now();
+    const { pagesFetched } = await deepExtractFromSite(dom, fast);
+    const elapsed = Date.now() - started;
+    expect(pagesFetched).toHaveLength(2); // both fetched
+    expect(elapsed).toBeGreaterThanOrEqual(300); // second fetch was spaced, not bursted
+  });
 });

@@ -1,0 +1,1624 @@
+{
+  "label": "HARDEN",
+  "comuni": [
+    "albignasego",
+    "vigonza"
+  ],
+  "sample_size": 14,
+  "fill_rate": {
+    "email": "9/14 (64%)",
+    "instagram": "5/14 (36%)",
+    "facebook": "7/14 (50%)",
+    "linkedin": "1/14 (7%)",
+    "vat": "10/14 (71%)",
+    "pec": "3/14 (21%)",
+    "revenue": "3/14 (21%)",
+    "employees": "2/14 (14%)"
+  },
+  "bug1_maxyear": {
+    "checked": 4,
+    "pass": 4,
+    "fails": []
+  },
+  "bug2_ranges": {
+    "checked": 2,
+    "pass": 2,
+    "fails": [],
+    "samples": [
+      {
+        "co": "Cpr S.r.l.",
+        "emp": "1",
+        "ok": true
+      },
+      {
+        "co": "Consulenti Associati Srl",
+        "emp": "6-9",
+        "ok": true
+      }
+    ]
+  },
+  "bug3_vat_honest": {
+    "confidence_all_honest": true,
+    "breakdown": [
+      {
+        "co": "Cpr S.r.l.",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      },
+      {
+        "co": "Domus Soluzioni Immobiliari di Rizzi Laura",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      },
+      {
+        "co": "Nova Dream S.r.l.",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      },
+      {
+        "co": "La Fonte Immobiliare",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      },
+      {
+        "co": "Immobiliare Edilbaraldo s.r.l.",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      },
+      {
+        "co": "NOVA DREAM | Building Management",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      },
+      {
+        "co": "Agenzia Immobiliare Tecnocasa Impresa Albignasego",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "Dielle Immobiliare",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "Studio Novus",
+        "src": "vat:footer_unconfirmed",
+        "conf": 0.6
+      },
+      {
+        "co": "Consulenti Associati Srl",
+        "src": "vat:vies_confirmed",
+        "conf": 0.95
+      }
+    ]
+  },
+  "bug4_ratelimit": {
+    "rechecked_empties": 2,
+    "silent_drops": 0,
+    "genuine_no_data": 2
+  },
+  "structural_ceiling": {
+    "with_fatturato": 4,
+    "no_fatturato_genuine": 2,
+    "note": "no-fatturato should be ditte individuali / non-filers = honest empties"
+  },
+  "companies": [
+    {
+      "company_name": "Gruppo Vela",
+      "comune": "Albignasego",
+      "website": "http://www.veleimmobiliare.it",
+      "pages_fetched": 2,
+      "cells": {
+        "email": {
+          "value": "info@veleimmobiliare.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "value": "https://instagram.com/gruppovela",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://it-it.facebook.com/agenziagruppovela",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Cpr S.r.l.",
+      "comune": "Albignasego",
+      "website": "http://www.cpr-regalin.it",
+      "input_vat": "02507070288",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "value": "info@cpr-regalin.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "02507070288",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "value": "cpr-regalin@pec.it",
+          "source": "website_body",
+          "confidence": 0.85,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true
+            }
+          ]
+        },
+        "revenue": {
+          "value": "€ 2.036.043",
+          "source": "fatturatoitalia(site)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        },
+        "employees": {
+          "value": "1",
+          "source": "fatturatoitalia(site)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        }
+      },
+      "fatturato": {
+        "vat": "02507070288",
+        "revenue": "€ 2.036.043",
+        "revenue_year": "2024",
+        "employees": "1",
+        "history": [
+          {
+            "year": 2020,
+            "fatturato": 577445,
+            "utile": 10651
+          },
+          {
+            "year": 2021,
+            "fatturato": 1128838,
+            "utile": -101731
+          },
+          {
+            "year": 2022,
+            "fatturato": 222334,
+            "utile": -4775
+          },
+          {
+            "year": 2023,
+            "fatturato": 226896,
+            "utile": 42084
+          },
+          {
+            "year": 2024,
+            "fatturato": 2036043,
+            "utile": 347745
+          }
+        ],
+        "name": "CPR S.R.L."
+      }
+    },
+    {
+      "company_name": "Domus Soluzioni Immobiliari di Rizzi Laura",
+      "comune": "Albignasego",
+      "website": "https://domusalbignasego.it",
+      "input_vat": "04656230283",
+      "pages_fetched": 0,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "04656230283",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      },
+      "rate_limit_class": "GENUINE-NO-DATA"
+    },
+    {
+      "company_name": "Nova Dream S.r.l.",
+      "comune": "Albignasego",
+      "website": "https://novadream.it",
+      "input_vat": "05571990281",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "value": "info@novadream.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "value": "https://instagram.com/novadream.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/novadreamofficial",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "05571990281",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      },
+      "rate_limit_class": "GENUINE-NO-DATA"
+    },
+    {
+      "company_name": "La Fonte Immobiliare",
+      "comune": "Vigonza",
+      "website": "http://www.lafonteimmobiliare.it",
+      "pages_fetched": 2,
+      "cells": {
+        "email": {
+          "value": "info@lafonteimmobiliare.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "value": "https://instagram.com/la_fonte_immobiliare",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/agenzialafonte",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "04525160281",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Immobiliare Edilbaraldo s.r.l.",
+      "comune": "Albignasego",
+      "website": "http://www.edilbaraldo.it",
+      "pages_fetched": 2,
+      "cells": {
+        "email": {
+          "value": "info@edilbaraldo.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/edilbaraldo",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "04019620287",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "value": "€ 2.128.318",
+          "source": "fatturatoitalia(site)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      },
+      "fatturato": {
+        "vat": "04019620287",
+        "revenue": "€ 2.128.318",
+        "revenue_year": "2024",
+        "history": [
+          {
+            "year": 2020,
+            "fatturato": 2762637,
+            "utile": 163385
+          },
+          {
+            "year": 2021,
+            "fatturato": 3580987,
+            "utile": 37846
+          },
+          {
+            "year": 2022,
+            "fatturato": 1533877,
+            "utile": 20653
+          },
+          {
+            "year": 2023,
+            "fatturato": 1981395,
+            "utile": 36609
+          },
+          {
+            "year": 2024,
+            "fatturato": 2128318,
+            "utile": 36273
+          }
+        ],
+        "name": "IMMOBILIARE EDILBARALDO S.R.L."
+      }
+    },
+    {
+      "company_name": "NOVA DREAM | Building Management",
+      "comune": "Albignasego",
+      "website": "https://www.novadream.it",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "value": "info@novadream.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "value": "https://instagram.com/novadream.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/novadreamofficial",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "05571990281",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Agenzia Immobiliare Tecnocasa Impresa Albignasego",
+      "comune": "Albignasego",
+      "website": "https://albignasego1.tecnocasaimpresa.it",
+      "pages_fetched": 2,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "value": "https://instagram.com/tecnocasa_impresa_albignasego",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/albignasego1.affiliato.tecnocasaimpresa",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "value": "https://linkedin.com/company/tecnocasa-impresa-albignasego",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "vat": {
+          "value": "08365160152",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "vat_unverified"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "vat_unverified"
+            }
+          ]
+        }
+      },
+      "fatturato": {
+        "vat": "08365160152",
+        "revenue": "€ 58.024.680",
+        "revenue_year": "2024",
+        "employees": "10-15",
+        "history": [
+          {
+            "year": 2020,
+            "fatturato": 41768665,
+            "utile": 12619885
+          },
+          {
+            "year": 2021,
+            "fatturato": 46110238,
+            "utile": 14597600
+          },
+          {
+            "year": 2022,
+            "fatturato": 50157206,
+            "utile": 16199110
+          },
+          {
+            "year": 2023,
+            "fatturato": 55190710,
+            "utile": 19211610
+          },
+          {
+            "year": 2024,
+            "fatturato": 58024680,
+            "utile": 22871957
+          }
+        ],
+        "name": "TECNOCASA FRANCHISING S.P.A."
+      }
+    },
+    {
+      "company_name": "Agenzia Immobiliare Roma",
+      "comune": "Albignasego",
+      "website": "https://agenziaimmobiliareroma.it",
+      "pages_fetched": 0,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Dielle Immobiliare",
+      "comune": "Albignasego",
+      "website": "https://dielleimmobiliare.it",
+      "pages_fetched": 3,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "value": "https://facebook.com/DIELLEIMMOBILIARE",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "14226710961",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "LUXURY HOME SOLUTION",
+      "comune": "Albignasego",
+      "website": "https://www.luxuryhomesolution.it",
+      "pages_fetched": 2,
+      "cells": {
+        "email": {
+          "value": "sara@luxuryhomesolution.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Studio Novus",
+      "comune": "Albignasego",
+      "website": "https://novusassociati.com",
+      "pages_fetched": 2,
+      "cells": {
+        "email": {
+          "value": "segreteria@novusassociati.com",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "04218260281",
+          "source": "vat:footer_unconfirmed",
+          "confidence": 0.6,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "value": "novusassociati@legalmail.it",
+          "source": "website_body",
+          "confidence": 0.85,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "company_name": "Consulenti Associati Srl",
+      "comune": "Albignasego",
+      "website": "https://www.consulentiassociatipadova.it",
+      "pages_fetched": 2,
+      "cells": {
+        "email": {
+          "value": "info@consulentiassociatipadova.it",
+          "source": "website_body",
+          "confidence": 0.8,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "value": "03241320286",
+          "source": "vat:vies_confirmed",
+          "confidence": 0.95,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true
+            }
+          ]
+        },
+        "pec": {
+          "value": "consulentiassociatisrl@cgn.legalmail.it",
+          "source": "website_body",
+          "confidence": 0.85,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true
+            }
+          ]
+        },
+        "revenue": {
+          "value": "€ 558.438",
+          "source": "fatturatoitalia(site)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        },
+        "employees": {
+          "value": "6-9",
+          "source": "fatturatoitalia(site)",
+          "confidence": 0.9,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true
+            }
+          ]
+        }
+      },
+      "fatturato": {
+        "vat": "03241320286",
+        "revenue": "€ 558.438",
+        "revenue_year": "2023",
+        "employees": "6-9",
+        "history": [
+          {
+            "year": 2019,
+            "fatturato": 525225,
+            "utile": 15667
+          },
+          {
+            "year": 2020,
+            "fatturato": 492242,
+            "utile": 45156
+          },
+          {
+            "year": 2021,
+            "fatturato": 563380,
+            "utile": 30963
+          },
+          {
+            "year": 2022,
+            "fatturato": 551350,
+            "utile": 18517
+          },
+          {
+            "year": 2023,
+            "fatturato": 558438,
+            "utile": 4583
+          }
+        ],
+        "name": "CONSULENTI ASSOCIATI S.R.L. SOCIETA' TRA PROFESSIONISTI"
+      }
+    },
+    {
+      "company_name": "Notaio Vincenzo Attianese - Albignasego - Notai 2021",
+      "comune": "Albignasego",
+      "website": "https://notai2021.com/chi-siamo/notaio-vincenzo-attianese",
+      "pages_fetched": 1,
+      "cells": {
+        "email": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "email.body_same_domain",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "email.pattern_guess",
+              "ran": false,
+              "reason": "disabled"
+            },
+            {
+              "id": "email.finder_api",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "instagram": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "instagram.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "facebook": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "facebook.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "linkedin": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "linkedin.body_footer",
+              "ran": true,
+              "reason": "no_value"
+            }
+          ]
+        },
+        "vat": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "vat.vies_confirmed",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "pec": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "pec.body",
+              "ran": true,
+              "reason": "no_value"
+            },
+            {
+              "id": "pec.inipec_by_vat",
+              "ran": false,
+              "reason": "disabled"
+            }
+          ]
+        },
+        "revenue": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "revenue.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        },
+        "employees": {
+          "confidence": 0,
+          "steps": [
+            {
+              "id": "employees.fatturatoitalia_by_vat",
+              "ran": true,
+              "reason": "no_input"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -87,6 +87,16 @@ export class FinancialStage implements Stage {
    * validates the input P.IVA checksum and records provenance. Future
    * phases extend this with parsed-page revenue (still pure) and gated
    * live lookups (VIES / fatturatoitalia).
+   *
+   * ⚠️ WRONG-ENTITY CONTRACT (audit 2026-06-16): the per-field cascade
+   * (`run_field_cascade` / `field_registry`) is the CANONICAL field-enrichment path
+   * and already carries the franchise/entity guards (vatResolve + isWrongEntity) and
+   * the fatturatoitalia rate-limiter. This CLI stage is intentionally PURE (no fetch),
+   * so it cannot mis-attribute a franchisor's/accountant's firmographics. If a future
+   * phase adds a VIES/fatturatoitalia lookup HERE, it MUST reuse the per-field cascade
+   * (or `isWrongEntity` + the rate-limiter) — do NOT re-implement an un-guarded fetch,
+   * or the €58M franchise-collision class re-opens on the CLI path. The purity is
+   * locked by financial_stage.test.ts ("pure — never fetches revenue/employees").
    */
   private deriveFromInput(lead: Lead): FinancialResult {
     const result = emptyFinancialResult();

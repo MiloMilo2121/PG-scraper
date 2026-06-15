@@ -40,6 +40,22 @@ describe('FinancialStage (enabled — pure path only)', () => {
     expect(lead.vat_code_final).toBe('01654010345');
   });
 
+  it('WRONG-ENTITY GUARD: the CLI stage is PURE — never fetches revenue/employees (audit 2026-06-16)', async () => {
+    // Locks the safe skeleton: the franchise-collision class lives ONLY where a VAT
+    // drives a firmographic FETCH (the per-field cascade, which is guarded). This stage
+    // must stay fetch-free so it can't mis-attribute a franchisor's data. If a future
+    // phase adds a fatturatoitalia/VIES lookup here, this test fails → forcing the
+    // author to route through the guarded per-field cascade (see deriveFromInput contract).
+    const run = createRun();
+    const stage = new FinancialStage({ enabled: true });
+    const lead: Lead = { company_name: 'Agenzia Immobiliare Tecnocasa Albignasego', vat_code: '08365160152' };
+    const out = await stage.run(createPerLeadContext(run), lead, norm(lead));
+    expect(lead.vat_code_final).toBe('08365160152'); // checksum-valid → promoted (pure)
+    expect(lead.revenue).toBeUndefined(); // NEVER fetched (no franchisor €58M)
+    expect(lead.employees).toBeUndefined();
+    expect(out.duration_ms).toBeLessThan(50); // no network round-trip
+  });
+
   it('returns not_found (NOT error) when there is no financial signal', async () => {
     const run = createRun();
     const stage = new FinancialStage({ enabled: true });

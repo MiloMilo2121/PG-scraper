@@ -20,9 +20,31 @@
 import * as cheerio from 'cheerio';
 import { extractFromBody, registrableDomain } from './extract_from_body';
 import type { BodyExtraction } from './extract_from_body';
+import { RateLimiter } from '../../runtime/rate_limiter';
 
 /** Link text / href fragments that mark a contact/about page on Italian sites. */
 const CONTACT_LINK_RE = /contatt|chi[-\s]?siamo|chisiamo|azienda|dove[-\s]?siamo|contact|about|impressum|note[-\s]?legali/i;
+
+/**
+ * PER-DOMAIN courtesy rate-limit (generalizes the bug#4 lesson to the website path).
+ * deepExtractFromSite fetches a site's homepage + up to 2 contact pages in quick
+ * succession, and the dev-server pool runs 5 companies at once. Unthrottled that is a
+ * burst against each SMB site (WAF/ban risk + the silent-fail class). A per-DOMAIN
+ * bucket (≤2 req/s, no burst) spaces same-site fetches while letting DIFFERENT domains
+ * (the pool) proceed in parallel. Bucket-per-domain is bounded per enrich run (≤ rows);
+ * acceptable for the dev/bounded context (a production server would use an LRU).
+ */
+const domainLimiter = new RateLimiter();
+const configuredDomains = new Set<string>();
+async function spacedFetch(url: string, fetcher: PageFetcher): Promise<string | undefined> {
+  const dom = registrableDomain(url) ?? url;
+  if (!configuredDomains.has(dom)) {
+    domainLimiter.configure(dom, 2, 1); // ≤2 req/s per domain, capacity 1 → no burst
+    configuredDomains.add(dom);
+  }
+  await domainLimiter.acquire(dom);
+  return fetcher(url);
+}
 
 export interface DeepExtractResult {
   extraction: BodyExtraction;
@@ -103,7 +125,7 @@ export async function deepExtractFromSite(
   opts: { maxContactPages?: number } = {},
 ): Promise<DeepExtractResult> {
   const lead = { official_website: site };
-  const homepage = site ? await fetcher(site) : undefined;
+  const homepage = site ? await spacedFetch(site, fetcher) : undefined;
   const extraction = extractFromBody(homepage, lead);
   const pagesFetched: string[] = [];
   const liftedFields: string[] = [];
@@ -113,7 +135,7 @@ export async function deepExtractFromSite(
   const max = opts.maxContactPages ?? 2;
   const links = findContactLinks(homepage, site, max);
   for (const url of links) {
-    const html = await fetcher(url);
+    const html = await spacedFetch(url, fetcher); // per-domain spacing — no burst to the site
     if (!html) continue;
     pagesFetched.push(url);
     const sub = extractFromBody(html, lead);

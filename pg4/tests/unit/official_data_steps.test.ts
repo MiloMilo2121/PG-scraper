@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Lead } from '../../src/types/lead';
 import { fetchFatturatoItalia } from '../../src/enrichment/financial/fatturato_italia_fetch';
 import { runFieldCascade } from '../../src/enrichment/fields/run_field_cascade';
-import { resolveVat, companyNameMatches } from '../../src/enrichment/fields/field_registry';
+import { resolveVat, companyNameMatches, sharedNameTokenCount, isWrongEntity } from '../../src/enrichment/fields/field_registry';
 
 /**
  * Phase 3 official-data steps (VIES + fatturatoitalia) — wiring + SAFETY.
@@ -46,9 +46,34 @@ describe('A.2 — companyNameMatches (VAT precision via VIES name, REAL name pai
     expect(companyNameMatches('Immobiliare Giglio di Cecchinato Ornella', 'Immobiliare Giglio')).toBe(true);
     expect(companyNameMatches('Studio Padova Est di Bianchi Luigi', 'Studio Padova Est')).toBe(true);
   });
+  it('REJECTS a BARE-BRAND SISTER — short registry name ⊆ fuller lead, 1 shared token (audit 2026-06-16)', () => {
+    // A different-city "Metroquadro Srl" {metroquadro} is a subset of "Immobiliare
+    // Metroquadro" — the OLD containment rule confirmed it (Jaccard 0.5). Now a single
+    // shared token never confirms across distinct entities. The REAL Padova Metroquadro
+    // still confirms because its registry name shares 2 tokens (test above).
+    expect(companyNameMatches('Metroquadro Srl', 'Immobiliare Metroquadro')).toBe(false);
+    expect(companyNameMatches('Rossi Srl', 'Immobiliare Rossi')).toBe(false); // common-surname collision
+  });
+  it('ACCEPTS a single-word company that IS the whole name on both sides', () => {
+    // Blurebus — one distinctive word; registry "BLUREBUS SRL" == lead "Blurebus S.r.l."
+    expect(companyNameMatches('BLUREBUS SRL', 'Blurebus S.r.l.')).toBe(true);
+  });
   it('handles empty/garbage', () => {
     expect(companyNameMatches(undefined, 'X')).toBe(false);
     expect(companyNameMatches('SRL', 'SRL')).toBe(false); // only the legal form → no real tokens
+  });
+});
+
+describe('sharedNameTokenCount + isWrongEntity — the three-way (foreign / ambiguous / confirm)', () => {
+  it('sharedNameTokenCount distinguishes foreign (0), ambiguous (1), confirm (≥2)', () => {
+    expect(sharedNameTokenCount('STUDIO COMMERCIALE BIANCHI SRL', 'Agenzia Immobiliare Euganea Case')).toBe(0); // foreign
+    expect(sharedNameTokenCount('TECNOCASA FRANCHISING S.P.A.', 'Agenzia Immobiliare Tecnocasa Impresa Albignasego')).toBe(1); // ambiguous
+    expect(sharedNameTokenCount('IMMOBILIARE METROQUADRO A R.L.', 'Immobiliare Metroquadro')).toBe(2); // confirm
+  });
+  it('isWrongEntity refuses a different entity, allows a match, never blocks when no name', () => {
+    expect(isWrongEntity('TECNOCASA FRANCHISING S.P.A.', 'Agenzia Immobiliare Tecnocasa Impresa Albignasego')).toBe(true);
+    expect(isWrongEntity('AGENZIA IMMOBILIARE EUGANEA CASE SRL', 'Agenzia Immobiliare Euganea Case')).toBe(false);
+    expect(isWrongEntity(undefined, 'X')).toBe(false); // can't verify → don't block
   });
 });
 

@@ -44,22 +44,32 @@ const pecFromBody: EnrichmentStep = {
  * shared "srl" must not inflate the match ("Immobiliare Rossi SRL" vs "Studio
  * Rossi SRL" share only the form + "rossi", not the same firm).
  *
- * MATCH RULE — containment OR Jaccard ≥ 0.5 (NOT min-overlap):
- *  - CONTAINMENT: one firm's distinctive tokens fully appear in the other's name.
- *    Accepts the legit owner-suffix pattern ("Immobiliare Giglio" vs the registry's
- *    "Immobiliare Giglio di Cecchinato Ornella") — common for Italian family firms.
- *  - JACCARD (inter/union): guards the FRANCHISE-COLLISION class the validation audit
- *    caught (2026-06-14): a local "Agenzia Immobiliare Tecnocasa Impresa Albignasego"
- *    cites the FRANCHISOR's footer VAT, whose registry name is "Tecnocasa Franchising
- *    S.p.A." — they share only the brand token "tecnocasa". The OLD min-overlap rule
- *    scored that 1/2 = 0.5 and FALSE-CONFIRMED the franchisor's VAT @0.95, attaching
- *    its €58M revenue to the local agency. Jaccard drops it to ~0.17 → refused. The
- *    same fix covers any chain (Gabetti/Re-Max/Toscano/Grimaldi…): a single shared
- *    brand token across two distinct legal entities no longer confirms.
+ * MATCH RULE — require ≥2 shared distinctive tokens (containment OR Jaccard ≥ 0.5),
+ * with ONE exception: both names are the SAME single token ("Blurebus"=="Blurebus Srl").
+ * Why ≥2: a SINGLE shared token is a brand or a common surname, and across two distinct
+ * legal entities it must NOT confirm. Two collision classes the validation audit caught:
+ *  - FRANCHISOR (2026-06-14): local "Agenzia Immobiliare Tecnocasa ... Albignasego" cites
+ *    the FRANCHISOR's footer VAT → registry name "Tecnocasa Franchising S.p.A." shares only
+ *    "tecnocasa" → was false-confirmed @0.95, attaching €58M. (Gabetti/Re-Max/Toscano/… too.)
+ *  - BARE-BRAND SISTER (2026-06-16): a different-city "Metroquadro Srl" {metroquadro} is a
+ *    subset of "Immobiliare Metroquadro" → the OLD containment rule confirmed it. Now the
+ *    single shared "metroquadro" is rejected (the real Padova Metroquadro confirms because
+ *    its registry name "IMMOBILIARE METROQUADRO A R.L." shares 2 tokens). Containment is
+ *    still honored at ≥2 tokens (owner-suffix: "Immobiliare Giglio" ⊆ "...di Cecchinato Ornella").
  */
 const NAME_LEGAL_FORMS = new Set(['srl', 'srls', 'spa', 'snc', 'sas', 'sapa', 'ss', 'sc', 'scarl', 'scrl', 'soc', 'coop']);
 function nameTokens(s: string): Set<string> {
   return new Set(normalizeCompanyNameForKey(s).split(' ').filter((t) => t.length > 2 && !NAME_LEGAL_FORMS.has(t)));
+}
+/** Count of shared distinctive tokens — used to tell a CONFIRM (≥2) from a clearly
+ *  FOREIGN name (0 shared) and an AMBIGUOUS one (exactly 1 shared) in vatResolve. */
+export function sharedNameTokenCount(a: string | undefined, b: string | undefined): number {
+  if (!a || !b) return 0;
+  const ta = nameTokens(a);
+  const tb = nameTokens(b);
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter += 1;
+  return inter;
 }
 export function companyNameMatches(a: string | undefined, b: string | undefined): boolean {
   if (!a || !b) return false;
@@ -69,9 +79,24 @@ export function companyNameMatches(a: string | undefined, b: string | undefined)
   let inter = 0;
   for (const t of ta) if (tb.has(t)) inter += 1;
   if (inter === 0) return false;
-  const contained = inter === ta.size || inter === tb.size; // one name's tokens ⊆ the other
-  const jaccard = inter / (ta.size + tb.size - inter);
-  return contained || jaccard >= 0.5;
+  // A single shared token (brand / common surname) confirms ONLY if it IS the whole
+  // name on both sides ("Blurebus" == "Blurebus Srl"); otherwise it's a collision.
+  if (inter === 1) return ta.size === 1 && tb.size === 1;
+  const contained = inter === ta.size || inter === tb.size; // one name's tokens ⊆ the other (owner-suffix)
+  return contained || inter / (ta.size + tb.size - inter) >= 0.5;
+}
+
+/**
+ * ENTITY-VERIFICATION GUARD — the field-level half of the wrong-entity defense.
+ * EVERY VAT-keyed firmographic step MUST call this before trusting the fetched data:
+ * the registered name the source returns for the VAT must match the lead, else the VAT
+ * belongs to a DIFFERENT legal entity (franchisor / accountant / sister company) and its
+ * data must be refused. Returns true when MISMATCHED. When the source returns no name we
+ * cannot verify → returns false (don't block — no worse than not having the guard).
+ */
+export function isWrongEntity(fetchedRegisteredName: string | undefined, leadCompanyName: string | undefined): boolean {
+  if (!fetchedRegisteredName || !leadCompanyName) return false;
+  return !companyNameMatches(fetchedRegisteredName, leadCompanyName);
 }
 
 const socialStep = (key: 'instagram' | 'facebook' | 'linkedin'): EnrichmentStep => ({
@@ -161,10 +186,15 @@ const vatResolve: EnrichmentStep = {
       return { value: cands[0], confidence: 0.6, source: 'vat:footer_unconfirmed', costEur: 0 };
     }
 
-    // IMPORTANT: VIES only covers VATs registered for INTRA-EU trade. Most
-    // domestic-only Italian SMBs are NOT in VIES (isValid:false / no name) even
-    // though their VAT is perfectly valid. So VIES can only CONFIRM (name match)
-    // or REJECT (it names a DIFFERENT company) — a VIES miss is NOT a rejection.
+    // VIES only covers VATs registered for INTRA-EU trade. Most domestic-only Italian
+    // SMBs are NOT in VIES (no name) even though their VAT is valid. THREE-WAY on the
+    // returned name (not binary — a binary match/skip over-rejects, the bug#3 lesson):
+    //   ≥2 shared tokens (companyNameMatches) → CONFIRM 0.95
+    //   exactly 1 shared token → AMBIGUOUS (brand collision OR legit descriptor-drop) →
+    //     keep at 0.6 unconfirmed, do NOT refuse (the fatturato entity-guard, which needs
+    //     a real ≥2 match, still refuses attaching that entity's firmographics)
+    //   0 shared tokens with a returned name → FOREIGN (positively another company) → skip
+    //   no name (privacy / not-in-VIES) → keep at 0.6 unconfirmed
     const company = ctx.lead.company_name as string | undefined;
     let firstUnconfirmed: string | undefined;
     for (const c of cands.slice(0, 3)) {
@@ -173,8 +203,8 @@ const vatResolve: EnrichmentStep = {
       if (name && companyNameMatches(name, company)) {
         return { value: c, confidence: 0.95, source: 'vat:vies_confirmed', costEur: 0 };
       }
-      if (name && !companyNameMatches(name, company)) continue; // VIES names ANOTHER company → foreign, skip
-      if (firstUnconfirmed === undefined) firstUnconfirmed = c; // not-in-VIES / privacy → keep, can't confirm
+      if (name && sharedNameTokenCount(name, company) === 0) continue; // names a CLEARLY different company → foreign, skip
+      if (firstUnconfirmed === undefined) firstUnconfirmed = c; // no name OR ambiguous single-shared-token → keep, can't confirm
     }
     if (firstUnconfirmed) return { value: firstUnconfirmed, confidence: 0.6, source: 'vat:footer_unconfirmed', costEur: 0 };
     // every candidate was POSITIVELY attributed by VIES to a different company.
@@ -216,14 +246,13 @@ const fatturatoItaliaStep = (field: 'revenue' | 'employees', confFloor: number):
     // ENTITY VERIFICATION (validation audit 2026-06-14, the franchise-collision bug):
     // a footer/input VAT can belong to a DIFFERENT legal entity than the lead — a
     // FRANCHISOR (a local "...Tecnocasa... Albignasego" agency cited the franchisor's
-    // VAT → €58M attached) or an accountant. fatturatoitalia returns the VAT's
-    // REGISTERED name; if it doesn't match the company, this is someone else's
-    // firmographics. Refuse it — regardless of provenance. This is the field-level
-    // guard; the VAT-field confirmation (vatResolve) is the other half. Both needed:
-    // resolveVat here trusts a 'site' VAT directly, so without this check the wrong
-    // revenue still attaches even when the VAT field correctly refused the same VAT.
+    // VAT → €58M attached) or an accountant. The shared isWrongEntity() guard refuses
+    // someone else's firmographics regardless of provenance. This is the field-level
+    // half; vatResolve is the other. Both needed: resolveVat trusts a 'site' VAT
+    // directly, so without this the wrong revenue attaches even when the VAT field
+    // correctly refused the same VAT.
     const company = ctx.lead.company_name as string | undefined;
-    if (fi.company_name && company && !companyNameMatches(fi.company_name, company)) {
+    if (isWrongEntity(fi.company_name, company)) {
       return { confidence: 0, source: `fatturatoitalia(${tag}:entity_mismatch)`, costEur: 0, skippedReason: 'vat_unverified' };
     }
 
@@ -266,6 +295,11 @@ export const FIELD_REGISTRY: EnrichmentFieldDescriptor[] = [
   {
     field: 'pec',
     target: 'pec',
+    // CONTRACT when activating pec.inipec_by_vat (or any VAT-keyed PEC fetch): the PEC is
+    // keyed on a VAT that may belong to a DIFFERENT entity (franchisor/accountant). The
+    // step MUST call isWrongEntity(fetchedRegisteredName, lead.company_name) and refuse on
+    // mismatch — the same field-level guard fatturato uses — or it re-opens the wrong-entity
+    // class (a franchisor's PEC attached to a local agency). pecFromBody is safe (same-domain).
     cascade: [pecFromBody, disabled('pec.inipec_by_vat', 1, 0, 'inipec')],
     ceilingEur: 0,
     stopConfidence: 0.8,
