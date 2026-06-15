@@ -97,9 +97,11 @@ was my check's title-format false-negative; the chart max-year is correct.)
 - [x] Structural ceilings confirmed as honest empties (not bugs)
 - [x] 10-row fatturato source-check folded in (9/10 + the bug, now fixed)
 - [x] VERDICT: bug-found → fix + 5 real-data goldens; 811 green; €0; nothing pushed
-- [ ] **RE-AUDIT BEFORE PUSH**: run ONE fresh sample post-fix when fatturatoitalia
-      isn't rate-limited from this session, confirm Tecnocasa-class agencies show
-      honest-empty fatturato — then the owner's 10-row check → push.
+- [x] **RE-AUDIT POST-FIX — DONE & CLEAN** (sample FINAL, n=16, Albignasego+Vigonza+
+      Selvazzano, fresh fetches): all 6 bug-classes pass (max-year 5/5, ranges 3/3, VAT
+      honest, 0 silent drops, ceiling honest); **Tecnocasa now revenue=(empty-honest),
+      vat=undefined** — the franchisor's €58M no longer attaches on fresh data. The fix
+      holds. → **CLEAR TO PUSH pending the owner's own 10-row source-check.**
 
 ## Bottom line
 The pipeline is now MORE correct than before the audit: the 5 prior bugs hold, and a
