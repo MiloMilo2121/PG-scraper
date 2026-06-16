@@ -54,6 +54,18 @@ export interface EnrichJob {
   items: Array<{ companyId: string; cells: Record<string, { status: CellStatus; value?: string; source?: string; confidence?: number }> }>;
 }
 
+// ---- judgment layer (L2–L5) ----
+export type JudgmentJobKind = 'discovery' | 'collect_signals' | 'judge' | 'validate_export';
+export type SectionState = 'queued' | 'running' | 'filled' | 'partial' | 'failed' | 'not_applicable';
+export interface JudgmentJob {
+  jobId: string;
+  kind: JudgmentJobKind;
+  status: 'running' | 'done' | 'error';
+  totalCostEur: number;
+  error?: string;
+  items: Array<{ companyId: string; sections: Record<string, { state: SectionState; summary?: string; evidenceCount?: number }> }>;
+}
+
 async function get<T>(path: string): Promise<T> {
   const r = await fetch(`${BASE}${path}`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`${path} → ${r.status}`);
@@ -81,6 +93,12 @@ export const api = {
   enrich: (companyIds: string[], fields: string[]) => post<{ jobId: string; itemCount: number }>('/api/jobs/enrich', { companyIds, fields }),
   job: (id: string) => get<EnrichJob>(`/api/jobs/${id}`),
   scrape: (body: Record<string, unknown>) => post<{ accepted: boolean; note: string }>('/api/jobs/scrape', body),
+  // judgment-layer buttons (L2–L5) — each independent, idempotent, cumulative.
+  discovery: (companyIds: string[]) => post<{ jobId: string; kind: JudgmentJobKind; itemCount: number }>('/api/jobs/discovery', { companyIds }),
+  collectSignals: (companyIds: string[]) => post<{ jobId: string; kind: JudgmentJobKind; itemCount: number }>('/api/jobs/collect-signals', { companyIds }),
+  judge: (companyIds: string[]) => post<{ jobId: string; kind: JudgmentJobKind; itemCount: number }>('/api/jobs/judge', { companyIds }),
+  validateExport: (companyIds: string[]) => post<{ jobId: string; kind: JudgmentJobKind; itemCount: number }>('/api/jobs/validate-export', { companyIds }),
+  judgmentJob: (id: string) => get<JudgmentJob>(`/api/jobs/${id}`),
 };
 
 export const API_BASE = BASE;

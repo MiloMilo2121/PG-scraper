@@ -5,11 +5,18 @@ import { loadSeed, DEV_TENANT_ID } from './seed';
 import type { SeedResult } from './seed';
 import { Deduplicator } from '../discovery/deduper';
 import { DirectFetchProvider } from '../providers/http/direct_fetch';
+import { BingHtmlProvider } from '../providers/serp/bing_html';
 import { runFieldCascade } from '../enrichment/fields/run_field_cascade';
 import { FIELD_BY_NAME } from '../enrichment/fields/field_registry';
 import { deepExtractFromSite } from '../enrichment/extract/deep_pages';
 import type { BodyExtraction } from '../enrichment/extract/extract_from_body';
-import type { EnrichableField } from '../api/types';
+import type { EnrichableField, JudgmentJobKind, SectionStatus } from '../api/types';
+import type { JudgmentSection, JudgmentRecord } from '../types/judgment';
+import { runJudgment } from '../judgment/run_judgment';
+import { getActiveJudgmentConfig } from '../judgment/config';
+import { emptyBundle } from '../judgment/harvest/source_harvest';
+import type { HarvestContext } from '../judgment/harvest/source_harvest';
+import { InMemoryEnrichmentCache } from '../persistence/enrichment_cache';
 
 /**
  * pg4 dev API server — single-tenant, local, zero-cloud. Wraps the REAL engine
@@ -23,6 +30,11 @@ import type { EnrichableField } from '../api/types';
 const PORT = Number(process.env.PG4_API_PORT ?? 8787);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const FETCH = new DirectFetchProvider();
+// Free SERP (Bing HTML, €0) wired into the judgment A-collector so Axis A is
+// not structurally off in dev: press/awards/patents/historic-marks are actually
+// searched. Low-yield on free search (R12 lesson) + degrades to `unknown` on
+// failure — the STRONG A sources (registry/Places) stay key-gated by design.
+const SERP = new BingHtmlProvider();
 
 // ---- in-memory job registry for the async enrich-field UX (polling) ----
 type CellStatus = 'queued' | 'running' | 'filled' | 'failed' | 'not_found';
@@ -36,6 +48,144 @@ interface EnrichJob {
 }
 const jobs = new Map<string, EnrichJob>();
 let jobSeq = 0;
+
+// ---- judgment-layer jobs (L2–L5) ----
+// Shared cross-button cache so re-running "judge" after "discovery" reuses the
+// already-fetched website harvest (cache-first / cost-first, the §0 principle).
+const JCACHE = new InMemoryEnrichmentCache();
+interface JudgmentJob {
+  id: string;
+  kind: JudgmentJobKind;
+  status: 'running' | 'done' | 'error';
+  costEur: number;
+  error?: string;
+  items: Map<string, { companyId: string; sections: Partial<Record<JudgmentSection, SectionStatus>> }>;
+}
+const jJobs = new Map<string, JudgmentJob>();
+
+/** Which record sections each button writes (independent, cumulative). */
+const KIND_SECTIONS: Record<JudgmentJobKind, JudgmentSection[]> = {
+  discovery: ['footprint'],
+  collect_signals: ['footprint', 'segnali_a', 'segnali_b'],
+  judge: ['valutazione_a', 'valutazione_b', 'contesto_categoria', 'verdetto_gap', 'leva'],
+  validate_export: ['validazione'],
+};
+
+const RECORD_KEY: Record<JudgmentSection, keyof JudgmentRecord | null> = {
+  footprint: 'footprint',
+  segnali_a: 'segnali_A',
+  segnali_b: 'segnali_B',
+  valutazione_a: 'valutazione_A',
+  valutazione_b: 'valutazione_B',
+  contesto_categoria: 'contesto_categoria',
+  verdetto_gap: 'verdetto_gap',
+  leva: 'leva',
+  validazione: 'validazione',
+  judgment_meta: 'meta',
+};
+
+function sectionSummary(section: JudgmentSection, rec: JudgmentRecord): SectionStatus {
+  switch (section) {
+    case 'footprint': {
+      const ch = rec.footprint?.channels ?? [];
+      const present = ch.filter((c) => c.state === 'confirmed_present').length;
+      const unknown = ch.filter((c) => c.state === 'unknown_not_found').length;
+      return { state: ch.length ? 'filled' : 'partial', summary: `${present} present / ${unknown} unknown / ${ch.length} surfaces`, evidenceCount: present };
+    }
+    case 'segnali_a':
+    case 'segnali_b': {
+      const arr = (section === 'segnali_a' ? rec.segnali_A : rec.segnali_B) ?? [];
+      const present = arr.filter((s) => s.state === 'confirmed_present').length;
+      return { state: arr.length ? 'filled' : 'partial', summary: `${present} present / ${arr.length} signals`, evidenceCount: present };
+    }
+    case 'verdetto_gap': {
+      const v = rec.verdetto_gap;
+      return { state: v ? 'filled' : 'failed', summary: v ? `${v.quadrant} A=${v.scoreA.toFixed(2)} B=${v.scoreB.toFixed(2)} gap=${v.gap.toFixed(2)} target=${v.target}` : 'no verdict' };
+    }
+    case 'valutazione_a':
+      return { state: rec.valutazione_A ? 'filled' : 'partial', summary: rec.valutazione_A ? `A=${rec.valutazione_A.score.toFixed(2)} (${rec.valutazione_A.level})` : undefined };
+    case 'valutazione_b':
+      return { state: rec.valutazione_B ? 'filled' : 'partial', summary: rec.valutazione_B ? `B=${rec.valutazione_B.score.toFixed(2)} (${rec.valutazione_B.level})` : undefined };
+    case 'leva':
+      return { state: rec.leva ? 'filled' : 'not_applicable', summary: (rec.leva ?? []).map((l) => l.kind).join(' → ') || 'none' };
+    case 'validazione':
+      return { state: rec.validazione ? 'filled' : 'partial', summary: rec.validazione ? `score=${rec.validazione.validationScore.toFixed(2)} ${rec.validazione.consistent ? 'consistent' : 'INCONSISTENT'}` : undefined };
+    case 'contesto_categoria':
+      return { state: rec.contesto_categoria ? 'filled' : 'not_applicable' };
+    case 'judgment_meta':
+      return { state: rec.meta ? 'filled' : 'partial' };
+  }
+}
+
+function judgmentCtx(): HarvestContext {
+  return {
+    tenantId: DEV_TENANT_ID,
+    cache: JCACHE,
+    fetcher: async (url: string) => {
+      try {
+        return (await FETCH.fetch(url, { timeoutMs: 8000 })).html;
+      } catch {
+        return undefined;
+      }
+    },
+    // free SERP for the A-collector's third-party searches (press/awards/patents).
+    // Failures/blocks degrade to `unknown` (never fabricated absence).
+    search: async (query: string) => {
+      try {
+        return await SERP.search(query, { limit: 8 });
+      } catch {
+        return [];
+      }
+    },
+    paidEnabled: false, // dev: free-first, deterministic judges (no LLM)
+    now: () => Date.now(),
+  };
+}
+
+async function runJudgmentOnCompany(job: JudgmentJob, cid: string): Promise<void> {
+  const row = seed.db.getById(DEV_TENANT_ID, cid) as Record<string, unknown> | undefined;
+  const item = job.items.get(cid)!;
+  const sections = KIND_SECTIONS[job.kind];
+  for (const s of sections) item.sections[s] = { state: 'running' };
+  if (!row) {
+    for (const s of sections) item.sections[s] = { state: 'failed', summary: 'company not found' };
+    return;
+  }
+  try {
+    const rec = await runJudgment(row as unknown as Lead, judgmentCtx(), { config: getActiveJudgmentConfig() }, emptyBundle());
+    // persist the kind's sections onto the company row (cumulative, section-replace)
+    const patch: Record<string, unknown> = {};
+    for (const s of sections) {
+      const k = RECORD_KEY[s];
+      if (k) patch[s] = rec[k];
+      item.sections[s] = sectionSummary(s, rec);
+    }
+    patch['judgment_meta'] = rec.meta;
+    seed.db.patchCompany(DEV_TENANT_ID, cid, patch);
+  } catch (err) {
+    for (const s of sections) item.sections[s] = { state: 'failed', summary: (err as Error).message.slice(0, 80) };
+  }
+}
+
+async function runJudgmentJob(job: JudgmentJob, companyIds: string[]): Promise<void> {
+  const deadline = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), ENRICH_JOB_TIMEOUT_MS).unref?.());
+  const work = pool(companyIds, ENRICH_CONCURRENCY, (cid) => runJudgmentOnCompany(job, cid));
+  try {
+    const r = await Promise.race([work.then(() => 'done' as const), deadline]);
+    job.status = r === 'timeout' ? 'error' : 'done';
+    if (r === 'timeout') job.error = `job exceeded ${ENRICH_JOB_TIMEOUT_MS / 1000}s`;
+  } catch (err) {
+    job.status = 'error';
+    job.error = (err as Error).message;
+  }
+}
+
+const JUDGMENT_ROUTES: Record<string, JudgmentJobKind> = {
+  '/api/jobs/discovery': 'discovery',
+  '/api/jobs/collect-signals': 'collect_signals',
+  '/api/jobs/judge': 'judge',
+  '/api/jobs/validate-export': 'validate_export',
+};
 
 // F0 — footgun guards: bound concurrency + cap total job duration so a large
 // selection can't serialise hundreds of 8s fetches into a 67-min event-loop
@@ -221,6 +371,17 @@ function jobView(job: EnrichJob) {
   };
 }
 
+function jJobView(job: JudgmentJob) {
+  return {
+    jobId: job.id,
+    kind: job.kind,
+    status: job.status,
+    totalCostEur: job.costEur,
+    error: job.error,
+    items: [...job.items.values()],
+  };
+}
+
 async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
   const p = url.pathname;
@@ -286,8 +447,34 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return json(res, 202, { jobId: job.id, itemCount: ids.length });
   }
 
+  // ---- judgment-layer buttons (L2–L5): discovery / collect-signals / judge / validate-export ----
+  const jKind = JUDGMENT_ROUTES[p];
+  if (jKind && req.method === 'POST') {
+    const body = (await readBody(req)) as { companyIds?: string[] };
+    const ids = Array.isArray(body.companyIds) ? body.companyIds : [];
+    if (!ids.length) return json(res, 422, { error: 'companyIds is required' });
+    if (ids.length > ENRICH_MAX_SELECTION) return json(res, 422, { error: `selection too large (${ids.length}); max ${ENRICH_MAX_SELECTION}` });
+    const job: JudgmentJob = {
+      id: `jjob_${++jobSeq}`,
+      kind: jKind,
+      status: 'running',
+      costEur: 0,
+      items: new Map(
+        ids.map((cid) => [
+          cid,
+          { companyId: cid, sections: Object.fromEntries(KIND_SECTIONS[jKind].map((s) => [s, { state: 'queued' as const }])) as Partial<Record<JudgmentSection, SectionStatus>> },
+        ]),
+      ),
+    };
+    jJobs.set(job.id, job);
+    void runJudgmentJob(job, ids);
+    return json(res, 202, { jobId: job.id, kind: jKind, itemCount: ids.length });
+  }
+
   const jobMatch = p.match(/^\/api\/jobs\/([^/]+)$/);
   if (jobMatch && req.method === 'GET') {
+    const jj = jJobs.get(jobMatch[1]);
+    if (jj) return json(res, 200, jJobView(jj));
     const job = jobs.get(jobMatch[1]);
     if (!job) return json(res, 404, { error: 'job not found' });
     return json(res, 200, jobView(job));

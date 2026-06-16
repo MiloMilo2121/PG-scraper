@@ -52,8 +52,14 @@ export const DEFAULTS = {
   },
   llm: {
     defaultModel: 'gpt-4o-mini',
+    // Judgment-layer default judge (Anthropic). Latest capable Claude.
+    anthropicModel: 'claude-opus-4-8',
+    // Claude reachable via OpenRouter without a dedicated Anthropic key.
+    openrouterModel: 'anthropic/claude-opus-4-8',
     maxTokens: 1024,
     temperature: 0,
+    /** Judgment judges need a larger budget for structured multi-dimension output. */
+    judgeMaxTokens: 2000,
   },
   scoring: {
     pivaMatchConfidence: 0.95,

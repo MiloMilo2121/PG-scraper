@@ -54,6 +54,8 @@ export default function Dashboard() {
   const [filterText, setFilterText] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [cells, setCells] = useState<CellMap>({});
+  // judgment layer (L2–L5): per-company verdict badge + live section state
+  const [verdicts, setVerdicts] = useState<Record<string, { target?: string; quadrant?: string; running?: boolean; summary?: string }>>({});
   const pollRef = useRef<Set<string>>(new Set());
   const PAGE_SIZE = 50;
 
@@ -187,6 +189,64 @@ export default function Dashboard() {
     pollRef.current.delete(jobId);
     // refresh metrics so fill-rate bars climb after a live enrich
     api.metrics().then(setMetrics).catch(() => {});
+  }
+
+  // ---- judgment layer (L2–L5): one button per layer, polled per-section ----
+  async function judgmentAction(kind: 'discovery' | 'collect_signals' | 'judge' | 'validate_export') {
+    const ids = [...selected];
+    if (!ids.length) return;
+    setVerdicts((prev) => {
+      const n = { ...prev };
+      for (const id of ids) n[id] = { ...(n[id] ?? {}), running: true };
+      return n;
+    });
+    try {
+      const fn = kind === 'discovery' ? api.discovery : kind === 'collect_signals' ? api.collectSignals : kind === 'judge' ? api.judge : api.validateExport;
+      const { jobId } = await fn(ids);
+      setErr(null);
+      pollJudgment(jobId);
+    } catch (e) {
+      setErr((e as Error).message);
+      setVerdicts((prev) => {
+        const n = { ...prev };
+        for (const id of ids) if (n[id]) n[id].running = false;
+        return n;
+      });
+    }
+  }
+
+  async function pollJudgment(jobId: string) {
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 1200));
+      let job;
+      try {
+        job = await api.judgmentJob(jobId);
+      } catch {
+        setErr('connessione al server persa durante il giudizio — riprova');
+        break;
+      }
+      setVerdicts((prev) => {
+        const n = { ...prev };
+        for (const it of job.items) {
+          const cur = { ...(n[it.companyId] ?? {}) };
+          const v = it.sections['verdetto_gap'];
+          if (v?.summary) {
+            cur.summary = v.summary;
+            cur.target = v.summary.match(/target=(\w+)/)?.[1];
+            cur.quadrant = v.summary.match(/(A[+\-?]B[+\-?])/)?.[1];
+          }
+          cur.running = Object.values(it.sections).some((s) => s.state === 'running' || s.state === 'queued');
+          n[it.companyId] = cur;
+        }
+        return n;
+      });
+      if (job.status === 'error') {
+        setErr(job.error ?? 'judgment job failed');
+        break;
+      }
+      if (job.status === 'done') break;
+    }
+    api.cost().then(setCost).catch(() => {});
   }
 
   async function submitIntent() {
@@ -354,6 +414,17 @@ export default function Dashboard() {
                 + {f.label}
               </button>
             ))}
+            <span className="sel" style={{ marginLeft: 8, opacity: 0.7 }}>· giudizio:</span>
+            {([
+              ['discovery', 'L2 Discovery'],
+              ['collect_signals', 'L3 Segnali A/B'],
+              ['judge', 'L4 Giudizio'],
+              ['validate_export', 'L5 Validazione'],
+            ] as const).map(([kind, label]) => (
+              <button key={kind} className="ebtn" disabled={!selected.size || selected.size > MAX_ENRICH} onClick={() => judgmentAction(kind)} title={`${label} sulle aziende selezionate — layer indipendente, idempotente, cumulativo`}>
+                {label}
+              </button>
+            ))}
           </div>
           <div className="tablewrap">
             <table>
@@ -363,6 +434,7 @@ export default function Dashboard() {
                   <th>Azienda</th>
                   <th>Telefono</th>
                   <th>Sito</th>
+                  <th>Verdetto</th>
                   {ENRICH_FIELDS.map((f) => <th key={f.key}>{f.label}</th>)}
                 </tr>
               </thead>
@@ -373,11 +445,12 @@ export default function Dashboard() {
                     <td className="name">{r.company_name}<div className="sub">{r.city}{r.province ? ` (${r.province})` : ''} · {r.category}</div></td>
                     <td className="num">{r.phone ?? <span className="muted">—</span>}</td>
                     <td>{r.official_website ? <a href={r.official_website as string} target="_blank" rel="noreferrer">{hostOf(r.official_website as string)}</a> : <span className="muted">—</span>}</td>
+                    <td>{verdictCell(verdicts[r.id])}</td>
                     {ENRICH_FIELDS.map((f) => <td key={f.key}>{cellOf(r.id, f.key, f.col, r)}</td>)}
                   </tr>
                 ))}
                 {pageRows.length === 0 && (
-                  <tr><td colSpan={4 + ENRICH_FIELDS.length}><div className="empty-state">Nessuna azienda con questi filtri.</div></td></tr>
+                  <tr><td colSpan={5 + ENRICH_FIELDS.length}><div className="empty-state">Nessuna azienda con questi filtri.</div></td></tr>
                 )}
               </tbody>
             </table>
@@ -399,4 +472,17 @@ function hostOf(url: string): string {
   } catch {
     return url;
   }
+}
+
+function verdictCell(v?: { target?: string; quadrant?: string; running?: boolean; summary?: string }) {
+  if (!v) return <span className="cell empty">·</span>;
+  if (v.running && !v.target) return <span className="cell running"><span className="spinner" /> giudico…</span>;
+  if (!v.target) return <span className="cell empty">·</span>;
+  const color = v.target === 'yes' ? 'var(--good, #16a34a)' : v.target === 'borderline' ? 'var(--accent-2, #d97706)' : 'var(--muted, #888)';
+  return (
+    <span className="cell filled" title={v.summary} style={{ color, fontWeight: 600 }}>
+      {v.target === 'yes' ? '★ target' : v.target === 'borderline' ? '~ borderline' : '— no'}
+      {v.quadrant ? <span className="muted" style={{ marginLeft: 6, fontWeight: 400 }}>{v.quadrant}</span> : null}
+    </span>
+  );
 }

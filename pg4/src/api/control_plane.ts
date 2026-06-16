@@ -8,6 +8,8 @@ import {
   type ImportCompaniesResponse,
   type CreateEnrichJobRequest,
   type CreateScrapeJobRequest,
+  type CreateJudgmentJobRequest,
+  type JudgmentJobKind,
   type JobAccepted,
   type JobStatus,
   type JobStatusView,
@@ -38,7 +40,7 @@ const PAID_FIELD_PRICE_EUR: Partial<Record<EnrichableField, number>> = {
 interface JobRecord {
   id: string;
   tenantId: string;
-  kind: 'scrape_run' | 'enrich_fields';
+  kind: 'scrape_run' | 'enrich_fields' | JudgmentJobKind;
   status: JobStatus;
   fields: EnrichableField[];
   paidEnabled: boolean;
@@ -156,6 +158,46 @@ export class ControlPlane {
     };
     this.tenantJobs(ctx.tenantId).set(job.id, job);
     return { jobId: job.id, status: job.status, itemCount: 1, estimatedCostEur: 0 };
+  }
+
+  // ---- POST /api/jobs/{discovery|collect-signals|judge|validate-export} --
+  // The four judgment-layer buttons (L2–L5). Each is an independent, idempotent,
+  // re-runnable job kind. Same tenant-scoping + ownership validation as enrich.
+  async createDiscoveryJob(ctx: TenantContext, req: CreateJudgmentJobRequest): Promise<JobAccepted> {
+    return this.createJudgmentJob(ctx, 'discovery', req);
+  }
+  async createCollectSignalsJob(ctx: TenantContext, req: CreateJudgmentJobRequest): Promise<JobAccepted> {
+    return this.createJudgmentJob(ctx, 'collect_signals', req);
+  }
+  async createJudgeJob(ctx: TenantContext, req: CreateJudgmentJobRequest): Promise<JobAccepted> {
+    return this.createJudgmentJob(ctx, 'judge', req);
+  }
+  async createValidateExportJob(ctx: TenantContext, req: CreateJudgmentJobRequest): Promise<JobAccepted> {
+    return this.createJudgmentJob(ctx, 'validate_export', req);
+  }
+
+  private async createJudgmentJob(ctx: TenantContext, kind: JudgmentJobKind, req: CreateJudgmentJobRequest): Promise<JobAccepted> {
+    this.requireWrite(ctx);
+    if (!req.companyIds?.length) throw new ApiError(422, 'companyIds must be non-empty');
+    const tenantCompanyIds = new Set(await this.db.getCompanyIds(ctx.tenantId));
+    for (const id of req.companyIds) {
+      if (!tenantCompanyIds.has(id)) throw new ApiError(404, `company ${id} not found in this tenant`);
+    }
+    const job: JobRecord = {
+      id: `job_${ctx.tenantId.slice(0, 6)}_${++this.seq}`,
+      tenantId: ctx.tenantId,
+      kind,
+      status: 'queued',
+      fields: [],
+      paidEnabled: req.paidEnabled ?? false,
+      runCostCeilingEur: req.runCostCeilingEur,
+      totalCostEur: 0,
+      items: req.companyIds.map((cid) => ({ id: `item_${++this.seq}`, companyId: cid, fields: [], status: 'queued' as const, costEur: 0 })),
+    };
+    this.tenantJobs(ctx.tenantId).set(job.id, job);
+    // judge/validate use the LLM (paid); discovery/collect are free-first.
+    const estimatedCostEur = req.paidEnabled && (kind === 'judge' || kind === 'validate_export') ? Math.round(req.companyIds.length * 0.04 * 1e4) / 1e4 : 0;
+    return { jobId: job.id, status: job.status, itemCount: job.items.length, estimatedCostEur };
   }
 
   // ---- GET /api/jobs/:id (status / live view) ---------------------------

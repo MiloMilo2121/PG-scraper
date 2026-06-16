@@ -10,6 +10,10 @@ import { DirectFetchProvider } from './http/direct_fetch';
 import { DdgLiteProvider } from './serp/ddg_lite';
 import { BingHtmlProvider } from './serp/bing_html';
 import { SerperProvider } from './serp/serper';
+import { TavilyProvider } from './serp/tavily';
+import { ExaProvider } from './serp/exa';
+import { AnthropicProvider } from './llm/anthropic';
+import { OpenRouterProvider } from './llm/openrouter';
 
 /**
  * The provider registry. Adds providers in tier order. Missing API keys are
@@ -35,14 +39,18 @@ export function buildProviderCatalog(ledger: CostLedger): ProviderRouter {
     new DdgLiteProvider(),
     new BingHtmlProvider(),
     new SerperProvider(), // Phase G — paid tier 2; available() gated by SERPER_ENABLED + SERPER_API_KEY
-    // Phase 3+: ExaProvider, TavilyProvider, PerplexityProvider
+    new TavilyProvider(), // judgment-layer discovery fallback — paid tier 2, gated
+    new ExaProvider(), // judgment-layer discovery fallback — paid tier 2, gated
   ];
 
   const https: HttpProvider[] = [new DirectFetchProvider()];
   // Phase 3+: BrightDataProvider, FirecrawlProvider, OracleCrawl4aiProvider
 
   const llms: LLMProvider[] = [
-    // Phase 3+: OpenAIProvider, OpenRouterProvider, DeepseekProvider
+    // Judgment layer (L4/L5). Both paid tier 2, default-OFF (paid-gate). Claude is
+    // the default judge: directly (Anthropic) or via OpenRouter (no new secret).
+    new AnthropicProvider(),
+    new OpenRouterProvider(),
   ];
 
   // Phase F.2 — per-provider breaker tuning. The default global config

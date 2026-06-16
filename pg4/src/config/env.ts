@@ -49,12 +49,26 @@ const EnvSchema = z.object({
   OPENAI_MODEL: z.string().default(DEFAULTS.llm.defaultModel),
   OPENROUTER_ENABLED: z.coerce.boolean().default(false),
   OPENROUTER_API_KEY: z.string().optional(),
+  OPENROUTER_MODEL: z.string().default(DEFAULTS.llm.openrouterModel),
   DEEPSEEK_ENABLED: z.coerce.boolean().default(false),
   DEEPSEEK_API_KEY: z.string().optional(),
+  // Anthropic — default judge LLM for the judgment layer (L4/L5). PAID,
+  // disabled by default like every other paid provider (paid-gate OFF).
+  ANTHROPIC_ENABLED: z.coerce.boolean().default(false),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_MODEL: z.string().default(DEFAULTS.llm.anthropicModel),
 
   // Enrichment extras
   HUNTER_ENABLED: z.coerce.boolean().default(false),
   HUNTER_API_KEY: z.string().optional(),
+
+  // Judgment-layer sources (all disabled by default; presence-before-depth).
+  // Google Places API — official source for Maps/GBP/reviews/hours (plan §19).
+  GOOGLE_PLACES_ENABLED: z.coerce.boolean().default(false),
+  GOOGLE_PLACES_API_KEY: z.string().optional(),
+  // Ad transparency libraries (Meta Ad Library / Google Ads Transparency).
+  ADLIB_ENABLED: z.coerce.boolean().default(false),
+  ADLIB_API_KEY: z.string().optional(),
 
   // Openapi.com — official Italian company registry (InfoCamere reseller). PAID,
   // disabled by default. Used ONLY for top companies on explicit request (the

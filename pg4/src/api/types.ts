@@ -1,4 +1,5 @@
 import type { Lead } from '../types/lead';
+import type { JudgmentSection } from '../types/judgment';
 
 /**
  * API control-plane types. These are the request/response contracts the
@@ -90,7 +91,7 @@ export interface JobItemView {
 
 export interface JobStatusView {
   jobId: string;
-  kind: 'scrape_run' | 'enrich_fields';
+  kind: 'scrape_run' | 'enrich_fields' | JudgmentJobKind;
   status: JobStatus;
   totalCostEur: number;
   items: JobItemView[];
@@ -112,4 +113,39 @@ export interface AddSuppressionRequest {
   vat?: string;
   email?: string;
   reason: 'operator' | 'art21_objection' | 'art14' | 'rpo';
+}
+
+// ---- judgment layer jobs (L2–L5) --------------------------------------------
+// New `enrichment_jobs.kind` values — accepted with NO migration (the column is
+// free text in 0001). Each maps to an independent, idempotent, cumulative button.
+export type JudgmentJobKind = 'discovery' | 'collect_signals' | 'judge' | 'validate_export';
+
+/** Per-SECTION status — the section-grained analogue of the per-field CellStatus. */
+export type SectionState = 'queued' | 'running' | 'filled' | 'partial' | 'failed' | 'not_applicable';
+export interface SectionStatus {
+  state: SectionState;
+  summary?: string;
+  evidenceCount?: number;
+}
+
+export interface CreateJudgmentJobRequest {
+  companyIds: string[];
+  /** judge/validate use the LLM → gated by paidEnabled (default false = deterministic). */
+  paidEnabled?: boolean;
+  runCostCeilingEur?: number;
+  /** discovery: whether to chase socials via search (default true). */
+  chaseSocial?: boolean;
+}
+
+export interface JudgmentJobItemView {
+  companyId: string;
+  sections: Partial<Record<JudgmentSection, SectionStatus>>;
+}
+
+export interface JudgmentJobStatusView {
+  jobId: string;
+  kind: JudgmentJobKind;
+  status: JobStatus;
+  totalCostEur: number;
+  items: JudgmentJobItemView[];
 }
