@@ -56,6 +56,14 @@ const EnvSchema = z.object({
   HUNTER_ENABLED: z.coerce.boolean().default(false),
   HUNTER_API_KEY: z.string().optional(),
 
+  // Openapi.com — official Italian company registry (InfoCamere reseller). PAID,
+  // disabled by default. Used ONLY for top companies on explicit request (the
+  // activation layer — see docs/openapi_layer_rules.md). The free IT-search tier
+  // (≤100/day) still requires the key + enabled. Base URL switches prod/sandbox.
+  OPENAPI_ENABLED: z.coerce.boolean().default(false),
+  OPENAPI_API_KEY: z.string().optional(),
+  OPENAPI_BASE_URL: z.string().url().default('https://company.openapi.com'),
+
   // Browser
   PLAYWRIGHT_HEADLESS: z.coerce.boolean().default(true),
   PATCHRIGHT_ENABLED: z.coerce.boolean().default(false),
