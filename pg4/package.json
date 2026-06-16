@@ -18,6 +18,8 @@
     "enrich": "tsx src/cli/enrich.ts",
     "run": "tsx src/cli/run.ts",
     "benchmark": "tsx src/cli/benchmark.ts",
+    "judge": "tsx src/cli/judge.ts",
+    "judge:eval": "tsx src/scripts/judgment_eval.ts",
     "validate:output": "tsx src/scripts/validate_output.ts",
     "lookup": "tsx src/cli/lookup.ts",
     "serve": "tsx src/server/api_server.ts",
