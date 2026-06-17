@@ -9,7 +9,7 @@ import { harvestSource, emptyBundle } from '../../../src/judgment/harvest/source
 import type { HarvestContext, PageFetcher } from '../../../src/judgment/harvest/source_harvest';
 import { WebsiteSourceAdapter } from '../../../src/judgment/harvest/adapters/website_adapter';
 import { computeCategoryProfile } from '../../../src/judgment/benchmark';
-import { evaluate, type GoldenItem } from '../../../src/judgment/eval';
+import { evaluate, evaluateByCategory, type GoldenItem } from '../../../src/judgment/eval';
 import type { JudgmentRecord } from '../../../src/types/judgment';
 
 const config = getActiveJudgmentConfig();
@@ -63,6 +63,25 @@ describe('eval harness (§15) — precision/recall + separate A/B agreement', ()
     expect(report.target.precision).toBe(1);
     expect(report.target.recall).toBe(1);
     expect(report.aAgreement).toBe(1);
+  });
+
+  it('evaluateByCategory groups PER BLOCK and never pools (§1.4) — a block can be 1.0 while another is 0', () => {
+    const golden: GoldenItem[] = [
+      // block "resto": the judge gets it right (target yes ↔ yes)
+      { id: 'r1', categoria: 'resto', expectedTarget: 'yes' },
+      // block "dental": the judge is WRONG (expected yes, predicted no) — must NOT be hidden by resto
+      { id: 'd1', categoria: 'dental', expectedTarget: 'yes' },
+    ];
+    const yes = (q: string): JudgmentRecord => ({ verdetto_gap: { businessModel: 'unknown', quadrant: q, scoreA: 0, scoreB: 0, gap: 0, gapWidth: 'narrow', trajectory: 'unknown', cause: 'unknown', disqualifiers: [], target: 'yes', motivation: '', confidence: 0.5 } } as unknown as JudgmentRecord);
+    const no = (q: string): JudgmentRecord => ({ verdetto_gap: { businessModel: 'unknown', quadrant: q, scoreA: 0, scoreB: 0, gap: 0, gapWidth: 'narrow', trajectory: 'unknown', cause: 'unknown', disqualifiers: [], target: 'no', motivation: '', confidence: 0.5 } } as unknown as JudgmentRecord);
+    const preds = new Map<string, JudgmentRecord>([['r1', yes('A+B-')], ['d1', no('A-B-')]]);
+
+    const { blocks, categories } = evaluateByCategory(golden, preds);
+    expect(categories).toEqual(['dental', 'resto']); // sorted, two blocks
+    expect(blocks.resto.target.recall).toBe(1); // resto: correct
+    expect(blocks.dental.target.recall).toBe(0); // dental: missed — visible, not averaged away
+    expect(blocks.resto.n).toBe(1);
+    expect(blocks.dental.n).toBe(1);
   });
 });
 

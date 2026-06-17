@@ -14,6 +14,14 @@ import type { AxisLevel, JudgmentRecord, Quadrant, TargetVerdict, BusinessModel 
 
 export interface GoldenItem {
   id: string;
+  /**
+   * The BLOCK label for stratified eval (§1.4 + §17): metrics are computed PER block,
+   * never pooled — the A of a restaurant (1300 reviews) and the A of a dentist
+   * (credentials) are not the same metro, so a single global number is meaningless.
+   * Distinct from `lead.category` (the firm's own category); the harness falls back
+   * to lead.category when this is absent.
+   */
+  categoria?: string;
   expectedTarget: TargetVerdict;
   expectedQuadrant?: Quadrant;
   expectedALevel?: AxisLevel;
@@ -88,4 +96,30 @@ export function evaluate(golden: GoldenItem[], predictions: Map<string, Judgment
     bAgreement: bTot > 0 ? Math.round((bHit / bTot) * 1000) / 1000 : undefined,
     modelAgreement: mTot > 0 ? Math.round((mHit / mTot) * 1000) / 1000 : undefined,
   };
+}
+
+export interface MultiBlockReport {
+  /** Per-block report, keyed by `categoria`. NEVER pooled into one number (§1.4). */
+  blocks: Record<string, EvalReport>;
+  /** Block labels, sorted, for stable iteration. */
+  categories: string[];
+}
+
+/**
+ * Group golden items by `categoria` (block) and run `evaluate` PER block. Returns one
+ * EvalReport per block — the eval mirrors the per-category benchmark (§17): the judge
+ * must be validated as good *within each model*, not on a meaningless cross-block mean.
+ * Items without a categoria fall into 'uncategorized'.
+ */
+export function evaluateByCategory(golden: GoldenItem[], predictions: Map<string, JudgmentRecord>): MultiBlockReport {
+  const groups = new Map<string, GoldenItem[]>();
+  for (const g of golden) {
+    const cat = g.categoria && g.categoria.trim() ? g.categoria.trim() : 'uncategorized';
+    const arr = groups.get(cat) ?? [];
+    arr.push(g);
+    groups.set(cat, arr);
+  }
+  const blocks: Record<string, EvalReport> = {};
+  for (const [cat, items] of groups) blocks[cat] = evaluate(items, predictions);
+  return { blocks, categories: [...groups.keys()].sort() };
 }
