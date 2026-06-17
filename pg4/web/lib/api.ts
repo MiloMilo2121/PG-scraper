@@ -66,6 +66,48 @@ export interface JudgmentJob {
   items: Array<{ companyId: string; sections: Record<string, { state: SectionState; summary?: string; evidenceCount?: number }> }>;
 }
 
+// Full verdict detail (the persisted L2–L5 sections) for the judgment view.
+export interface AxisEval {
+  axis: 'A' | 'B';
+  score: number;
+  level: 'high' | 'mid' | 'low' | 'unknown';
+  rationale?: string;
+  signalsPresent?: number;
+  signalsConsidered?: number;
+  signalsUnknown?: number;
+}
+export interface GapVerdict {
+  businessModel?: string;
+  quadrant?: string;
+  scoreA?: number;
+  scoreB?: number;
+  gap?: number;
+  gapWidth?: string;
+  trajectory?: string;
+  cause?: string;
+  disqualifiers?: string[];
+  target?: 'yes' | 'no' | 'borderline';
+  motivation?: string;
+  confidence?: number;
+}
+export interface Lever {
+  kind: string;
+  rationale?: string;
+  description?: string;
+}
+export interface JudgmentDetail {
+  id: string;
+  company_name?: string;
+  category?: string;
+  official_website?: string;
+  verdetto_gap: GapVerdict | null;
+  valutazione_a: AxisEval | null;
+  valutazione_b: AxisEval | null;
+  leva: Lever[] | null;
+  contesto_categoria: { category?: string; n?: number; provisional?: boolean } | null;
+  judgment_meta: Record<string, unknown> | null;
+}
+
 async function get<T>(path: string): Promise<T> {
   const r = await fetch(`${BASE}${path}`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`${path} → ${r.status}`);
@@ -99,6 +141,7 @@ export const api = {
   judge: (companyIds: string[]) => post<{ jobId: string; kind: JudgmentJobKind; itemCount: number }>('/api/jobs/judge', { companyIds }),
   validateExport: (companyIds: string[]) => post<{ jobId: string; kind: JudgmentJobKind; itemCount: number }>('/api/jobs/validate-export', { companyIds }),
   judgmentJob: (id: string) => get<JudgmentJob>(`/api/jobs/${id}`),
+  judgmentDetail: (id: string) => get<JudgmentDetail>(`/api/judgment?id=${encodeURIComponent(id)}`),
 };
 
 export const API_BASE = BASE;

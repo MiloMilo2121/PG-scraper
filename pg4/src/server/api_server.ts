@@ -400,6 +400,26 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     return json(res, 200, { total: rows.length, rows: rows.slice(offset, offset + limit) });
   }
 
+  // Full judgment detail for ONE company (the persisted L2–L5 sections), so the
+  // dashboard can SHOW the verdict, not just a target/quadrant badge. Read-only.
+  if (p === '/api/judgment' && req.method === 'GET') {
+    const id = url.searchParams.get('id') ?? '';
+    const row = (seed.db.getById(DEV_TENANT_ID, id) ?? undefined) as Record<string, unknown> | undefined;
+    if (!row) return json(res, 404, { error: 'company not found' });
+    return json(res, 200, {
+      id,
+      company_name: row.company_name,
+      category: row.category,
+      official_website: row.official_website,
+      verdetto_gap: row.verdetto_gap ?? null,
+      valutazione_a: row.valutazione_a ?? null,
+      valutazione_b: row.valutazione_b ?? null,
+      leva: row.leva ?? null,
+      contesto_categoria: row.contesto_categoria ?? null,
+      judgment_meta: row.judgment_meta ?? null,
+    });
+  }
+
   if (p === '/api/metrics' && req.method === 'GET') return json(res, 200, computeMetrics());
 
   if (p === '/api/provider-health' && req.method === 'GET') {

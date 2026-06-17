@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { api, type Company, type Metrics, type ProviderHealth, type CostView, type CellStatus } from '../lib/api';
+import { api, type Company, type Metrics, type ProviderHealth, type CostView, type CellStatus, type JudgmentDetail, type AxisEval } from '../lib/api';
 
 const ENRICH_FIELDS = [
   { key: 'email', col: 'email_inferred', label: 'Email' },
@@ -57,6 +57,22 @@ export default function Dashboard() {
   // judgment layer (L2–L5): per-company verdict badge + live section state
   const [verdicts, setVerdicts] = useState<Record<string, { target?: string; quadrant?: string; running?: boolean; summary?: string }>>({});
   const pollRef = useRef<Set<string>>(new Set());
+  // judgment DETAIL drawer — the full two-axis verdict the operator reads + evals.
+  const [detail, setDetail] = useState<JudgmentDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  async function openJudgment(id: string) {
+    setDetailLoading(true);
+    setDetail({ id } as JudgmentDetail); // open immediately (skeleton)
+    try {
+      setDetail(await api.judgmentDetail(id));
+    } catch {
+      setErr('impossibile caricare il giudizio — riprova');
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }
   const PAGE_SIZE = 50;
 
   const loadAll = useCallback(async () => {
@@ -445,7 +461,7 @@ export default function Dashboard() {
                     <td className="name">{r.company_name}<div className="sub">{r.city}{r.province ? ` (${r.province})` : ''} · {r.category}</div></td>
                     <td className="num">{r.phone ?? <span className="muted">—</span>}</td>
                     <td>{r.official_website ? <a href={r.official_website as string} target="_blank" rel="noreferrer">{hostOf(r.official_website as string)}</a> : <span className="muted">—</span>}</td>
-                    <td>{verdictCell(verdicts[r.id])}</td>
+                    <td onClick={() => openJudgment(r.id)} style={{ cursor: 'pointer' }} title="apri il giudizio completo (A/B, quadrante, leve)">{verdictCell(verdicts[r.id])}</td>
                     {ENRICH_FIELDS.map((f) => <td key={f.key}>{cellOf(r.id, f.key, f.col, r)}</td>)}
                   </tr>
                 ))}
@@ -462,6 +478,7 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+      {detail && <JudgmentDrawer detail={detail} loading={detailLoading} onClose={() => setDetail(null)} />}
     </div>
   );
 }
@@ -484,5 +501,81 @@ function verdictCell(v?: { target?: string; quadrant?: string; running?: boolean
       {v.target === 'yes' ? '★ target' : v.target === 'borderline' ? '~ borderline' : '— no'}
       {v.quadrant ? <span className="muted" style={{ marginLeft: 6, fontWeight: 400 }}>{v.quadrant}</span> : null}
     </span>
+  );
+}
+
+function levelColor(level?: string): string {
+  return level === 'high' ? 'var(--good, #16a34a)' : level === 'mid' ? 'var(--accent-2, #d97706)' : level === 'low' ? 'var(--bad, #dc2626)' : 'var(--muted, #888)';
+}
+
+function AxisCard({ title, e }: { title: string; e: AxisEval | null }) {
+  return (
+    <div style={{ padding: '10px 12px', border: '1px solid var(--border, #2a2d36)', borderRadius: 10 }}>
+      <div className="muted" style={{ fontSize: 12 }}>{title}</div>
+      {e ? (
+        <>
+          <div style={{ fontSize: 16, fontWeight: 700, color: levelColor(e.level) }}>{(e.level ?? 'unknown').toUpperCase()}{e.score != null ? ` · ${e.score.toFixed(2)}` : ''}</div>
+          {e.rationale && <div style={{ fontSize: 13, marginTop: 4, lineHeight: 1.45 }}>{e.rationale}</div>}
+          {e.signalsPresent != null && e.signalsConsidered != null && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>segnali {e.signalsPresent}/{e.signalsConsidered}</div>}
+        </>
+      ) : <div className="muted">non misurato</div>}
+    </div>
+  );
+}
+
+/** The judgment view — the screen the operator reads + evals the real verdict from. */
+function JudgmentDrawer({ detail, loading, onClose }: { detail: JudgmentDetail; loading: boolean; onClose: () => void }) {
+  const v = detail.verdetto_gap;
+  const judged = !!v;
+  const tColor = v?.target === 'yes' ? 'var(--good, #16a34a)' : v?.target === 'borderline' ? 'var(--accent-2, #d97706)' : 'var(--muted, #888)';
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'oklch(0 0 0 / 0.45)', zIndex: 50, display: 'flex', justifyContent: 'flex-end' }}>
+      <aside onClick={(e) => e.stopPropagation()} style={{ width: 'min(560px, 92vw)', height: '100%', overflowY: 'auto', background: 'var(--panel, #14161c)', borderLeft: '1px solid var(--border, #2a2d36)', padding: '20px 22px', boxShadow: '-20px 0 60px oklch(0 0 0 / 0.4)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>{detail.company_name ?? '…'}</div>
+            <div className="muted" style={{ fontSize: 13 }}>{detail.category}{detail.official_website ? ` · ${hostOf(detail.official_website)}` : ''}</div>
+          </div>
+          <button className="ebtn" onClick={onClose}>✕</button>
+        </div>
+        {loading && <div className="muted" style={{ marginTop: 16 }}><span className="spinner" /> carico il giudizio…</div>}
+        {!loading && !judged && (
+          <div className="empty-state" style={{ marginTop: 18 }}>Non ancora giudicata. Selezionala e premi <b>L4 Giudizio</b> per generare il verdetto a due assi.</div>
+        )}
+        {!loading && judged && (
+          <>
+            <div style={{ marginTop: 18, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 22, fontWeight: 800, color: tColor }}>{v!.target === 'yes' ? '★ TARGET' : v!.target === 'borderline' ? '~ BORDERLINE' : '— NO'}</span>
+              <span style={{ fontFamily: 'monospace', fontSize: 18, padding: '2px 10px', border: '1px solid var(--border, #2a2d36)', borderRadius: 8 }}>{v!.quadrant}</span>
+              {v!.confidence != null && <span className="muted">conf {Math.round(v!.confidence * 100)}%</span>}
+            </div>
+            {v!.motivation && <p style={{ marginTop: 12, lineHeight: 1.5 }}>{v!.motivation}</p>}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 16 }}>
+              <AxisCard title="Asse A — forza intrinseca" e={detail.valutazione_a} />
+              <AxisCard title="Asse B — espressione digitale" e={detail.valutazione_b} />
+            </div>
+            <div className="muted" style={{ marginTop: 14, fontSize: 13, display: 'flex', flexWrap: 'wrap', gap: '4px 14px' }}>
+              {v!.gapWidth && <span>gap: <b>{v!.gapWidth}</b></span>}
+              {v!.trajectory && <span>traiettoria: <b>{v!.trajectory}</b></span>}
+              {v!.cause && <span>causa: <b>{v!.cause}</b></span>}
+              {v!.businessModel && <span>modello: <b>{v!.businessModel}</b></span>}
+              {detail.contesto_categoria?.provisional && <span style={{ color: 'var(--accent-2, #d97706)' }}>benchmark §17 provvisorio (coorte sottile)</span>}
+            </div>
+            {detail.leva && detail.leva.length > 0 && (
+              <div style={{ marginTop: 18 }}>
+                <div style={{ fontWeight: 700, marginBottom: 8 }}>Leve (il gap aggredibile)</div>
+                {detail.leva.map((l, i) => (
+                  <div key={i} style={{ padding: '8px 10px', border: '1px solid var(--border, #2a2d36)', borderRadius: 8, marginBottom: 6 }}>
+                    <div style={{ fontWeight: 600 }}>{l.kind}</div>
+                    {(l.rationale || l.description) && <div className="muted" style={{ fontSize: 13 }}>{l.rationale || l.description}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="muted" style={{ marginTop: 18, fontSize: 12 }}>Questo è il giudizio reale: leggilo e dammi le eval (A giusto? B giusto? quadrante? target?). Le tue correzioni diventano golden (L5b).</div>
+          </>
+        )}
+      </aside>
+    </div>
   );
 }
