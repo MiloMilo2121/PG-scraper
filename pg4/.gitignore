@@ -3,6 +3,7 @@ dist/
 .env
 *.log
 output/
+leads/
 tests/fixtures/baseline_pg3.jsonl
 tmp/
 .browser-state/
