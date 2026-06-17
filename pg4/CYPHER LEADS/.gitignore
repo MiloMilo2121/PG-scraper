@@ -1,0 +1,8 @@
+# Cypher work-area — keep the plan (roadmap + instructions) tracked; NEVER track lead data.
+# Scraped/enriched company rows are real-company data (PII-adjacent) → local only.
+output/
+evidence/
+golden/*.json
+!golden/.gitkeep
+*.csv
+*.jsonl
