@@ -1,6 +1,7 @@
 import type { Lead } from '../../types/lead';
 import type { BodyExtraction } from '../extract/extract_from_body';
 import type { EnrichableField } from '../../api/types';
+import type { ProviderRole } from '../../types/providers';
 
 /**
  * Per-field enrichment waterfall — the generalization of pg4's single
@@ -52,6 +53,11 @@ export interface EnrichmentFieldDescriptor {
   field: EnrichableField;
   /** The target Lead property the resolved value is written to. */
   target: keyof Lead;
+  /**
+   * The functional ProviderRole this field's cascade fulfils (role_registry.ts).
+   * Lets the role layer + the field cascade stay consistent (cross-check test AC8).
+   */
+  role?: ProviderRole;
   cascade: EnrichmentStep[];
   /** Per-field cost ceiling (EUR). Paid steps are skipped once it is reached. */
   ceilingEur: number;

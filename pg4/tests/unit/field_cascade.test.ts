@@ -58,7 +58,7 @@ describe('per-field cascade — gating (the safety triple-gate)', () => {
   it('wired-but-disabled paid steps NEVER run; registry ships all paid disabled', async () => {
     const l = lead({ company_name: 'X', official_website: 'https://x.it' });
     const out = await runFieldCascade(l, 'email', { body: '<html></html>', paidEnabled: true });
-    const finder = out.steps.find((s) => s.id === 'email.finder_api')!;
+    const finder = out.steps.find((s) => s.id === 'email.hunter')!;
     expect(finder.ran).toBe(false);
     expect(finder.reason).toBe('disabled');
     // sanity: the whole shipped registry has no enabled PAID (tier-2) step

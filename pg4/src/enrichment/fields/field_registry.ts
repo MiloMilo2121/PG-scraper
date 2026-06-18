@@ -4,6 +4,7 @@ import { normalizeVatCode, validateItalianVatChecksum } from '../financial/vat';
 import { checkVatViaVies } from '../financial/vies';
 import { fetchFatturatoItalia } from '../financial/fatturato_italia_fetch';
 import { normalizeCompanyNameForKey } from '../../discovery/deduper';
+import { HunterProvider, type HunterEmail } from '../../providers/email/hunter';
 
 /**
  * THE per-field cascade registry. Each field declares its ordered free→paid
@@ -37,6 +38,42 @@ const pecFromBody: EnrichmentStep = {
   enabled: true,
   run: (ctx): StepResult => valueOr(ctx.extraction?.pec, 'website_body', 0.85),
 };
+
+/**
+ * EMAIL_FIND paid escalation — Hunter domain-search. SHIPPED DISABLED (enabled=false):
+ * activates only when the operator flips it on (the field runner's triple-gate then
+ * applies: paidEnabled + per-field ceiling + the ledger records the credit). Reuses the
+ * Hunter adapter; €0.04/credit (addendum R7). Reached only when the free body step
+ * produced nothing. Replaces the old `disabled('email.finder_api')` placeholder.
+ */
+const hunter = new HunterProvider();
+function hunterEmailStep(enabled: boolean): EnrichmentStep {
+  return {
+    id: 'email.hunter',
+    tier: 2,
+    costEur: 0.04,
+    enabled,
+    run: async (ctx: FieldStepContext): Promise<StepResult> => {
+      const site = (ctx.lead.website as string | undefined) ?? (ctx.lead as Record<string, unknown>).official_website as string | undefined;
+      const domain = site ? registrableDomain(site) : undefined;
+      if (!domain) return { confidence: 0, source: 'email.hunter', costEur: 0, skippedReason: 'no_input' };
+      const emails = await hunter.domainSearch(domain, 10);
+      const best = pickBestEmail(emails);
+      if (!best) return { confidence: 0, source: 'email.hunter', costEur: 0.04, skippedReason: 'no_value' };
+      // Hunter confidence is 0..100; normalize to 0..1 (default 0.7 when absent).
+      const conf = typeof best.confidence === 'number' ? Math.min(1, best.confidence / 100) : 0.7;
+      return { value: best.value, confidence: conf, source: 'email.hunter', costEur: 0.04 };
+    },
+  };
+}
+
+/** Prefer a generic/role inbox (info@, contatti@, …) else the highest-confidence address. */
+export function pickBestEmail(emails: HunterEmail[]): HunterEmail | undefined {
+  if (emails.length === 0) return undefined;
+  const generic = emails.find((e) => e.type === 'generic' || /^(info|contatti?|contact|hello|sales|commerciale)@/i.test(e.value));
+  if (generic) return generic;
+  return [...emails].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))[0];
+}
 
 /**
  * Fuzzy company-name match (token overlap after legal-form normalization).
@@ -284,10 +321,11 @@ export const FIELD_REGISTRY: EnrichmentFieldDescriptor[] = [
     // verified base — exactly what Phase A fought. Activate only with a real
     // verifier (SMTP/finder API), and tag it as a distinct low-confidence source.
     target: 'email_inferred',
+    role: 'EMAIL_FIND',
     cascade: [
       emailFromBody,
       disabled('email.pattern_guess', 1, 0, 'email:pattern_guess'),
-      disabled('email.finder_api', 2, 0.02, 'email_finder'),
+      hunterEmailStep(false), // real Hunter step, shipped DISABLED (flip to activate)
     ],
     ceilingEur: 0.05,
     stopConfidence: 0.75,
@@ -295,6 +333,7 @@ export const FIELD_REGISTRY: EnrichmentFieldDescriptor[] = [
   {
     field: 'pec',
     target: 'pec',
+    role: 'OFFICIAL_COMPANY_DATA',
     // CONTRACT when activating pec.inipec_by_vat (or any VAT-keyed PEC fetch): the PEC is
     // keyed on a VAT that may belong to a DIFFERENT entity (franchisor/accountant). The
     // step MUST call isWrongEntity(fetchedRegisteredName, lead.company_name) and refuse on
@@ -307,6 +346,7 @@ export const FIELD_REGISTRY: EnrichmentFieldDescriptor[] = [
   {
     field: 'revenue',
     target: 'revenue',
+    role: 'OFFICIAL_COMPANY_DATA',
     cascade: [fatturatoItaliaStep('revenue', 0.7)],
     ceilingEur: 0,
     stopConfidence: 0.7,
@@ -314,16 +354,18 @@ export const FIELD_REGISTRY: EnrichmentFieldDescriptor[] = [
   {
     field: 'employees',
     target: 'employees',
+    role: 'OFFICIAL_COMPANY_DATA',
     cascade: [fatturatoItaliaStep('employees', 0.6)],
     ceilingEur: 0,
     stopConfidence: 0.6,
   },
-  { field: 'instagram', target: 'instagram', cascade: [socialStep('instagram')], ceilingEur: 0, stopConfidence: 0.7 },
-  { field: 'facebook', target: 'facebook', cascade: [socialStep('facebook')], ceilingEur: 0, stopConfidence: 0.7 },
-  { field: 'linkedin', target: 'linkedin', cascade: [socialStep('linkedin')], ceilingEur: 0, stopConfidence: 0.7 },
+  { field: 'instagram', target: 'instagram', role: 'SOCIAL_DETECT', cascade: [socialStep('instagram')], ceilingEur: 0, stopConfidence: 0.7 },
+  { field: 'facebook', target: 'facebook', role: 'SOCIAL_DETECT', cascade: [socialStep('facebook')], ceilingEur: 0, stopConfidence: 0.7 },
+  { field: 'linkedin', target: 'linkedin', role: 'SOCIAL_DETECT', cascade: [socialStep('linkedin')], ceilingEur: 0, stopConfidence: 0.7 },
   {
     field: 'decision_maker',
     target: 'decision_maker_name',
+    role: 'DECISION_MAKER',
     cascade: [decisionMakerFromBody, disabled('decision_maker.people_finder', 2, 0.1, 'people_finder')],
     ceilingEur: 0.15,
     stopConfidence: 0.6,
