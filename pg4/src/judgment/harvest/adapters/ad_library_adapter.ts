@@ -38,8 +38,19 @@ export class AdLibrarySourceAdapter implements SourceAdapter {
     const iso = new Date(ctx.now()).toISOString();
     const base: HarvestResult = { source: this.kind, sourceId: this.id, locator, fetchedAt: iso, ok: false, attributes: {}, signals: [] };
     const e = getEnv();
-    // PENDING shape; built defensively. Parse failure → ok:false (unknown).
-    const url = `https://graph.facebook.com/v18.0/ads_archive?search_terms=${encodeURIComponent(locator)}&ad_reached_countries=IT&access_token=${encodeURIComponent(e.ADLIB_API_KEY ?? '')}`;
+    // Addendum R5 — Graph API version bumped off the deprecated v18.0. The ads_archive
+    // contract is stable across versions; only the version path + required params changed:
+    // ad_reached_countries is a JSON-array param, and `fields` must be requested explicitly
+    // or `data` comes back minimal. EU/IT only (DSA scope). Parse failure → ok:false (unknown).
+    const params = new URLSearchParams({
+      search_terms: locator,
+      ad_reached_countries: JSON.stringify(['IT']),
+      ad_active_status: 'ACTIVE',
+      fields: 'id,page_name,ad_delivery_start_time',
+      limit: '25',
+      access_token: e.ADLIB_API_KEY ?? '',
+    });
+    const url = `https://graph.facebook.com/v21.0/ads_archive?${params.toString()}`;
     const body = await ctx.fetcher(url);
     if (body === undefined) return base;
     let count: number | undefined;

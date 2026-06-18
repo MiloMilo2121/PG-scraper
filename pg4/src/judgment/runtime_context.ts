@@ -1,5 +1,5 @@
-import { DirectFetchProvider } from '../providers/http/direct_fetch';
 import { BingHtmlProvider } from '../providers/serp/bing_html';
+import { buildPageFetcher } from './harvest/page_fetcher';
 import { InMemoryEnrichmentCache } from '../persistence/enrichment_cache';
 import type { EnrichmentCache } from '../persistence/enrichment_cache';
 import { CostLedger } from '../runtime/cost_ledger';
@@ -15,20 +15,13 @@ import type { JudgeLLM } from './judges/shared';
  * the A-collector's third-party searches) + an in-memory cache. €0, free-first.
  * The strong A sources (registry/Places) and the LLM judges stay key-gated.
  */
-const FETCH = new DirectFetchProvider();
 const SERP = new BingHtmlProvider();
 
 export function liveFreeHarvestContext(opts: { tenantId?: string; cache?: EnrichmentCache; paidEnabled?: boolean } = {}): HarvestContext {
   return {
     tenantId: opts.tenantId ?? 'cli',
     cache: opts.cache ?? new InMemoryEnrichmentCache(),
-    fetcher: async (url: string) => {
-      try {
-        return (await FETCH.fetch(url, { timeoutMs: 8000 })).html;
-      } catch {
-        return undefined;
-      }
-    },
+    fetcher: buildPageFetcher(8000),
     search: async (query: string) => {
       try {
         return await SERP.search(query, { limit: 8 });

@@ -16,6 +16,7 @@ import { runJudgment } from '../judgment/run_judgment';
 import { getActiveJudgmentConfig } from '../judgment/config';
 import { emptyBundle } from '../judgment/harvest/source_harvest';
 import type { HarvestContext } from '../judgment/harvest/source_harvest';
+import { buildPageFetcher } from '../judgment/harvest/page_fetcher';
 import { InMemoryEnrichmentCache } from '../persistence/enrichment_cache';
 
 /**
@@ -121,13 +122,7 @@ function judgmentCtx(): HarvestContext {
   return {
     tenantId: DEV_TENANT_ID,
     cache: JCACHE,
-    fetcher: async (url: string) => {
-      try {
-        return (await FETCH.fetch(url, { timeoutMs: 8000 })).html;
-      } catch {
-        return undefined;
-      }
-    },
+    fetcher: buildPageFetcher(8000),
     // free SERP for the A-collector's third-party searches (press/awards/patents).
     // Failures/blocks degrade to `unknown` (never fabricated absence).
     search: async (query: string) => {

@@ -20,8 +20,18 @@ import type { SerpResult } from '../../types/providers';
 
 export type SourceKind = 'website' | 'maps_gbp' | 'registry' | 'social' | 'ad_library';
 
-/** A minimal page fetcher: URL → HTML (or undefined on any failure). */
-export type PageFetcher = (url: string) => Promise<string | undefined>;
+/**
+ * A minimal page fetcher: URL → body text (or undefined on any failure).
+ * Optional `init` lets an adapter issue a POST with headers/body — required by the
+ * New Google Places API (POST places:searchText + X-Goog-FieldMask). Back-compat:
+ * existing GET callers pass no init; impls that ignore init still type-check.
+ */
+export interface FetchInit {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+}
+export type PageFetcher = (url: string, init?: FetchInit) => Promise<string | undefined>;
 
 /** Everything an adapter may need. Adapters that need env read getEnv() themselves. */
 export interface HarvestContext {
