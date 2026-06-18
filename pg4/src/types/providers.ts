@@ -3,7 +3,56 @@
  * The router selects ascending by tier, gated by feature flags + key presence.
  */
 
-export type ProviderFamily = 'serp' | 'http' | 'llm';
+/**
+ * Router method-families (the three method-registries: search/fetch/complete) PLUS
+ * the non-router families that are cost-gated via `ProviderRouter.invoke` (addendum R1).
+ * Widening this is ledger/breaker tagging only — it does NOT add router method-registries.
+ */
+export type ProviderFamily = 'serp' | 'http' | 'llm' | 'email' | 'official' | 'reviews' | 'ads' | 'captcha';
+
+/**
+ * Functional ROLE a provider can fill (orthogonal to family). A provider may have
+ * MANY roles. The RoleRegistry maps each role to its ordered free→paid cascade.
+ * Source of truth: docs/provider_cascade_architecture.md §2.
+ */
+export type ProviderRole =
+  | 'SEARCH_WEB'
+  | 'WEB_FETCH'
+  | 'WEB_UNBLOCK'
+  | 'LLM_JUDGE'
+  | 'LLM_REASON'
+  | 'LLM_CHEAP'
+  | 'OFFICIAL_COMPANY_DATA'
+  | 'EMAIL_FIND'
+  | 'EMAIL_VERIFY'
+  | 'B2B_CONTACT'
+  | 'DECISION_MAKER'
+  | 'REVIEWS_REPUTATION'
+  | 'ADS_SIGNAL'
+  | 'SOCIAL_DETECT'
+  | 'TECH_SIGNAL'
+  | 'TENDER_CONTRACTS'
+  | 'CERTIFICATIONS'
+  | 'FAIR_PRESENCE'
+  | 'NEWS_AWARDS'
+  | 'PDF_EXTRACT'
+  | 'CAPTCHA_SOLVE'
+  | 'RESIDENTIAL_IP'
+  | 'EMBEDDINGS';
+
+/**
+ * Minimal cost-gated provider descriptor for `ProviderRouter.invoke` (addendum R1).
+ * Any non-router provider (email/official/reviews/ads/captcha) passes one of these so
+ * the SAME paid-gate / budget / run-ceiling / breaker / ledger pipeline applies to it.
+ */
+export interface CostedMeta {
+  readonly id: string;
+  readonly family: ProviderFamily;
+  readonly tier: number;
+  readonly costPerCallEur: number;
+  available(): boolean;
+  readonly roles?: ReadonlyArray<ProviderRole>;
+}
 
 export interface SerpResult {
   title: string;
@@ -46,6 +95,8 @@ export interface Provider {
   readonly costPerCallEur: number;
   /** Returns true if API key + feature flag are both set. */
   available(): boolean;
+  /** Functional roles this provider can fill (optional; defaults to []). */
+  readonly roles?: ReadonlyArray<ProviderRole>;
 }
 
 export interface SerpProvider extends Provider {

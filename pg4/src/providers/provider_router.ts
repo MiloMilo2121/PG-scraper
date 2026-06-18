@@ -244,6 +244,73 @@ export class ProviderRouter {
   }
 
   /**
+   * Addendum R1 — family-agnostic cost-gated execution. The router's gates
+   * (paid-gate, per-lead budget, run-ceiling reservation, circuit-breaker,
+   * ledger) historically lived ONLY in `filter()`, which only covers the
+   * three method-families (serp/http/llm). Email/official/reviews/ads/captcha
+   * providers are NOT those families, so without this they would spend money
+   * WITHOUT any of those gates — the exact class of bug that once blew a €0.10
+   * ceiling to €0.229. `invoke` runs the SAME gate pipeline around an arbitrary
+   * provider call so there is EXACTLY ONE place money can be spent, for every
+   * family.
+   *
+   * Returns the call's value on success, or `null` when the provider is gated
+   * out (unavailable / breaker open / tier cap / paid-gate / over budget /
+   * over run-ceiling) or the call fails. The caller treats `null` as "this
+   * cascade step did not produce" and moves to the next step.
+   */
+  async invoke<T>(
+    meta: import('../types/providers').CostedMeta,
+    call: (signal?: AbortSignal) => Promise<{ ok: boolean; value: T; cost_eur?: number } | null>,
+    opts: RouteOptions = {}
+  ): Promise<T | null> {
+    // ---- gate pipeline (mirrors filter(), applied to a single provider) ----
+    if (!meta.available()) return null;
+    if (!this.breaker.allow(meta.id)) return null;
+    if (opts.maxTier !== undefined && meta.tier > opts.maxTier) return null;
+    const paidEnabled = opts.paidEnabled === true;
+    if (meta.costPerCallEur > 0 && !paidEnabled) return null;
+    if (meta.costPerCallEur > 0 && opts.remainingLeadBudgetEur !== undefined && meta.costPerCallEur > opts.remainingLeadBudgetEur) {
+      return null;
+    }
+    if (opts.includeProviderIds && !opts.includeProviderIds.includes(meta.id)) return null;
+    if (opts.excludeProviderIds && opts.excludeProviderIds.includes(meta.id)) return null;
+    if (opts.paidOnly && meta.costPerCallEur === 0) return null;
+
+    // ---- run-ceiling atomic reservation (same protocol as search/fetch/complete) ----
+    const ceilingGated = meta.costPerCallEur > 0 && opts.runCostCeilingEur !== undefined;
+    if (ceilingGated) {
+      if (this.ledger.getTotal() + this.reservedEur + meta.costPerCallEur > (opts.runCostCeilingEur as number)) {
+        this.fireRunCeiling(opts.runCostCeilingEur as number);
+        return null;
+      }
+      this.reservedEur += meta.costPerCallEur;
+    }
+
+    // ---- per-provider rate limit (no-op for unconfigured keys) ----
+    if (this.rate) await this.rate.acquire(meta.id);
+
+    try {
+      const res = await call(opts.signal);
+      const ok = res !== null && res.ok;
+      this.ledger.record(meta.id, meta.family, res?.cost_eur ?? meta.costPerCallEur, ok, {
+        kind: ok ? 'success' : 'empty',
+        meta: opts.meta,
+      });
+      this.breaker.recordSuccess(meta.id);
+      return ok ? (res as { value: T }).value : null;
+    } catch (err) {
+      const kind: import('../types/providers').FailureKind = err instanceof ProviderBlockError ? 'blocked' : classifyThrown(err);
+      this.ledger.record(meta.id, meta.family, meta.costPerCallEur, false, { kind, meta: opts.meta });
+      this.breaker.recordFailure(meta.id, kind);
+      logger.warn({ provider: meta.id, kind, err: (err as Error).message }, '[Router] invoke provider failed');
+      return null;
+    } finally {
+      if (ceilingGated) this.reservedEur -= meta.costPerCallEur;
+    }
+  }
+
+  /**
    * Phase A.5 — register the run-ceiling listener (latched: fires once
    * per router lifetime). Call sites stay untouched; the CLI wires the
    * notifier here.
