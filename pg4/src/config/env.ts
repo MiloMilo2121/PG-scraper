@@ -35,6 +35,8 @@ const EnvSchema = z.object({
   TAVILY_API_KEY: z.string().optional(),
   PERPLEXITY_ENABLED: z.coerce.boolean().default(false),
   PERPLEXITY_API_KEY: z.string().optional(),
+  PERPLEXITY_BASE_URL: z.string().url().default('https://api.perplexity.ai'),
+  PERPLEXITY_MODEL: z.string().default('sonar'),
 
   // HTTP fallbacks (WEB_FETCH / WEB_UNBLOCK roles)
   BRIGHTDATA_ENABLED: z.coerce.boolean().default(false),

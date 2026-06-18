@@ -14,6 +14,7 @@ import { TavilyProvider } from './serp/tavily';
 import { ExaProvider } from './serp/exa';
 import { AnthropicProvider } from './llm/anthropic';
 import { OpenRouterProvider } from './llm/openrouter';
+import { OpenAIProvider, DeepSeekProvider, ZhipuGlmProvider, KimiProvider, PerplexityLlmProvider } from './llm/openai_family';
 
 /**
  * The provider registry. Adds providers in tier order. Missing API keys are
@@ -47,10 +48,19 @@ export function buildProviderCatalog(ledger: CostLedger): ProviderRouter {
   // Phase 3+: BrightDataProvider, FirecrawlProvider, OracleCrawl4aiProvider
 
   const llms: LLMProvider[] = [
-    // Judgment layer (L4/L5). Both paid tier 2, default-OFF (paid-gate). Claude is
+    // Judgment layer (L4/L5). All paid tier 2, default-OFF (paid-gate). Claude is
     // the default judge: directly (Anthropic) or via OpenRouter (no new secret).
     new AnthropicProvider(),
     new OpenRouterProvider(),
+    // LLM_REASON / LLM_CHEAP cascade (OpenAI-compatible family). Keys recovered into
+    // .env (gitignored); each available() only when its *_ENABLED flag is set, so a
+    // default run stays €0. Per-role ordering is honoured by the role resolver, not
+    // catalog order.
+    OpenAIProvider(),
+    DeepSeekProvider(),
+    ZhipuGlmProvider(),
+    KimiProvider(),
+    PerplexityLlmProvider(),
   ];
 
   // Phase F.2 — per-provider breaker tuning. The default global config

@@ -388,7 +388,18 @@ export class ProviderRouter {
       .filter((p) => !opts.includeProviderIds || opts.includeProviderIds.includes(p.id))
       // R14 — explicit denylist (category routing skips low-yield providers).
       .filter((p) => !opts.excludeProviderIds || !opts.excludeProviderIds.includes(p.id))
-      .sort((a, b) => a.tier - b.tier)
+      // Primary order: tier ascending (free-first). Tiebreak: when the caller
+      // supplied an ordered `includeProviderIds` (the RoleResolver compiles the
+      // per-role cascade order into it), honour THAT order within a tier — so
+      // LLM_CHEAP can try zhipu→deepseek while LLM_JUDGE tries anthropic→openai,
+      // even though both are tier 2. Without this the catalog array order would
+      // win and every role would share one fallback order.
+      .sort((a, b) => {
+        if (a.tier !== b.tier) return a.tier - b.tier;
+        const order = opts.includeProviderIds;
+        if (!order) return 0;
+        return order.indexOf(a.id) - order.indexOf(b.id);
+      })
       .slice(0, opts.maxProviders ?? Number.MAX_SAFE_INTEGER);
   }
 }
