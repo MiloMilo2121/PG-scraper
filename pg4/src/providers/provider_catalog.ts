@@ -7,6 +7,8 @@ import { getEnv } from '../config/env';
 import { logger } from '../runtime/logger';
 
 import { DirectFetchProvider } from './http/direct_fetch';
+import { FirecrawlProvider } from './http/firecrawl';
+import { BrightDataUnlockerProvider } from './http/brightdata';
 import { DdgLiteProvider } from './serp/ddg_lite';
 import { BingHtmlProvider } from './serp/bing_html';
 import { SerperProvider } from './serp/serper';
@@ -44,8 +46,13 @@ export function buildProviderCatalog(ledger: CostLedger): ProviderRouter {
     new ExaProvider(), // judgment-layer discovery fallback — paid tier 2, gated
   ];
 
-  const https: HttpProvider[] = [new DirectFetchProvider()];
-  // Phase 3+: BrightDataProvider, FirecrawlProvider, OracleCrawl4aiProvider
+  const https: HttpProvider[] = [
+    new DirectFetchProvider(), // tier 0, always
+    // WEB_FETCH/WEB_UNBLOCK escalation — paid tier 2, default-OFF (available()=false
+    // until *_ENABLED + key). Reached only after direct_fetch returns block/empty.
+    new FirecrawlProvider(),
+    new BrightDataUnlockerProvider(), // distinct id (addendum R2); brightdata_serp deferred
+  ];
 
   const llms: LLMProvider[] = [
     // Judgment layer (L4/L5). All paid tier 2, default-OFF (paid-gate). Claude is
